@@ -17,3 +17,7 @@ Thumbs.db
 
 # scratch commit-message files
 .commitmsg
+
+# scratch commit-message files (one per task, never committed)
+.commitmsg-*
+.commitmsg

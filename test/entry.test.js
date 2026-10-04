@@ -25,6 +25,8 @@ const libDir = join(here, '..', 'lib')
 /** Every module in lib/, discovered rather than listed, so a new one is covered. */
 const modules = [
   'index.js',
+  'claims.js',
+  'claim-store.js',
   'plugin.js',
   'project.js',
   'project-state.js',
