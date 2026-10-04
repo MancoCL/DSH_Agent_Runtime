@@ -117,3 +117,37 @@ describe('scopeToolOptions without the runtime', () => {
     }
   })
 })
+
+describe('每个工具都要过运行时那套编写校验', { skip: !canRun }, () => {
+  // 参数 DSL 属于运行时而不是本仓库，所以「defineTool 会不会接受它」只能靠把每个工具
+  // 都跑一遍来回答。已经踩过两次：`required: false` 与对象型参数缺
+  // `additionalProperties` 都会让 defineTool 抛错，而工具会静默地根本不注册。
+  it('gac_task 通过 defineTool，且对象型参数显式声明 additionalProperties', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { TaskStore } = await import('../lib/task-store.js')
+    const { createTaskTool, taskToolOptions } = await import('../lib/tool-task.js')
+
+    const root = mkdtempSync(join(tmpdir(), 'gac-authoring-'))
+    try {
+      const store = new TaskStore({ root })
+      const deps = { taskStoreFor: () => store, sessionRootFor: () => root }
+      assert.doesNotThrow(() => createTaskTool({ ...deps, defineTool: toolsPackage.defineTool }))
+
+      const tool = createTaskTool({ ...deps, defineTool: toolsPackage.defineTool })
+      assert.equal(typeof tool.execute, 'function')
+      assert.ok(tool.parameters.properties.plan, 'plan 必须存活于编译后的 schema')
+      for (const [name, spec] of Object.entries(taskToolOptions(deps).parameters)) {
+        if (spec.type !== 'object') continue
+        assert.equal(
+          typeof spec.additionalProperties,
+          'boolean',
+          `${name} 是对象型参数，必须显式声明 additionalProperties`,
+        )
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})

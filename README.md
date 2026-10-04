@@ -28,7 +28,7 @@ GAC plugin      →  execution mode, write scope, write claims, verification, ev
 | 1 | `lib/tool-project.js` — `gac_project`: adapter inspection + mode declaration | done |
 | 2 | `lib/claims.js` + `lib/claim-store.js` — write claims | done |
 | 3 | `lib/coordinator.js` — DAG, ready nodes, state transitions | done (logic) |
-| 3 | Driving the DAG from a live session (task tool + dispatch) | not started |
+| 3 | `lib/task-store.js` + `lib/tool-task.js` — durable task records, `gac_task` | done |
 | 4 | Independent verification: plan, falsification, traceability | not started |
 | 5 | Session event projection | not started |
 | 6 | Evidence capture and AC traceability | not started |
@@ -342,6 +342,43 @@ subagent you dispatched is internal, and recording it as an external blockage
 would hide the difference between "the world is preventing progress" and "my own
 work is still running".
 
+### Driving it: `gac_task`
+
+```text
+gac_task { action: "create", task_id: "REQ-1", mode: "standard_task",
+           plan: { nodes: [
+             { id: "T1", objective: "implement", required_capabilities: ["implementation"],
+               write_scope: ["src/"] },
+             { id: "T2", objective: "verify", depends_on: ["T1"],
+               required_capabilities: ["verification"], write_scope: [] } ] } }
+
+gac_task { action: "advance", task_id: "REQ-1" }
+  → action: dispatch, nodes: ["T1"]      the tool minted dispatch_id REQ-1-T1-A1
+
+gac_task { action: "advance", task_id: "REQ-1",
+           report: { node_id: "T1", dispatch_id: "REQ-1-T1-A1", status: "completed" } }
+  → classifications: ["accepted"], action: dispatch, nodes: ["T2"]
+```
+
+**You cannot declare completion.** A report must carry the `dispatch_id` minted
+when the node was dispatched. A report without it — or with a stale one — is
+classified `stale` and changes nothing, because a late result from a previous
+attempt must not rewrite state it has no claim to. That rule is the whole reason
+the identity exists, so it is enforced at the tool boundary and not merely
+documented.
+
+Task records live in `<project>/.dsh/gac/tasks/`, one file per task, and are
+re-validated on load by the same code that validates a new plan. That is
+deliberate: a hand-edited record would otherwise be able to bypass `compileTask`
+and introduce a cyclic or capability-less DAG. Two consistency rules are checked
+on load — a node `in_progress` must hold a dispatch identity, and a node not
+`in_progress` must not — because either inversion leaves a task that can never
+make progress again.
+
+Tasks are keyed by **project**, not by session: one requirement's nodes are
+advanced by different executors, and a session-scoped record would be invisible
+to whoever picks up the next node.
+
 ---
 
 ## Known limits
@@ -378,7 +415,7 @@ Stated here rather than discovered later (adaptation plan §7):
 ## Develop
 
 ```bash
-npm test          # 296 tests, no DSH required
+npm test          # 349 tests, no DSH required
 ```
 
 The library modules are pure and dependency-injected precisely so the suite runs
@@ -394,6 +431,8 @@ lib/
   claims.js          write-claim conflict detection (pure)
   claim-store.js     durable one-file-per-claim store with orphan pruning
   coordinator.js     task DAG, ready resolution, state transitions (pure)
+  task-store.js      durable one-file-per-task store with load-time revalidation
+  tool-task.js       the gac_task tool
   project.js         adapter validation + execution-mode escalation (pure)
   project-state.js   adapter loading, caching, and per-session mode state
   tool-project.js    the gac_project tool
