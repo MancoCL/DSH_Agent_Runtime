@@ -29,7 +29,10 @@ GAC plugin      →  execution mode, write scope, write claims, verification, ev
 | 2 | `lib/claims.js` + `lib/claim-store.js` — write claims | done |
 | 3 | `lib/coordinator.js` — DAG, ready nodes, state transitions | done (logic) |
 | 3 | `lib/task-store.js` + `lib/tool-task.js` — durable task records, `gac_task` | done |
-| 4 | Independent verification: plan, falsification, traceability | not started |
+| 3 | `lib/capability-router.js` + `lib/executor.js` — dispatch actually invokes | done |
+| 4 | `lib/verification.js` — plan, falsification, traceability gates | done |
+| 4 | Plan and evidence gates wired into `gac_task` | done |
+| 5 | Grilling loop (multi-round requirement refinement) | not started |
 | 5 | Session event projection | not started |
 | 6 | Evidence capture and AC traceability | not started |
 
@@ -420,6 +423,56 @@ Provider routes come from the adapter's `execution.provider_routes`, so
 
 ---
 
+### Independent verification
+
+The question this answers is the only one that matters: **the implementation is
+correct — how do we know?** "The tests pass" is not an answer, because the
+implementation and its tests come from one understanding, and a wrong
+understanding turns both green together.
+
+A plan must be registered **before** the work it judges:
+
+```text
+gac_task { action: "plan", task_id: "REQ-1", criteria: ["AC1", "AC2"],
+           verification_plan: { cases: [
+             { id: "V1", covers: ["AC1"], type: "positive",      expect: "..." },
+             { id: "V2", covers: ["AC1"], type: "falsification", expect_failure: "..." } ] } }
+```
+
+Three rules are enforced, and each names what is missing rather than counting it:
+
+**Every criterion needs a positive *and* a falsification case.** A positive case
+proves the correct implementation passes; a falsification case proves a relevant
+wrong one fails. A suite of positives cannot tell "correct" from "assertions too
+weak" — so a falsification case must state `expect_failure`, or it degrades into
+a weaker positive.
+
+**Evidence must trace criterion → case → execution.** Each case needs its own
+executed evidence reference; a bare "passed" is someone asking to be believed.
+
+**Pooled evidence is rejected separately.** One command's output cited as the
+evidence for several cases is formally valid — cases complete, criteria covered,
+evidence present — yet it is one observation. Counting cannot find it; comparing
+the evidence can.
+
+Gates fire where they can still change the outcome:
+
+| Gate | Fires | Why there |
+| --- | --- | --- |
+| plan required | before dispatching a `verification`/`review` node of a `high_risk_task` | a plan written after implementation derives from the implementation, not the requirement |
+| falsification / coverage | at plan registration | a gap reported now is fixed before any file is touched |
+| evidence | at `complete` | uses a content-addressed `plan_id`, so a report against a superseded plan is caught |
+
+Plans are stored separately from task records and refuse to be overwritten: their
+lifecycles differ — a frozen plan never changes while task state changes every
+round — and mixing them would make "has this plan been altered?" hard to answer.
+
+Only the *verification* nodes are held back when the plan is missing; the rest of
+the batch still dispatches. Holding the whole batch would collapse "plan, then
+implement" into three serial steps and discard the parallelism that is the point.
+
+---
+
 ## Known limits
 
 Stated here rather than discovered later (adaptation plan §7):
@@ -454,7 +507,7 @@ Stated here rather than discovered later (adaptation plan §7):
 ## Develop
 
 ```bash
-npm test          # 393 tests, no DSH required
+npm test          # 439 tests, no DSH required
 ```
 
 The library modules are pure and dependency-injected precisely so the suite runs
@@ -472,8 +525,9 @@ lib/
   capability-router.js  pick an executor by required capabilities (pure)
   executor.js        execution boundary: invoke, or refuse honestly
   coordinator.js     task DAG, ready resolution, state transitions (pure)
-  task-store.js      durable one-file-per-task store with load-time revalidation
+  task-store.js      durable one-file-per-task store, plans, load-time revalidation
   tool-task.js       the gac_task tool
+  verification.js    verification plan, falsification, traceability gates (pure)
   project.js         adapter validation + execution-mode escalation (pure)
   project-state.js   adapter loading, caching, and per-session mode state
   tool-project.js    the gac_project tool

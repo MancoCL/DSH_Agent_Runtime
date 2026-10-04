@@ -14,6 +14,9 @@ node_modules/
 # Task records are runtime state, not plugin source
 .dsh/gac/tasks/
 
+# Frozen verification plans are runtime state too
+.dsh/gac/plans/
+
 # OS noise
 Thumbs.db
 .DS_Store
