@@ -1,0 +1,32 @@
+{
+  "name": "dsh-gac-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GAC (Governed Agent Collaboration) runtime for DeepSeek Harness: risk-tiered execution modes, strict write scope, write claims, independent verification.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./write-scope": "./lib/write-scope.js",
+    "./project": "./lib/project.js",
+    "./coordinator": "./lib/coordinator.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "assets",
+    "cordis.patch.yml"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

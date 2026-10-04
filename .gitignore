@@ -1,0 +1,16 @@
+# Dependencies and logs
+node_modules/
+*.log
+
+# ACL recovery artefacts from the one-shot sandbox repair (not part of the plugin)
+.acl-recovery/
+
+# Per-project adapters are project data, not plugin source
+.dsh/gac/local/
+
+# Runtime write-claims are transient coordination state
+.dsh/gac/claims/
+
+# OS noise
+Thumbs.db
+.DS_Store
