@@ -37,7 +37,7 @@ GAC plugin      →  execution mode, write scope, write claims, verification, ev
 | 6 | `lib/evidence.js` + `lib/evidence-store.js` — runtime-issued evidence | done |
 | 6 | `lib/metrics.js` + `lib/tool-metrics.js` — metrics with a read-only outlet | done |
 | 6 | `lib/tool-evidence.js` — evidence ids discoverable, so they can be cited | done |
-| 5 | Session event projection | not started |
+| 5 | `lib/gac-events.js` — GAC events in the session log + message projection | done (visibility, not state authority) |
 
 **Phase 0 is verified, not merely tested.** In a live session with
 `scope: ["docs/scratch.md"]`:
@@ -654,6 +654,44 @@ them, and capture simply stopped: two test runs recorded nothing while everythin
 appeared normal. It now keys on whether the *project* is governed (an adapter on disk),
 which survives reloads.
 
+### GAC events in the session log
+
+GAC appends its own events to the session's event log, and registers a projection for each
+type so they surface in the conversation. Verified live: one `gac/mode-declared` at seq 5283
+in this repo's session log, with the intended payload.
+
+**The outline's §4.6 claim does not hold, and this is worth stating plainly.** The plan says
+`Current State = reduce(Session Events)`, replacing mutable state plus a history JSON. For
+*task* state that is not achievable:
+
+| Fact | Consequence |
+| --- | --- |
+| sessions are session-scoped; `ctx.sessions` is explicitly an **in-memory** store whose persistence is a separate plugin | an event log describes one session |
+| tasks are **project-scoped** — one requirement's nodes are advanced by different executors in different sessions | a task's history is spread across session logs |
+| there is no project-level event stream and no project→session index | nothing can gather them |
+
+So the file-based task store remains the **authority**, and events add *visibility and
+audit*: what happened in this session, replayable and projected. Both are needed because
+they answer different questions — "where is this task" spans sessions; "what did this
+session do" only the log can answer.
+
+**The message source vocabulary has no slot for the runtime.** `MessageSourceMap` offers
+`user` / `model` / `tool` / `system-prompt`. A projection's message must claim one of them,
+so a GAC event is necessarily attributed to someone else. It is projected as `user` with a
+`[GAC]` prefix so it is visibly not the user speaking — but that is a **misattribution, not
+an equivalent**: a reader of the history would take those words for the user's.
+
+**Projected messages are not validated.** `deriveEventMessage` returns a projection's
+message verbatim — no shape check. `MessageBase` requires `id` and `source`, so a projection
+that omits them puts a malformed message into the conversation without any error. The `id`
+must also be **stable across derivations**, or consumers indexing by id cannot recognise the
+same message twice; it is derived from the event seq.
+
+**Reading a session log from a script is not straightforward.** The log is **concatenated
+zstd frames**, one per write (3095 frames in a 4 MB file here), and Node's
+`zstdDecompressSync` / `createZstdDecompress` both stop after the **first** frame — returning
+just the header. Auditing a log requires decoding frame-by-frame from each magic offset.
+
 ---
 
 ## Known limits
@@ -690,7 +728,7 @@ Stated here rather than discovered later (adaptation plan §7):
 ## Develop
 
 ```bash
-npm test          # 642 tests, no DSH required
+npm test          # 671 tests, no DSH required
 ```
 
 The library modules are pure and dependency-injected precisely so the suite runs
@@ -708,6 +746,7 @@ lib/
   capability-router.js  pick an executor by required capabilities (pure)
   contract.js        interface contract: freeze it before parallel work (pure)
   executor.js        execution boundary: invoke, or refuse honestly
+  gac-events.js      GAC session events: vocabulary, reducer, projection (pure)
   evidence.js        runtime-issued evidence records and refs (pure)
   evidence-store.js  append-only JSONL log; the runtime issues the ids
   metrics.js         reduction over evidence and tasks (pure)
