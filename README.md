@@ -21,9 +21,9 @@ GAC plugin      →  execution mode, write scope, write claims, verification, ev
 | 0 | `lib/write-scope.js` — strict containment | done, 35 tests |
 | 0 | `lib/project.js` — Project Adapter + mode escalation | done, 30 tests |
 | 0 | `lib/tool-targets.js` — what counts as a write | done |
-| 0 | `lib/plugin.js` — the `tools/pre-execute` gate | done, 24 tests |
+| 0 | `lib/plugin.js` — the `tools/pre-execute` gate | done, 28 tests |
 | 0.5 | `lib/tool-scope.js` — the `gac_scope` tool | done |
-| 0.5 | `lib/index.js` — DSH shell, installed in the `core-020` profile | loaded |
+| 0.5 | `lib/index.js` — DSH shell, installed in the `core-020` profile | **verified in a live session** |
 | 1 | Project Adapter loaded from `.dsh/gac/project.json` | not started |
 | 2 | Write claims (cross-session collision protection) | not started |
 | 3 | Coordinator: DAG, ready nodes, STANDARD_TASK | not started |
@@ -31,9 +31,22 @@ GAC plugin      →  execution mode, write scope, write claims, verification, ev
 | 5 | Session event projection | not started |
 | 6 | Evidence capture and AC traceability | not started |
 
-**The guard is installed but inert until a session declares a scope.** Every
-session starts ungoverned and the gate allows everything. That is deliberate: a
-gate that enforced a scope nobody declared would be unusable outside GAC work.
+**Phase 0 is verified, not merely tested.** In a live session with
+`scope: ["docs/scratch.md"]`:
+
+| Attempt | Result |
+| --- | --- |
+| write `docs/scratch.md` (in scope) | allowed, file created |
+| write `docs/outside.md` (out of scope) | **refused**, `GAC_WRITE_SCOPE_DENIED` |
+| `pwsh` shell write | **refused**, `GAC_SHELL_DENIED_UNDER_SCOPE` |
+
+The decisive check is the filesystem, not the message: neither refused path
+existed afterwards. The refusal happens **before** dispatch, which is the
+assumption the rest of this architecture rests on.
+
+**The guard is inert until a session declares a scope.** Every session starts
+ungoverned and the gate allows everything. That is deliberate: a gate that
+enforced a scope nobody declared would be unusable outside GAC work.
 
 ---
 
@@ -201,6 +214,12 @@ Stated here rather than discovered later (adaptation plan §7):
 4. **Unknown tools fail closed while governed.** A tool added by a harness
    upgrade is refused until it is classified in `lib/tool-targets.js`. This is
    intentional: a runtime upgrade must not silently widen authority.
+
+   This rule produced a real defect, kept here as the worked example. GAC's own
+   `gac_scope` was initially unclassified, so once a scope was declared the guard
+   refused the one tool able to release it — the scope became a trap. It is now
+   classified as touching no file. **Any tool whose enforcement path is itself
+   guarded must be provably unable to write**, or it re-creates this deadlock.
 
 ---
 

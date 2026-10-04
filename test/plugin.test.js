@@ -228,6 +228,37 @@ describe('scope lifecycle', () => {
   })
 })
 
+describe('the scope tool must stay callable while a scope is active', () => {
+  // A real defect, found by running the gate in a live session rather than in
+  // this suite: `gac_scope` was absent from the known table, so the guard
+  // refused it once a scope was declared. That turned the scope into a trap —
+  // it could not be inspected, re-declared, or released.
+  it('allows gac_scope, so the current scope can always be inspected', () => {
+    const core = governed(['src/a.c'])
+    assert.equal(core.preExecute(exec('gac_scope', {})).kind, 'allow')
+  })
+
+  it('allows gac_scope clear, so a scope can always be released', () => {
+    const core = governed(['src/a.c'])
+    assert.equal(core.preExecute(exec('gac_scope', { clear: true })).kind, 'allow')
+  })
+
+  it('allows re-declaring, so a task can advance to its next node', () => {
+    const core = governed(['src/a.c'])
+    assert.equal(
+      core.preExecute(exec('gac_scope', { task_id: 'REQ-1', node_id: 'T2', scope: ['docs/'] })).kind,
+      'allow',
+    )
+  })
+
+  it('an empty scope still permits the scope tool — the trap case', () => {
+    // With an empty scope every write is refused. If the scope tool were also
+    // refused, nothing could ever undo it.
+    const core = governed([])
+    assert.equal(core.preExecute(exec('gac_scope', { clear: true })).kind, 'allow')
+  })
+})
+
 describe('the nomination of the guard itself', () => {
   it('every denial states a reason a model can act on', () => {
     const core = governed(['src/'])
