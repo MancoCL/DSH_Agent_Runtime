@@ -44,6 +44,28 @@ describe('candidateAnchors', () => {
       assert.match(anchor, /^([A-Za-z]:[\\/]|\/)/u, `anchor is not absolute: ${anchor}`)
     }
   })
+
+  it('anchors to each profile directory, which is what reaches the hoisted modules', () => {
+    // The regression this list exists for. A profile DIRECTORY is the working
+    // anchor: Node walks upward from it to `profiles/node_modules/@deepseek-ai`.
+    // Anchoring to `profiles/package.json` assumed a manifest that does not
+    // exist, so every anchor missed and the plugin loaded without its tool.
+    const home = process.env.DSH_HOME
+      ?? (process.env.USERPROFILE ?? process.env.HOME)
+    if (home === undefined) return
+
+    const profilesDir = `${home.replace(/\\/gu, '/')}/profiles`.replace(/\//gu, '\\')
+    const fromProfiles = candidateAnchors().filter((a) => a.startsWith(profilesDir))
+    // Either a profile directory contributed an anchor, or this machine has no
+    // profiles at all — in which case there is nothing to assert.
+    const hasProfiles = fromProfiles.length > 0
+    if (hasProfiles) {
+      assert.ok(
+        fromProfiles.some((anchor) => !anchor.endsWith('profiles\\package.json')),
+        'expected an anchor inside a profile directory, not only profiles/package.json',
+      )
+    }
+  })
 })
 
 describe('resolveWithDiagnostics', () => {
