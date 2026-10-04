@@ -26,7 +26,7 @@ GAC plugin      →  execution mode, write scope, write claims, verification, ev
 | 0.5 | `lib/index.js` — DSH shell, installed in the `core-020` profile | **verified in a live session** |
 | 1 | `lib/project-state.js` — Project Adapter loaded from `.dsh/gac/project.json` | done |
 | 1 | `lib/tool-project.js` — `gac_project`: adapter inspection + mode declaration | done |
-| 2 | Write claims (cross-session collision protection) | not started |
+| 2 | `lib/claims.js` + `lib/claim-store.js` — write claims | done |
 | 3 | Coordinator: DAG, ready nodes, STANDARD_TASK | not started |
 | 4 | Independent verification: plan, falsification, traceability | not started |
 | 5 | Session event projection | not started |
@@ -44,6 +44,25 @@ GAC plugin      →  execution mode, write scope, write claims, verification, ev
 The decisive check is the filesystem, not the message: neither refused path
 existed afterwards. The refusal happens **before** dispatch, which is the
 assumption the rest of this architecture rests on.
+
+**Phase 1 is verified in a live session too.** `gac_project` reported the
+project, its five declared high-risk paths and its capability vocabulary; then a
+`direct_edit` targeting `lib/write-scope.js` was escalated to `high_risk_task`
+automatically.
+
+The interesting part is what the model did with that. It had declared
+`direct_edit` with a genuine argument (one file, reversible, immediately
+verifiable, no interface or migration change) and did not contrive a way around
+the escalation:
+
+> This is not a mis-declared mode. The path's high-risk property is declared by
+> the project in advance; the declaration step cannot bypass it, and should not
+> try to. `lib/write-scope.js` is permission-scope core — changing it directly
+> affects which writes are refused, so escalating matches the design intent.
+
+That is the behaviour the tool description is written to produce. A model that
+*tried* to guess the gate would sometimes pick heavier process than the work
+needs, which is the ceremony the design exists to avoid.
 
 **The guard is inert until a session declares a scope.** Every session starts
 ungoverned and the gate allows everything. That is deliberate: a gate that
@@ -204,6 +223,38 @@ gac_scope {}                    # inspect the current scope
 gac_scope { clear: true }       # release it, returning to ungoverned
 ```
 
+### Declaring also claims the paths against other sessions
+
+A declaration is the moment a session says "these paths are mine", so that is
+when a cross-session collision is detected. It is not a separate step the model
+has to remember — a protection that must be remembered is one that will
+eventually be skipped.
+
+```text
+session A: gac_scope { task_id: "REQ-1", scope: ["src/"] }
+           → governs, and claims src/
+
+session B: gac_scope { task_id: "REQ-2", scope: ["src/a.c"] }
+           → REFUSED: declared write scope "src/a.c" overlaps "src/" held by
+             task REQ-1 node REQ-1 (session ..., dispatch ...).
+```
+
+The refusal names the holder and both paths, so the model can narrow its scope
+instead of retrying. B stays **ungoverned** rather than half-declared — a session
+governed by a scope it does not own would be a guard enforcing paths it was never
+granted.
+
+Claims live in `<project>/.dsh/gac/claims/`, one file per session, so they are
+visible to every session and survive a plugin reload. Declaring again replaces
+your own scope; it never merges with it. `clear` withdraws the claim.
+
+Scope overlap is compared as **prefix overlap**, not as literal strings, so
+`src/` and `src/deep/a.c` collide as they should. The rule deliberately
+over-reports in one case: `src/*.c` and `src/*.h` share the prefix `src` and are
+treated as conflicting although the sets are disjoint. A false positive costs
+some parallelism; a false negative lets two writers hit one file, which cannot be
+separated afterwards. See the header of `lib/claims.js`.
+
 ### Declare what the project considers risky
 
 `.dsh/gac/project.json` at the project root. Unknown top-level keys are
@@ -263,7 +314,11 @@ Stated here rather than discovered later (adaptation plan §7):
 3. **Scopes are in-memory.** A restart drops every scope; that is the correct
    failure direction, since a stale scope would enforce an authority nobody
    holds. Durable scopes arrive with the coordinator, re-derived from the session
-   log.
+   log. **Claims are durable**, so a crash can leave one behind — it stops
+   blocking as soon as its session is no longer live, because a store with a
+   liveness predicate prunes it before judging the next conflict. With no
+   liveness information at all, claims are kept rather than guessed dead:
+   blocking a writer is recoverable, and two writers on one file is not.
 4. **Unknown tools fail closed while governed.** A tool added by a harness
    upgrade is refused until it is classified in `lib/tool-targets.js`. This is
    intentional: a runtime upgrade must not silently widen authority.
@@ -292,6 +347,8 @@ lib/
   index.js           DSH shell: registers the guard and the declaration tools
   plugin.js          the pre-execute gate (fails closed on every unknown)
   write-scope.js     strict path containment — the security boundary
+  claims.js          write-claim conflict detection (pure)
+  claim-store.js     durable one-file-per-claim store with orphan pruning
   project.js         adapter validation + execution-mode escalation (pure)
   project-state.js   adapter loading, caching, and per-session mode state
   tool-project.js    the gac_project tool
