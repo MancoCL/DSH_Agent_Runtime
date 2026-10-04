@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "project": {
+    "id": "dsh-gac-runtime",
+    "title": "GAC runtime plugin for DeepSeek Harness"
+  },
+  "capabilities": [
+    "implementation",
+    "verification",
+    "review",
+    "documentation"
+  ],
+  "executors": {
+    "implementation": ["builder"],
+    "verification": ["verifier"],
+    "review": ["reviewer"],
+    "documentation": ["builder"]
+  },
+  "risk": {
+    "high_risk_paths": [
+      "lib/write-scope.js",
+      "lib/plugin.js",
+      "lib/tool-targets.js",
+      "lib/session-scope.js",
+      "lib/resolve-dsh.js"
+    ],
+    "default_level": "low"
+  },
+  "memory": {
+    "allow": ["current_project", "global_reusable"],
+    "deny_as_project_fact": ["foreign_project", "unknown"]
+  },
+  "authority": {
+    "enforcement_mode": "tool_guard"
+  },
+  "checkpoint": {
+    "provider": "git",
+    "policy": "required_per_task"
+  }
+}
