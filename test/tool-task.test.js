@@ -1075,6 +1075,77 @@ describe('接口契约门禁 —— 必须在动手之前', () => {
     assert.equal(h.store.load('REQ-1').nodes.get('T1').status, 'pending')
   })
 
+  it('同一批里有 ≥2 个写文件的节点时，即使适配器没声明也要求契约', async () => {
+    // 这条规则是走一遍真实需求时暴露出来的：本仓库适配器只对 high_risk_task 要求契约，
+    // 于是「并行写功能代码 + 写测试代码」——契约存在的全部理由——恰好不在门禁覆盖内，
+    // 两个节点连契约都没有就并行开工了。用风险档位当判据是选错了轴：决定要不要契约的是
+    // 任务的形状（有没有并行写入），不是它的风险级别。
+    const h = dispatchHarness()
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-P',
+      mode: 'standard_task',
+      plan: { nodes: [
+        { id: 'T1', objective: '写功能代码', required_capabilities: ['implementation'], write_scope: ['lib/a.js'] },
+        { id: 'T2', objective: '写测试代码', required_capabilities: ['implementation'], write_scope: ['test/a.test.js'] },
+      ] },
+    }, h.exec)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-P' }, h.exec)
+    assert.equal(value.action, 'contract_required')
+    // 两个写者都要被拦下：只拦一个，另一个仍会照着尚未存在的约定开工。
+    assert.deepEqual([...value.nodes].sort(), ['T1', 'T2'])
+    assert.match(value.message, /并行开工/u)
+  })
+
+  it('只有一个写者时不设这道门，不制造无谓仪式', async () => {
+    const h = dispatchHarness()
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-S',
+      mode: 'standard_task',
+      plan: { nodes: [
+        { id: 'T1', objective: '改一个文件', required_capabilities: ['implementation'], write_scope: ['lib/a.js'] },
+      ] },
+    }, h.exec)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-S' }, h.exec)
+    assert.notEqual(value.action, 'contract_required')
+  })
+
+  it('并行写入时契约冻结后两个写者一起放行', async () => {
+    const h = dispatchHarness()
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-P',
+      mode: 'standard_task',
+      plan: { nodes: [
+        { id: 'T1', objective: '写功能代码', required_capabilities: ['implementation'], write_scope: ['lib/a.js'] },
+        { id: 'T2', objective: '写测试代码', required_capabilities: ['implementation'], write_scope: ['test/a.test.js'] },
+      ] },
+    }, h.exec)
+    await h.tool.execute({
+      action: 'contract',
+      contract_action: 'freeze',
+      task_id: 'REQ-P',
+      interface_contract: {
+        name: 'a',
+        operations: [{ name: 'a', signature: 'a(): void', behavior: '无副作用。' }],
+      },
+    }, h.exec)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-P' }, h.exec)
+    assert.notEqual(value.action, 'contract_required')
+    // 两个写者同批派遣，也就是真的并行开工。
+    assert.deepEqual([...h.calls].map((call) => call.node.id).sort(), ['T1', 'T2'])
+  })
+
+  it('适配器声明了模式要求契约时，单个写者也要先有契约', async () => {
+    // 工程侧可以加严：单写者的高风险改动也可能需要先把接口写下来。
+    const h = contractHarness()
+    await createStandard(h)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    assert.equal(value.action, 'contract_required')
+    assert.match(value.message, /工程适配器声明了/u)
+  })
+
   it('契约冻结之后可以派遣', async () => {
     const h = contractHarness()
     await createStandard(h)
@@ -1152,6 +1223,111 @@ describe('接口契约门禁 —— 必须在动手之前', () => {
     const after = await h.tool.execute({ action: 'contract', task_id: 'REQ-1' }, h.exec)
     assert.match(after.message, /已冻结/u)
     assert.ok(after.plan_id)
+  })
+})
+
+describe('验证证据门禁 —— 触发条件是「计划在不在」，不是风险档位', () => {
+  /**
+   * 一个 standard_task，含一个不写文件的节点，并登记一份计划。
+   *
+   * @param {object} h
+   * @param {boolean} withPlan
+   * @returns {Promise<object|undefined>}
+   */
+  async function standardWithPlan(h, withPlan) {
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-S',
+      mode: 'standard_task',
+      plan: { nodes: [
+        { id: 'T1', objective: '出方案', required_capabilities: ['implementation'], write_scope: [] },
+      ] },
+    }, h.exec)
+    if (!withPlan) {
+      // 没有计划时也要先把节点跑完，否则拦下它的是「节点未完成」那道门，
+      // 这条用例就测不到它想测的那道门。
+      await h.tool.execute({ action: 'advance', task_id: 'REQ-S' }, h.exec)
+      return undefined
+    }
+    await h.tool.execute({
+      action: 'plan',
+      task_id: 'REQ-S',
+      criteria: ['AC1'],
+      verification_plan: { cases: [
+        { id: 'V1', covers: ['AC1'], type: 'positive', expect: 'x' },
+        { id: 'V2', covers: ['AC1'], type: 'falsification', expect_failure: 'y' },
+      ] },
+    }, h.exec)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-S' }, h.exec)
+    return h.store.loadPlan('REQ-S')
+  }
+
+  it('standard_task 只要登记了计划，收口就必须附验证证据', async () => {
+    // 这条是走一遍真实需求时踩到的：只看模式会留下绕行口——登记了 20 用例的冻结计划、
+    // 却因为不声明高风险而在收口时完全不做证据核对，计划的全部价值在终点被丢掉，而表面
+    // 上一切正常。门禁守的应当是它所守护的那件东西是否存在。
+    const h = dispatchHarness({ evidence: [evidenceRecord('ev-1')] })
+    await standardWithPlan(h, true)
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-S',
+      evidence: { all_criteria_covered: true },
+    }, h.exec)
+    assert.equal(value.action, 'complete_refused')
+    assert.equal(value.blockers.includes('GAC_INDEPENDENT_EVIDENCE_MISSING'), true)
+  })
+
+  it('standard_task 附上对得上的证据就能收口', async () => {
+    const h = dispatchHarness({ evidence: [evidenceRecord('ev-1')] })
+    const plan = await standardWithPlan(h, true)
+    const { planId } = await import('../lib/verification.js')
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-S',
+      evidence: {
+        all_criteria_covered: true,
+        verification: {
+          plan_id: planId(plan),
+          executions: [
+            { case_id: 'V1', outcome: 'passed', evidence_ref: 'ev-1#正例' },
+            { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-1#反例' },
+          ],
+        },
+      },
+    }, h.exec)
+    assert.equal(value.action, 'completed')
+  })
+
+  it('没有计划、也不是高风险的任务，行为不变', async () => {
+    // 门禁不该凭空扩大到没有计划的任务上：没有计划就没有要核对的承诺。
+    const h = dispatchHarness()
+    await standardWithPlan(h, false)
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-S',
+      evidence: { all_criteria_covered: true },
+    }, h.exec)
+    assert.equal(value.action, 'completed')
+  })
+
+  it('高风险任务没有计划时仍然拒绝，并指明要先登记计划', async () => {
+    const h = dispatchHarness()
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-HR',
+      mode: 'high_risk_task',
+      plan: { nodes: [
+        { id: 'T1', objective: '实现', required_capabilities: ['implementation'], write_scope: [] },
+      ] },
+    }, h.exec)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-HR',
+      evidence: { all_criteria_covered: true },
+    }, h.exec)
+    assert.equal(value.action, 'complete_refused')
+    assert.deepEqual(value.blockers, ['GAC_VERIFICATION_PLAN_MISSING'])
   })
 })
 

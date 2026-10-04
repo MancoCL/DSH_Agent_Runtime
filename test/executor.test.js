@@ -93,6 +93,32 @@ describe('EXECUTION_STATUSES', () => {
 /** 正常流里那段文本，供断言复用而不是各写一遍。 */
 const GOOD_TEXT = '检查了三条验收，全部通过'
 
+describe('createSessionExecutor — 理由必须说对', () => {
+  it('写文件的节点：说明它要写哪些文件', async () => {
+    const outcome = await createSessionExecutor().run({
+      node: { id: 'T1', write_scope: ['lib/a.js'] },
+    })
+    assert.equal(outcome.status, 'in_progress')
+    assert.match(outcome.summary, /需要写入 \[lib\/a\.js\]/u)
+  })
+
+  it('不写文件的节点：不能报成「需要写入 []」', async () => {
+    // 这条消息是模型判断「为什么轮到我自己动手」的唯一依据。把不写文件的节点（例如独立
+    // 验证节点）说成「需要写入 []」，会把它引向错误的动作：去改文件，而它一个都不该动。
+    const outcome = await createSessionExecutor().run({
+      node: { id: 'T3', write_scope: [] },
+    })
+    assert.equal(outcome.status, 'in_progress')
+    assert.doesNotMatch(outcome.summary, /需要写入/u)
+    assert.match(outcome.summary, /没有可承载它的进程内执行者/u)
+  })
+
+  it('写范围缺失时也不编造', async () => {
+    const outcome = await createSessionExecutor().run({ node: { id: 'T9' } })
+    assert.doesNotMatch(outcome.summary, /需要写入/u)
+  })
+})
+
 describe('createRoutedExecutors — 名字必须逐字等于路由的键', () => {
   /** 一条最小可用的路由。 */
   const ROUTES = {
