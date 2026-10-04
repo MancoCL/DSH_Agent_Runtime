@@ -379,6 +379,45 @@ Tasks are keyed by **project**, not by session: one requirement's nodes are
 advanced by different executors, and a session-scoped record would be invisible
 to whoever picks up the next node.
 
+### Dispatch actually invokes
+
+`advance` does not merely record that a node should run — it routes the node by
+its `required_capabilities` and invokes the executor:
+
+```text
+advance → routes T1 (implementation) to builder, T2 (verification) to verifier
+        → invokes, applies the returned status, then re-decides the next action
+advance → complete_task
+complete { evidence: { all_criteria_covered: true } } → completed
+advance → done
+```
+
+Four properties make that honest rather than decorative:
+
+**Routing prefers the tightest fit.** Among executors covering the required
+capabilities, the one with the *fewest extras* wins, so a generalist does not
+absorb every node — otherwise capability declarations would be decorative and
+verification independence impossible. A node no single executor covers is
+rejected before any file is touched, naming the gap (`拆节点`, split the node —
+do not declare an executor omnipotent).
+
+**An in-process call cannot write.** It has no write tools, so it serves only
+nodes whose `write_scope` is empty and *declines* the rest. A node that writes
+goes to a session executor, which registers it as `in_progress` rather than
+fabricating a report about files it never touched.
+
+**`in_progress` is a real answer.** A run still going, or one that could not
+start, is not a pass and not a failure. Neither is invented.
+
+**Closing is gated on evidence.** `complete` is refused unless every node is
+completed and `all_criteria_covered` is true — a refusal leaves the status
+untouched, because half a close-out is harder to unwind than none. Before this
+existed, `complete_task` repeated forever and a task could never close.
+
+Provider routes come from the adapter's `execution.provider_routes`, so
+"the verifier runs on a different model" is configuration rather than convention
+— which is what makes independence real instead of nominal.
+
 ---
 
 ## Known limits
@@ -415,7 +454,7 @@ Stated here rather than discovered later (adaptation plan §7):
 ## Develop
 
 ```bash
-npm test          # 349 tests, no DSH required
+npm test          # 393 tests, no DSH required
 ```
 
 The library modules are pure and dependency-injected precisely so the suite runs
@@ -430,6 +469,8 @@ lib/
   write-scope.js     strict path containment — the security boundary
   claims.js          write-claim conflict detection (pure)
   claim-store.js     durable one-file-per-claim store with orphan pruning
+  capability-router.js  pick an executor by required capabilities (pure)
+  executor.js        execution boundary: invoke, or refuse honestly
   coordinator.js     task DAG, ready resolution, state transitions (pure)
   task-store.js      durable one-file-per-task store with load-time revalidation
   tool-task.js       the gac_task tool

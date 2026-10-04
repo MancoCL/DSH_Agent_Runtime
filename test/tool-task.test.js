@@ -100,7 +100,7 @@ describe('工具形状', () => {
     const store = new TaskStore({ root: scratch() })
     const options = taskToolOptions({ taskStoreFor: () => store, sessionRootFor: () => store.root })
     assert.deepEqual([...options.parameters.action.enum], [
-      'create', 'advance', 'reopen', 'status', 'list',
+      'create', 'advance', 'reopen', 'status', 'list', 'complete',
     ])
     for (const [name, spec] of Object.entries(options.parameters)) {
       assert.equal(Object.hasOwn(spec, 'required'), false, `${name} 不应带 required 键`)
@@ -172,13 +172,14 @@ describe('create', () => {
 })
 
 describe('advance — 不能宣告完成', () => {
-  it('第一次推进给出派遣，并铸造执行身份', async () => {
+  it('第一次推进就地派遣，并如实报告「等待」而不是「已派遣」', async () => {
     const h = harness()
     await createStandard(h)
     const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
-    assert.equal(value.action, 'dispatch')
-    assert.deepEqual(value.nodes, ['T1'])
-    // 派遣身份必须在盘上，因为回报时要拿它对齐。
+    // 本 harness 没有配置执行者，所以派遣之后无可等待的结果。说成 dispatch 会让
+    // 「已派遣」被读成「已在跑」；说成 await 才是实情。
+    assert.equal(value.action, 'await')
+    // 执行身份必须在盘上，因为回报时要拿它对齐。
     const task = h.store.load('REQ-1')
     assert.equal(task.nodes.get('T1').execution.active_dispatch_id, 'REQ-1-T1-A1')
   })
@@ -202,9 +203,12 @@ describe('advance — 不能宣告完成', () => {
       report: { node_id: 'T1', dispatch_id: 'REQ-1-T1-A1', status: 'completed' },
     }, h.exec)
     assert.deepEqual(value.classifications, ['accepted'])
-    // T1 完成后 T2 就绪，同一轮里应当被派遣。
-    assert.equal(value.action, 'dispatch')
-    assert.deepEqual(value.nodes, ['T2'])
+    // T1 完成后 T2 就绪，同一轮里就应当被派遣——所以看盘上的状态，而不是看返回的
+    // 行动名：行动名在同一轮里可能已经推进到「等待」。
+    const task = h.store.load('REQ-1')
+    assert.equal(task.nodes.get('T1').status, 'completed')
+    assert.equal(task.nodes.get('T2').status, 'in_progress')
+    assert.equal(task.nodes.get('T2').execution.active_dispatch_id, 'REQ-1-T2-A1')
   })
 
   it('身份对不上的结果被判过期，且一个字节都不改', async () => {
@@ -291,6 +295,221 @@ describe('advance — 不能宣告完成', () => {
       () => h.tool.execute({ action: 'advance', task_id: 'REQ-absent' }, h.exec),
       /找不到任务/u,
     )
+  })
+})
+
+/**
+ * 一个接了执行者与适配器的实例，用来验证「派遣」不等于「登记」。
+ *
+ * @param {object} [options]
+ * @param {object} [options.executors] - 适配器里的 executors 映射。
+ * @param {readonly object[]} [options.runtimeExecutors] - 可用执行者；缺省给一对 builder/verifier。
+ * @returns {{tool: object, store: TaskStore, exec: object, calls: object[]}}
+ */
+function dispatchHarness(options = {}) {
+  const store = new TaskStore({ root: scratch() })
+  const calls = []
+  const adapters = {
+    capabilities: ['implementation', 'verification'],
+    executors: options.executors ?? {
+      implementation: ['builder'],
+      verification: ['verifier'],
+    },
+  }
+  /** 造一个会记录调用并报完成的执行者。 */
+  const make = (name, summary) => ({
+    name,
+    supports: () => true,
+    run: async (input) => {
+      calls.push(input)
+      return { status: 'completed', summary, artifact: `${name}-artifact` }
+    },
+  })
+  const executors = options.runtimeExecutors ?? [make('builder', '实现完成'), make('verifier', '验证通过')]
+  const tool = createTaskTool({
+    defineTool: identityDefineTool,
+    taskStoreFor: () => store,
+    sessionRootFor: () => store.root,
+    adapterFor: () => adapters,
+    executorsFor: () => executors,
+  })
+  return { tool, store, exec: { agent: { session: { id: 'session-1' } } }, calls }
+}
+
+describe('advance 真的调用执行者', () => {
+  it('派遣之后执行者真的被调用', async () => {
+    // 这一条是本阶段的核心：在此之前「派遣」只写盘不调用，于是返回里的
+    // 「已派遣」与「已在跑」长得一样，而实际上什么都没发生。
+    const h = dispatchHarness()
+    await createStandard(h)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    assert.equal(h.calls.length, 1, '执行者必须被调用一次')
+    assert.equal(h.calls[0].node.id, 'T1')
+    assert.equal(h.calls[0].dispatchId, 'REQ-1-T1-A1')
+    // 执行者报完成，状态就该被推进，且下一轮接着派遣 T2。
+    assert.equal(value.status, 'in_progress')
+    assert.deepEqual(value.classifications, ['accepted'])
+    assert.equal(h.store.load('REQ-1').nodes.get('T1').status, 'completed')
+  })
+
+  it('一条命令跑完 STANDARD 任务的 Builder 与 Verifier', async () => {
+    const h = dispatchHarness()
+    await createStandard(h)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    assert.deepEqual(h.calls.map((call) => call.node.id), ['T1', 'T2'])
+    assert.equal(value.action, 'complete_task')
+  })
+
+  it('按能力路由：实现节点给 builder，验证节点给 verifier', async () => {
+    const h = dispatchHarness()
+    await createStandard(h)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    assert.deepEqual(h.calls.map((call) => call.node.id), ['T1', 'T2'])
+    // 两个节点由不同执行者承载，这正是「不固定岗位」的落点。
+    const routed = h.calls.map((call) => call.node.required_capabilities[0])
+    assert.deepEqual(routed, ['implementation', 'verification'])
+  })
+
+  it('执行者报 blocked 时登记为阻塞，而不是当作完成', async () => {
+    const h = dispatchHarness({
+      runtimeExecutors: [{
+        name: 'builder',
+        supports: () => true,
+        run: async () => ({ status: 'blocked', summary: '需要生产环境凭据' }),
+      }],
+    })
+    await createStandard(h)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    assert.deepEqual(value.classifications, ['accepted'])
+    assert.equal(h.store.load('REQ-1').nodes.get('T1').status, 'blocked')
+  })
+
+  it('执行者说仍在进行时保持执行中，不伪造完成', async () => {
+    const h = dispatchHarness({
+      runtimeExecutors: [{
+        name: 'builder',
+        supports: () => true,
+        run: async () => ({ status: 'in_progress', summary: '会话还在跑' }),
+      }],
+    })
+    await createStandard(h)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    assert.deepEqual(value.classifications, [], '仍在进行不是可迁移的结果')
+    assert.equal(h.store.load('REQ-1').nodes.get('T1').status, 'in_progress')
+    assert.match(value.message, /会话还在跑/u)
+  })
+
+  it('适配器没声明执行者时不猜一个，并如实说明', async () => {
+    const h = dispatchHarness({ executors: {} })
+    await createStandard(h)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    assert.equal(h.calls.length, 0)
+    assert.match(value.message, /没有可承载|没有可声明|未派遣/u)
+  })
+
+  it('路由选中的执行者承载不了该节点时如实登记，而不是伪造成功', async () => {
+    // 典型情形：节点要写文件，而可用执行者没有写工具。
+    const h = dispatchHarness({
+      runtimeExecutors: [{
+        name: 'builder',
+        supports: () => false,
+        run: async () => ({ status: 'completed', summary: '不该被调用' }),
+      }],
+    })
+    await createStandard(h)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    assert.equal(h.calls.length, 0, '承载不了就不该被调用')
+    assert.match(value.message, /不能承载/u)
+    assert.deepEqual(value.classifications, [])
+  })
+})
+
+describe('complete — 收口必须过证据判定', () => {
+  it('证据不足时拒绝收口，且不改动状态', async () => {
+    // 半个收口比没收口更难收拾：状态一旦置为 completed，后续结果就再动不了它。
+    const h = dispatchHarness()
+    await createStandard(h)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-1',
+      evidence: { all_criteria_covered: false },
+    }, h.exec)
+    assert.equal(value.action, 'complete_refused')
+    assert.deepEqual(value.blockers, ['criteria_uncovered'])
+    assert.equal(h.store.load('REQ-1').status, 'in_progress')
+  })
+
+  it('节点未全部完成时拒绝收口，并指出是哪个节点', async () => {
+    const h = dispatchHarness()
+    await createStandard(h)
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-1',
+      evidence: { all_criteria_covered: true },
+    }, h.exec)
+    assert.equal(value.action, 'complete_refused')
+    assert.deepEqual(value.blockers, ['node_not_completed', 'node_not_completed'])
+    assert.match(value.message, /T1/u)
+  })
+
+  it('阻塞评审与未决审批都拦住收口', async () => {
+    const h = dispatchHarness()
+    await createStandard(h)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-1',
+      evidence: {
+        all_criteria_covered: true,
+        blocking_review_issue: true,
+        unresolved_approval: true,
+      },
+    }, h.exec)
+    assert.equal(value.action, 'complete_refused')
+    assert.deepEqual([...value.blockers].sort(), ['blocking_review_issue', 'unresolved_approval'])
+  })
+
+  it('证据齐备时收口，任务进入终态', async () => {
+    const h = dispatchHarness()
+    await createStandard(h)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-1',
+      evidence: { all_criteria_covered: true },
+    }, h.exec)
+    assert.equal(value.action, 'completed')
+    assert.equal(h.store.load('REQ-1').status, 'completed')
+  })
+
+  it('收口之后不再反复要求收口，而是报 done', async () => {
+    // 没有这一步时 complete_task 会一直重复，任务永远收不了口。
+    const h = dispatchHarness()
+    await createStandard(h)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-1',
+      evidence: { all_criteria_covered: true },
+    }, h.exec)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    assert.equal(value.action, 'done')
+  })
+
+  it('缺少 evidence 视为证据未覆盖，不放行', async () => {
+    const h = dispatchHarness()
+    await createStandard(h)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    const value = await h.tool.execute({ action: 'complete', task_id: 'REQ-1' }, h.exec)
+    assert.equal(value.action, 'complete_refused')
   })
 })
 
