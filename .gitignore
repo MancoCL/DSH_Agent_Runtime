@@ -11,13 +11,13 @@ node_modules/
 # Runtime write-claims are transient coordination state
 .dsh/gac/claims/
 
+# Task records are runtime state, not plugin source
+.dsh/gac/tasks/
+
 # OS noise
 Thumbs.db
 .DS_Store
 
-# scratch commit-message files
-.commitmsg
-
 # scratch commit-message files (one per task, never committed)
-.commitmsg-*
 .commitmsg
+.commitmsg-*
