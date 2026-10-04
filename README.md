@@ -38,6 +38,12 @@ GAC plugin      →  execution mode, write scope, write claims, verification, ev
 | 6 | `lib/metrics.js` + `lib/tool-metrics.js` — metrics with a read-only outlet | done |
 | 6 | `lib/tool-evidence.js` — evidence ids discoverable, so they can be cited | done |
 | 5 | `lib/gac-events.js` — GAC events in the session log + message projection | done (visibility, not state authority) |
+| 7 | Legacy cutover — disposition and E2E status recorded | recorded in [docs/CUTOVER.md](docs/CUTOVER.md); nothing outside this repo is touched |
+
+**Read [docs/CUTOVER.md](docs/CUTOVER.md) before trusting the table above.** It records, per item,
+what is actually verified and what is not — including that only **two of the plan's six E2E
+criteria** have been verified, and that three are not implemented as specified. The table here
+says what has code; that document says what has evidence.
 
 **Phase 0 is verified, not merely tested.** In a live session with
 `scope: ["docs/scratch.md"]`:
