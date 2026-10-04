@@ -47,12 +47,29 @@ plugin_manager { action: install_bundle, target: "<this directory>" }
 ```
 
 This adds `dsh-gac-runtime` as a `link:` dependency of the active profile and
-appends it to `dsh.profile.bundles`. Two consequences worth knowing:
+appends it to `dsh.profile.bundles`. Consequences worth knowing:
 
 - **A restart is required.** The harness HMR entry watches *configuration*, not
   module files (the base bundle sets `root: []` when a launcher supplies a
-  profile context). Editing `lib/*.js` therefore does **not** reload the plugin
-  — disable and re-enable the entry, or restart, to pick up code changes.
+  profile context). Editing `lib/*.js` therefore does **not** reload the plugin.
+  Disabling and re-enabling the entry re-runs `apply` but does **not** re-import
+  the module, so it keeps executing the code it loaded at startup — only a
+  restart picks up code changes.
+
+  To iterate without restarts, widen the HMR watch roots in the *profile* patch
+  (`~/.dsh/profiles/<profile>/cordis.patch.yml`):
+
+  ```yaml
+  - id: hmr
+    name: "@deepseek-ai/dsh-hmr"
+    config:
+      root: ["."]
+  ```
+
+  A profile patch layer has the highest precedence, so it overrides the base
+  bundle's `root: []`. It takes effect on the next restart; afterwards `lib/*.js`
+  edits reload on their own.
+
 - Because it is a link, the plugin keeps its own `node_modules` and cannot
   bare-import `@deepseek-ai/*`. `lib/resolve-dsh.js` resolves those from the
   profile directory instead.
@@ -82,6 +99,22 @@ is not reliably visible.
 
 The `observed.calls` counter on unload is the proof the interception is live: it
 counts every tool call the gate saw.
+
+### When the tool does not appear
+
+Read `scope_tool` and `scope_tool_note` in the load report first — the note names
+every resolution anchor tried and why each failed. That diagnostic exists because
+an earlier build reported only "not resolvable", which sent one debugging session
+in the wrong direction twice.
+
+```bash
+node scripts/diagnose-resolution.js   # how the anchor list is derived, per-anchor reasons
+node scripts/diagnose-import.js       # separates resolution failure from import failure
+```
+
+Run `npm test` before restarting: the suite exercises the real `defineTool` when
+DSH is present, and catches authoring mistakes that would otherwise surface only
+as a missing tool after a restart.
 
 ---
 
