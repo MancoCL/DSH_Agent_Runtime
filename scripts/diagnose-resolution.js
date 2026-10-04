@@ -9,7 +9,7 @@
  */
 
 import {
-  candidateAnchors,
+  anchorReport,
   describeResolutionFailure,
   resolveWithDiagnostics,
 } from '../lib/resolve-dsh.js'
@@ -21,13 +21,24 @@ console.log('execPath       :', process.execPath)
 console.log('DSH_HOME       :', process.env.DSH_HOME ?? '(unset)')
 console.log('USERPROFILE    :', process.env.USERPROFILE ?? '(unset)')
 console.log('')
-console.log('anchors, in order:')
 
-const { attempts } = resolveWithDiagnostics(SPECIFIER)
+const { anchors, notes } = anchorReport()
+console.log('how the anchor list was derived:')
+for (const note of notes) console.log(`  - ${note}`)
+console.log('')
+console.log(`anchors, in order (${anchors.length}):`)
+
+const { attempts, resolved } = resolveWithDiagnostics(SPECIFIER, anchors)
 for (const { anchor, reason } of attempts) {
   console.log(`  ${reason === 'anchor does not exist' ? 'MISSING' : 'tried  '} ${anchor} [${reason}]`)
 }
+// Anchors after the one that succeeded were never reached.
+if (resolved !== undefined) {
+  const reached = new Set(attempts.map((a) => a.anchor))
+  for (const anchor of anchors.filter((a) => !reached.has(a))) {
+    console.log(`  (not reached) ${anchor}`)
+  }
+}
 
 console.log('')
-const resolved = resolveWithDiagnostics(SPECIFIER).resolved
 console.log('resolved       :', resolved ?? describeResolutionFailure(SPECIFIER))
