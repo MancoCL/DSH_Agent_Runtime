@@ -380,10 +380,30 @@ declare module '@deepseek-ai/dsh-session' {
 
 ```js
 ctx.sessions.registerMessageProjection({ type: 'gac/task-created', project: ... });
+ctx.sessions.get(sessionId).append('gac/task-created', { ... });
 ```
 
-于是 **Current State = reduce(Session Events)**，不再维护
-「可变状态 + 历史状态」混合 JSON——这正是大纲 §39 要的，且是内核原生能力。
+**实测修正（Phase 5 落地时发现）**：原方案称「于是 Current State = reduce(Session Events)，
+不再维护可变状态 + 历史状态混合 JSON」。这条**对任务状态不成立**：
+
+- 会话是会话作用域的，且 `ctx.sessions` 自述为**内存中的**会话存储，持久化由另一个插件挂在
+  每个会话的写句柄上；而**任务是工程作用域的**——同一个需求的多个节点会由不同执行者、在不同
+  会话里推进（这正是任务记录当初按工程存放的原因）。
+- 一个跨会话的任务，其历史分散在多个会话日志里，而**没有任何工程级事件流或索引**能把它聚起来。
+
+因此事件层做的是它做得到的事：把 GAC 动作追加进会话日志，提供**可见性与审计**，并按 §39 投影
+成对话消息。**任务状态的权威仍然是 `.dsh/gac/tasks/` 里的记录。**
+
+另外三处实测结论：
+
+- 自定义事件类型**可以直接 append**：`validateSessionEventData` 只检查已知类型，未识别的类型
+  不受约束，唯一要求是载荷可 JSON 序列化。因此纯 JS 插件不需要类型合并也能写事件；类型合并
+  只是给 TypeScript 的编译期便利。
+- `MessageSourceMap` 只有 user / model / tool / system-prompt 四种来源，**没有「运行时自己」
+  这一格**，因此事件投影必然把运行时的话归到别人名下（这里用 user 加 `[GAC]` 前缀标记，那是
+  失真而不是等价物）。
+- `deriveEventMessage` 对投影返回的消息**不做任何校验**，而 `MessageBase` 要求 `id` 与
+  `source`，且 `id` 必须跨次派生稳定；少写或写错不会报错，只会让形状不全的消息流进对话。
 
 ---
 
