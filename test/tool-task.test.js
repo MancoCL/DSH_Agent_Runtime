@@ -100,7 +100,7 @@ describe('工具形状', () => {
     const store = new TaskStore({ root: scratch() })
     const options = taskToolOptions({ taskStoreFor: () => store, sessionRootFor: () => store.root })
     assert.deepEqual([...options.parameters.action.enum], [
-      'create', 'advance', 'reopen', 'status', 'list', 'complete',
+      'create', 'plan', 'advance', 'reopen', 'status', 'list', 'complete',
     ])
     for (const [name, spec] of Object.entries(options.parameters)) {
       assert.equal(Object.hasOwn(spec, 'required'), false, `${name} 不应带 required 键`)
@@ -510,6 +510,286 @@ describe('complete — 收口必须过证据判定', () => {
     await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
     const value = await h.tool.execute({ action: 'complete', task_id: 'REQ-1' }, h.exec)
     assert.equal(value.action, 'complete_refused')
+  })
+})
+
+describe('验证计划门禁 —— 计划必须在实现之前', () => {
+  /**
+   * 一个高风险任务，含实现与验证两个节点。
+   *
+   * @param {object} h
+   * @returns {Promise<object>}
+   */
+  async function createHighRisk(h) {
+    return h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-HR',
+      mode: 'high_risk_task',
+      plan: {
+        nodes: [
+          { id: 'T1', objective: '实现', required_capabilities: ['implementation'], write_scope: ['src/'] },
+          { id: 'T2', objective: '独立验证', depends_on: ['T1'], required_capabilities: ['verification'], write_scope: [] },
+        ],
+      },
+    }, h.exec)
+  }
+
+  /** 一份覆盖 AC1 的完整计划参数。 */
+  const PLAN_ARGS = {
+    criteria: ['AC1'],
+    verification_plan: {
+      cases: [
+        { id: 'V1', covers: ['AC1'], type: 'positive', expect: '正常输入被接受' },
+        { id: 'V2', covers: ['AC1'], type: 'falsification', expect_failure: '越界输入被拒绝' },
+      ],
+    },
+  }
+
+  it('高风险任务在验证节点被派遣之前要求先登记计划', async () => {
+    const h = dispatchHarness()
+    await createHighRisk(h)
+    // T1 是实现节点，不需要计划就能开工。
+    const first = await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
+    assert.equal(first.action, 'dispatch')
+    assert.deepEqual(h.calls.map((call) => call.node.id), ['T1'])
+    // T1 完成后 T2 就绪，但它承载验证能力且没有计划，于是停下。
+    const second = await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
+    assert.equal(second.action, 'plan_required')
+    assert.deepEqual(second.nodes, ['T2'])
+    assert.match(second.message, /实现之前/u)
+    // T2 没有被派遣，也没有被调用。
+    assert.deepEqual(h.calls.map((call) => call.node.id), ['T1'])
+    assert.equal(h.store.load('REQ-HR').nodes.get('T2').status, 'pending')
+  })
+
+  it('只拦验证节点，不拦实现节点', async () => {
+    // 把整条流水线停住会让「先出计划、再实现」退化成三步串行，白白丢掉可并行的部分。
+    const h = dispatchHarness()
+    await createHighRisk(h)
+    const first = await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
+    assert.equal(first.action, 'dispatch')
+  })
+
+  it('登记计划之后验证节点可以派遣', async () => {
+    const h = dispatchHarness()
+    await createHighRisk(h)
+    const planned = await h.tool.execute({ action: 'plan', task_id: 'REQ-HR', ...PLAN_ARGS }, h.exec)
+    assert.equal(planned.action, 'planned')
+    assert.ok(planned.plan_id)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
+    assert.equal(value.action, 'complete_task')
+    assert.deepEqual(h.calls.map((call) => call.node.id), ['T1', 'T2'])
+  })
+
+  it('标准任务不需要计划，行为不变', async () => {
+    const h = dispatchHarness()
+    await createStandard(h)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    assert.equal(value.action, 'complete_task')
+  })
+
+  it('缺反例的计划当场被拒，并指名到具体 AC', async () => {
+    const h = dispatchHarness()
+    await createHighRisk(h)
+    await assert.rejects(
+      () => h.tool.execute({
+        action: 'plan',
+        task_id: 'REQ-HR',
+        criteria: ['AC1'],
+        verification_plan: {
+          cases: [{ id: 'V1', covers: ['AC1'], type: 'positive', expect: 'x' }],
+        },
+      }, h.exec),
+      (error) => error.code === 'GAC_FALSIFICATION_EVIDENCE_MISSING',
+    )
+  })
+
+  it('覆盖不全的计划当场被拒，并报出缺哪条 AC', async () => {
+    const h = dispatchHarness()
+    await createHighRisk(h)
+    await assert.rejects(
+      () => h.tool.execute({
+        action: 'plan',
+        task_id: 'REQ-HR',
+        criteria: ['AC1', 'AC2'],
+        verification_plan: PLAN_ARGS.verification_plan,
+      }, h.exec),
+      (error) => {
+        assert.equal(error.code, 'GAC_VERIFICATION_COVERAGE_GAP')
+        assert.deepEqual(error.detail.uncovered, ['AC2'])
+        return true
+      },
+    )
+  })
+
+  it('同一份计划重复登记是幂等的，不算错误', async () => {
+    const h = dispatchHarness()
+    await createHighRisk(h)
+    await h.tool.execute({ action: 'plan', task_id: 'REQ-HR', ...PLAN_ARGS }, h.exec)
+    const again = await h.tool.execute({ action: 'plan', task_id: 'REQ-HR', ...PLAN_ARGS }, h.exec)
+    assert.equal(again.action, 'plan_unchanged')
+  })
+
+  it('实现之后替换计划会被拒', async () => {
+    // 计划的意义是「在实现之前从需求推导」；实现之后再换一份，它推导的已经是实现。
+    const h = dispatchHarness()
+    await createHighRisk(h)
+    await h.tool.execute({ action: 'plan', task_id: 'REQ-HR', ...PLAN_ARGS }, h.exec)
+    await assert.rejects(
+      () => h.tool.execute({
+        action: 'plan',
+        task_id: 'REQ-HR',
+        criteria: ['AC1'],
+        verification_plan: {
+          cases: [
+            { id: 'V1', covers: ['AC1'], type: 'positive', expect: '被改过的期望' },
+            { id: 'V2', covers: ['AC1'], type: 'falsification', expect_failure: 'y' },
+          ],
+        },
+      }, h.exec),
+      /拒绝以另一份/u,
+    )
+  })
+})
+
+describe('验证证据门禁 —— 收口要看证据', () => {
+  /** 把高风险任务推到全部节点完成。 */
+  async function reachAllDone(h) {
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-HR',
+      mode: 'high_risk_task',
+      plan: {
+        nodes: [
+          { id: 'T1', objective: '实现', required_capabilities: ['implementation'], write_scope: ['src/'] },
+          { id: 'T2', objective: '验证', depends_on: ['T1'], required_capabilities: ['verification'], write_scope: [] },
+        ],
+      },
+    }, h.exec)
+    await h.tool.execute({
+      action: 'plan',
+      task_id: 'REQ-HR',
+      criteria: ['AC1'],
+      verification_plan: {
+        cases: [
+          { id: 'V1', covers: ['AC1'], type: 'positive', expect: 'x' },
+          { id: 'V2', covers: ['AC1'], type: 'falsification', expect_failure: 'y' },
+        ],
+      },
+    }, h.exec)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
+    return h.store.loadPlan('REQ-HR')
+  }
+
+  it('没有验证计划的高风险任务不能收口', async () => {
+    const h = dispatchHarness()
+    // 直接建一个不含验证节点的高风险任务，绕过计划门禁到达收口。
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-HR',
+      mode: 'high_risk_task',
+      plan: { nodes: [
+        { id: 'T1', objective: '实现', required_capabilities: ['implementation'], write_scope: ['src/'] },
+      ] },
+    }, h.exec)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-HR',
+      evidence: { all_criteria_covered: true },
+    }, h.exec)
+    assert.equal(value.action, 'complete_refused')
+    assert.deepEqual(value.blockers, ['GAC_VERIFICATION_PLAN_MISSING'])
+  })
+
+  it('报告里的 plan_id 与计划不符时被拒，并报出两边', async () => {
+    const h = dispatchHarness()
+    await reachAllDone(h)
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-HR',
+      evidence: {
+        all_criteria_covered: true,
+        verification: {
+          plan_id: 'plan-deadbeef',
+          executions: [
+            { case_id: 'V1', outcome: 'passed', evidence_ref: 'ev-1' },
+            { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-2' },
+          ],
+        },
+      },
+    }, h.exec)
+    assert.equal(value.action, 'complete_refused')
+    assert.equal(value.blockers.includes('GAC_VERIFICATION_PLAN_MUTATED'), true)
+    assert.match(value.message, /报告对应的不是当前计划/u)
+  })
+
+  it('取证摊薄的报告被拒，并指出共用了哪份证据', async () => {
+    const h = dispatchHarness()
+    const plan = await reachAllDone(h)
+    const { planId } = await import('../lib/verification.js')
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-HR',
+      evidence: {
+        all_criteria_covered: true,
+        verification: {
+          plan_id: planId(plan),
+          executions: [
+            { case_id: 'V1', outcome: 'passed', evidence_ref: 'ev-shared' },
+            { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-shared' },
+          ],
+        },
+      },
+    }, h.exec)
+    assert.equal(value.action, 'complete_refused')
+    assert.equal(value.blockers.includes('GAC_EVIDENCE_POOLED_ACROSS_CASES'), true)
+    assert.match(value.message, /ev-shared/u)
+  })
+
+  it('证据齐备且计划对得上时收口成功', async () => {
+    const h = dispatchHarness()
+    const plan = await reachAllDone(h)
+    const { planId } = await import('../lib/verification.js')
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-HR',
+      evidence: {
+        all_criteria_covered: true,
+        verification: {
+          plan_id: planId(plan),
+          executions: [
+            { case_id: 'V1', outcome: 'passed', evidence_ref: 'ev-1' },
+            { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-2' },
+          ],
+        },
+      },
+    }, h.exec)
+    assert.equal(value.action, 'completed')
+    assert.equal(h.store.load('REQ-HR').status, 'completed')
+  })
+
+  it('缺证据的报告被拒，并指出缺哪条用例', async () => {
+    const h = dispatchHarness()
+    const plan = await reachAllDone(h)
+    const { planId } = await import('../lib/verification.js')
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-HR',
+      evidence: {
+        all_criteria_covered: true,
+        verification: {
+          plan_id: planId(plan),
+          executions: [{ case_id: 'V1', outcome: 'passed', evidence_ref: 'ev-1' }],
+        },
+      },
+    }, h.exec)
+    assert.equal(value.action, 'complete_refused')
+    assert.equal(value.blockers.includes('GAC_INDEPENDENT_EVIDENCE_MISSING'), true)
+    assert.match(value.message, /V2/u)
   })
 })
 
