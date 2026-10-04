@@ -1,0 +1,191 @@
+# dsh-gac-runtime
+
+GAC (Governed Agent Collaboration) runtime for DeepSeek Harness.
+
+A DSH plugin that adds **risk-tiered execution modes, a strict write scope, write
+claims, and independent verification** on top of the harness kernel. It does not
+reimplement scheduling, sessions, subagents or approval — the harness owns those
+(see [GAC-DSH-ADAPTATION-PLAN.md](GAC-DSH-ADAPTATION-PLAN.md) §1).
+
+```text
+Harness kernel  →  sessions, events, tools, subagents, workflow, approval, sandbox
+GAC plugin      →  execution mode, write scope, write claims, verification, evidence
+```
+
+---
+
+## Status
+
+| Phase | Component | State |
+| --- | --- | --- |
+| 0 | `lib/write-scope.js` — strict containment | done, 35 tests |
+| 0 | `lib/project.js` — Project Adapter + mode escalation | done, 30 tests |
+| 0 | `lib/tool-targets.js` — what counts as a write | done |
+| 0 | `lib/plugin.js` — the `tools/pre-execute` gate | done, 24 tests |
+| 0.5 | `lib/tool-scope.js` — the `gac_scope` tool | done |
+| 0.5 | `lib/index.js` — DSH shell, installed in the `core-020` profile | loaded |
+| 1 | Project Adapter loaded from `.dsh/gac/project.json` | not started |
+| 2 | Write claims (cross-session collision protection) | not started |
+| 3 | Coordinator: DAG, ready nodes, STANDARD_TASK | not started |
+| 4 | Independent verification: plan, falsification, traceability | not started |
+| 5 | Session event projection | not started |
+| 6 | Evidence capture and AC traceability | not started |
+
+**The guard is installed but inert until a session declares a scope.** Every
+session starts ungoverned and the gate allows everything. That is deliberate: a
+gate that enforced a scope nobody declared would be unusable outside GAC work.
+
+---
+
+## Install
+
+The plugin resolves DSH packages from the profile, so it must be installed into
+a profile rather than imported directly (`lib/resolve-dsh.js` explains why).
+
+```text
+plugin_manager { action: install_bundle, target: "<this directory>" }
+```
+
+This adds `dsh-gac-runtime` as a `link:` dependency of the active profile and
+appends it to `dsh.profile.bundles`. Two consequences worth knowing:
+
+- **A restart is required.** The harness HMR entry watches *configuration*, not
+  module files (the base bundle sets `root: []` when a launcher supplies a
+  profile context). Editing `lib/*.js` therefore does **not** reload the plugin
+  — disable and re-enable the entry, or restart, to pick up code changes.
+- Because it is a link, the plugin keeps its own `node_modules` and cannot
+  bare-import `@deepseek-ai/*`. `lib/resolve-dsh.js` resolves those from the
+  profile directory instead.
+
+### Which profile?
+
+There are two on this machine: `core-020` (the Web GUI) and `tauri` (the desktop
+shell). `plugin_manager` installs into the **active** profile. Check with
+`plugin_manager { action: list_bundles }` before assuming.
+
+---
+
+## Verify it is running
+
+The plugin writes a JSONL report beside the DSH home directory
+(`$DSH_HOME/gac-runtime-report.jsonl`, falling back to the user profile). It is a
+file rather than a log line because console output inside a web-served harness
+is not reliably visible.
+
+```jsonc
+{"event":"plugin-loaded","services":{"tools":true,"sessions":true},
+ "scope_tool":"registered",
+ "enforcement":"active - a declared scope is enforced before dispatch"}
+{"event":"guard-denied","tool":"write","code":"GAC_WRITE_SCOPE_DENIED", ...}
+{"event":"plugin-unloaded","observed":{"calls":17,"denials":0}}
+```
+
+The `observed.calls` counter on unload is the proof the interception is live: it
+counts every tool call the gate saw.
+
+---
+
+## Use
+
+Declare the paths a task may write, then work normally:
+
+```text
+gac_scope { task_id: "REQ-20261004-xyz", scope: ["src/", "docs/api.md"] }
+```
+
+While a scope is active, four things are refused before dispatch:
+
+| Attempt | Result | Code |
+| --- | --- | --- |
+| write outside the declared scope | refused | `GAC_WRITE_SCOPE_DENIED` |
+| a shell command (`pwsh`, `bash`) | refused | `GAC_SHELL_DENIED_UNDER_SCOPE` |
+| a tool the runtime cannot classify | refused | `GAC_UNGUARDABLE_WRITE_DENIED` |
+| a write tool with no readable path argument | refused | `GAC_UNGUARDABLE_WRITE_DENIED` |
+
+```text
+gac_scope {}                    # inspect the current scope
+gac_scope { clear: true }       # release it, returning to ungoverned
+```
+
+### Scope semantics
+
+`gac_scope` is a **strict list**, and this is the part worth reading carefully:
+
+```text
+scope ["mod.c"]     permits  ./mod.c
+                    refuses  src/mod.c, other/mod.c, SRC/MOD.C
+scope ["src/"]      permits  src/a.c, src/deep/a.c
+                    refuses  src2/a.c, src/../other.c
+scope ["src/*.c"]   permits  src/a.c  (and src/deep/a.c — see below)
+```
+
+Path comparison normalises separators, resolves `.`/`..`, and **folds case**, so
+`SRC/MOD.C` and `src/mod.c` are the same file. A bare basename is an exact file,
+never an alias for a same-named file elsewhere.
+
+`*` crosses separators, matching `fnmatch`, so `src/*.c` also covers
+`src/sub/a.c`. This is deliberate and preserved for behavioural compatibility.
+It is the safe direction: a wider scope *permits* more, so it can never silently
+permit a write the project meant to forbid. Do not narrow it without reading the
+module header of `lib/write-scope.js`.
+
+---
+
+## Known limits
+
+Stated here rather than discovered later (adaptation plan §7):
+
+1. **Shell writes cannot be guarded.** A redirection or generator target inside
+   a command string is not visible to a tool-pipeline guard. Rather than pretend
+   otherwise, the gate refuses shell commands entirely while a scope is active.
+   Patterns that need shell execution must either run outside a scope or be
+   rewired to the structured file tools.
+2. **The gate is per tool call, not per process.** A process started before a
+   scope was declared is not affected by it.
+3. **Scopes are in-memory.** A restart drops every scope; that is the correct
+   failure direction, since a stale scope would enforce an authority nobody
+   holds. Durable scopes arrive with the coordinator, re-derived from the session
+   log.
+4. **Unknown tools fail closed while governed.** A tool added by a harness
+   upgrade is refused until it is classified in `lib/tool-targets.js`. This is
+   intentional: a runtime upgrade must not silently widen authority.
+
+---
+
+## Develop
+
+```bash
+npm test          # 119 tests, no DSH required
+```
+
+The library modules are pure and dependency-injected precisely so the suite runs
+without a harness. `test/entry.test.js` additionally asserts the Cordis export
+shape and that no module imports a bare `@deepseek-ai/*` package at module scope
+(which would throw during evaluation, before any plugin code could report why).
+
+```text
+lib/
+  index.js           DSH shell: registers the gate and the scope tool
+  plugin.js          the pre-execute gate (fails closed on every unknown)
+  write-scope.js     strict path containment — the security boundary
+  project.js         Project Adapter validation + execution-mode escalation
+  tool-targets.js    which tool calls write which paths
+  tool-scope.js      the gac_scope tool
+  session-scope.js   per-session declared scope registry
+  path-utils.js      absolute-path and root-prefix helpers
+  resolve-dsh.js     resolve @deepseek-ai/* from a linked install
+```
+
+Design rules the code follows:
+
+- **One definition site per security decision.** Containment lives in
+  `write-scope.js` only, and is unit-tested; the DSH bridge calls it rather than
+  re-deriving it. A second implementation would drift.
+- **No project facts in the runtime.** No project name, path or capability word
+  appears in `lib/`; `test/project.test.js` fails if one does.
+- **Failures are explicit.** A denial names the declared scope and carries a
+  stable code; a plugin that cannot register half its behaviour says so in the
+  load report rather than dropping it silently.
+
+See [GAC-DSH-ADAPTATION-PLAN.md](GAC-DSH-ADAPTATION-PLAN.md) for the full design,
+the six real gaps, the boundary conditions, and the phase plan.
