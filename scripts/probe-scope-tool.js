@@ -1,10 +1,9 @@
 /**
- * Ad-hoc probe: does the scope tool actually register against the real runtime?
+ * 临时探针：作用域工具是否真的对真实运行时注册成功？
  *
- * This runs the same code path `lib/index.js` runs at load time — resolve the
- * runtime, apply its authoring helper, register nothing — and reports what the
- * agent-facing schema will contain. It answers "will a fresh session see
- * `gac_scope`?" without needing a fresh session.
+ * 它跑的是 `lib/index.js` 在加载时跑的同一段代码路径——解析运行时、应用其编写
+ * 辅助函数、不注册任何东西——并报告面向 agent 的 schema 里会有什么。它回答的是
+ * 「一个新会话会看到 `gac_scope` 吗？」，而不需要真的开一个新会话。
  *
  *     node scripts/probe-scope-tool.js
  */
@@ -27,8 +26,8 @@ console.log('parameters:', JSON.stringify(tool.parameters, null, 2))
 console.log('output    :', JSON.stringify(tool.output.schema, null, 2))
 console.log('execute   :', typeof tool.execute)
 
-// The tool must survive a round trip through its own compiled schema, because
-// the registry validates model-supplied arguments against it before execute.
+// 工具必须能在自己编译出的 schema 上完整走一个来回，因为注册表会在 execute 之前
+// 依据它校验模型提供的参数。
 const cases = [
   ['inspect', {}],
   ['declare', { task_id: 'REQ-1', scope: ['src/'] }],

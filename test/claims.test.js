@@ -1,10 +1,9 @@
 /**
- * Write-claim conflict tests.
+ * 写占用声明冲突测试。
  *
- * The rule under test is prefix overlap, and the cases below pin down both what
- * it catches and what it deliberately over-reports. The over-report is a design
- * choice with a stated cost (see the module header), so it is asserted here
- * rather than left as an accident someone later "fixes".
+ * 被测的规则是前缀重叠，下面这些用例既钉住了它会抓到什么，也钉住了它刻意
+ * 多报什么。多报是一项有明示代价的设计选择（见模块头部），所以它在这里被
+ * 断言下来，而不是留成一处日后被谁「顺手修掉」的意外。
  */
 
 import assert from 'node:assert/strict'
@@ -20,7 +19,7 @@ import {
 } from '../lib/claims.js'
 
 /**
- * A minimal valid claim.
+ * 一个最小的合法占用声明。
  *
  * @param {string[]} writeScope
  * @param {object} [overrides]
@@ -50,8 +49,8 @@ describe('scopePrefix', () => {
   })
 
   it('keeps a bare basename as a root-level file, not an alias', () => {
-    // The distinction the write-scope gate makes, preserved here: `mod.c` must
-    // not collide with `src/mod.c`.
+    // 这里保留了写作用域门禁所作的那一区分：`mod.c` 绝不能与
+    // `src/mod.c` 冲突。
     assert.equal(scopePrefix('mod.c'), 'mod.c')
   })
 
@@ -98,8 +97,8 @@ describe('findScopeOverlap — collisions that must be caught', () => {
 
 describe('findScopeOverlap — things that must NOT collide', () => {
   it('does not collide two bare basenames in different directories', () => {
-    // `mod.c` is ./mod.c and never src/mod.c. If this collided, unrelated
-    // sessions across a monorepo would block each other constantly.
+    // `mod.c` 就是 ./mod.c，从来不是 src/mod.c。如果这两者冲突，跨一个
+    // monorepo 的互不相关会话就会不停地互相阻塞。
     assert.equal(findScopeOverlap(['mod.c'], ['src/mod.c']).conflict, false)
   })
 
@@ -108,7 +107,7 @@ describe('findScopeOverlap — things that must NOT collide', () => {
   })
 
   it('does not let a shared name prefix collide', () => {
-    // The separator guard: `src` must not swallow `src2`.
+    // 分隔符守卫：`src` 绝不能吞掉 `src2`。
     assert.equal(findScopeOverlap(['src/'], ['src2/a.c']).conflict, false)
     assert.equal(findScopeOverlap(['src/a.c'], ['src2/a.c']).conflict, false)
   })
@@ -120,10 +119,10 @@ describe('findScopeOverlap — things that must NOT collide', () => {
 
 describe('findScopeOverlap — the deliberate over-report', () => {
   it('reports two disjoint globs in one directory as conflicting', () => {
-    // `src/*.c` and `src/*.h` share the prefix `src`, so they are reported even
-    // though the sets are disjoint. Chosen on purpose: a false positive costs
-    // some parallelism, a false negative lets two writers hit one file. Asserted
-    // so that this is a documented decision rather than a bug report later.
+    // `src/*.c` 与 `src/*.h` 共享前缀 `src`，所以即便两个集合互不相交也会
+    // 被上报。这是刻意选的：一次误报的代价是损失一些并行度，一次漏报则会
+    // 让两位写者撞上同一个文件。把它断言下来，是为了让这成为一项有记录的
+    // 决定，而不是日后的一份缺陷报告。
     assert.equal(findScopeOverlap(['src/*.c'], ['src/*.h']).conflict, true)
   })
 })
@@ -208,7 +207,7 @@ describe('describeConflict', () => {
       scope: 'src/a.c',
       claimed: 'src/',
     })
-    // A refusal the model cannot act on becomes a retry loop.
+    // 模型无法据以行动的拒绝会变成重试循环。
     for (const expected of ['REQ-9', 'T4', 's-9', 'd-9', 'src/a.c', 'src/']) {
       assert.ok(message.includes(expected), `message should name ${expected}: ${message}`)
     }

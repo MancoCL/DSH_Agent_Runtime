@@ -276,7 +276,7 @@ describe('declaring takes a write claim', () => {
   })
 
   it('says plainly when no claim could be taken, instead of implying protection', async () => {
-    // 没有可解析的根目录就没有占用记录库。摘要不能让模型在无法排除其他会话时
+    // 没有可解析的根目录就没有占用声明存储。摘要不能让模型在无法排除其他会话时
     // 以为已经被排除了。
     const core = createGacCore()
     const tool = createScopeTool({ core, defineTool: identityDefineTool })

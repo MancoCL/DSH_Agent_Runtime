@@ -1,9 +1,8 @@
 /**
- * Ad-hoc diagnostic: print resolution anchors and why each failed.
+ * 临时诊断脚本：打印解析锚点，以及每个锚点为什么失败。
  *
- * Kept as a file rather than a shell one-liner because the failure being
- * diagnosed is environment-dependent, and a script that prints the whole anchor
- * list is what makes the environment visible. Run with:
+ * 之所以留成一个文件、而不是一条 shell 单行命令，是因为要诊断的故障取决于环境，
+ * 而一个会打印出完整锚点列表的脚本，正是让环境变得可见的东西。运行方式：
  *
  *     node scripts/diagnose-resolution.js
  */
@@ -32,7 +31,7 @@ const { attempts, resolved } = resolveWithDiagnostics(SPECIFIER, anchors)
 for (const { anchor, reason } of attempts) {
   console.log(`  ${reason === 'anchor does not exist' ? 'MISSING' : 'tried  '} ${anchor} [${reason}]`)
 }
-// Anchors after the one that succeeded were never reached.
+// 成功那个锚点之后的锚点从未被走到。
 if (resolved !== undefined) {
   const reached = new Set(attempts.map((a) => a.anchor))
   for (const anchor of anchors.filter((a) => !reached.has(a))) {

@@ -1,14 +1,12 @@
 /**
- * Project Adapter tests.
+ * 工程适配器测试。
  *
- * Two properties matter here and are asserted directly:
+ * 这里有两项性质是重要的，并被直接断言：
  *
- *  1. The universal runtime contains no project facts (architecture outline
- *     §2.4, §15, §50). The "no project facts leak" suite reads the library
- *     sources and fails if a project-specific word appears in them.
- *  2. A declared execution mode is cross-checked against project-declared
- *     high-risk paths, so "start at the lowest sufficient level" cannot become
- *     "claim the lowest level" (outline §5, §6, §7).
+ *  1. 通用运行时不含任何工程事实（架构大纲 §2.4、§15、§50）。「无工程事实泄漏」套件
+ *     会读取库源码，一旦其中出现某个工程专属词就失败。
+ *  2. 声明的执行模式会与工程声明的高风险路径交叉核对，这样「从最低的充分级别开始」就
+ *     不可能变成「声称最低级别」（大纲 §5、§6、§7）。
  */
 
 import assert from 'node:assert/strict'
@@ -32,7 +30,7 @@ import {
 const here = dirname(fileURLToPath(import.meta.url))
 const libDir = join(here, '..', 'lib')
 
-/** A minimal valid adapter, stood up per-test so mutations cannot leak. */
+/** 一个最小的合法适配器，每个测试各自建立，这样变更不会泄漏到别处。 */
 function adapter(overrides = {}) {
   return validateProjectAdapter({
     schema_version: 1,
@@ -172,8 +170,8 @@ describe('resolveExecutionMode — the escalation gate', () => {
   })
 
   it('escalates by semantic impact, not by file count', () => {
-    // One file, still high risk. The outline is explicit that file count is
-    // never the criterion (a single auth policy file can be high risk).
+    // 只有一个文件，仍是高风险。大纲明确指出文件数量从来不是判据（单个认证策略文件也
+    // 可以是高风险）。
     const verdict = resolveExecutionMode({
       declared_mode: 'standard_task',
       reason: 'single-file auth change',
@@ -255,9 +253,8 @@ describe('mode / risk tables', () => {
 
 describe('no project facts leak into the universal runtime', () => {
   it('the library sources name no capability or project from any adapter', async () => {
-    // Words that belong to a *project*, never to the runtime. If one of these
-    // ever appears in lib/, a project fact has been hardcoded and the
-    // cross-project reuse goal (outline §1, §2.4) is broken.
+    // 属于*工程*、而从不属于运行时的词。如果其中任何一个出现在 lib/ 里，就说明某个
+    // 工程事实被硬编码了，跨工程复用的目标（大纲 §1、§2.4）也就被破坏了。
     const forbidden = [
       'hardware-facts',
       'c-safety',
@@ -293,8 +290,8 @@ describe('no project facts leak into the universal runtime', () => {
 })
 
 /**
- * Remove block and line comments so the leak check tests code, not the
- * documentation that legitimately discusses project-shaped examples.
+ * 移除块注释与行注释，好让泄漏检查针对代码，而不是针对那些合理地讨论工程形状示例的
+ * 文档。
  *
  * @param {string} text
  * @returns {string}

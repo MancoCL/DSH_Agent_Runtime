@@ -1,12 +1,11 @@
 /**
- * Write-scope containment tests.
+ * 写作用域包含判定（containment）测试。
  *
- * These are the executable form of architecture outline §21 ("Strict Write
- * Scope") and §56 ("Convenience aliases must never leak into security
- * boundaries"). Every case below corresponds to a real bypass in the
- * predecessor Python runtime or to the outline's own worked example.
+ * 这些是架构大纲 §21（「严格写作用域」）与 §56（「便利别名绝不可渗入安全边界」）
+ * 的可执行形式。下面每一个用例都对应前身 Python 运行时里的一次真实绕过，或者对应
+ * 大纲自己给出的示例。
  *
- * Run: node --test test/
+ * 运行：node --test test/
  */
 
 import assert from 'node:assert/strict'
@@ -29,8 +28,8 @@ describe('normalizePath', () => {
   })
 
   it('keeps a leading .. that escapes the scope, so it cannot match', () => {
-    // A traversal that leaves the root must NOT collapse into a
-    // scope-relative path; keeping it makes containment fail closed.
+    // 一个离开根目录的向上穿越绝不能被折叠成作用域相对路径；保留它才能让包含判定
+    // 失败即拒绝（保守方向）。
     assert.equal(normalizePath('../outside.c', { foldCase: false }), '../outside.c')
   })
 
@@ -145,9 +144,8 @@ describe('createWriteScope — glob scopes', () => {
   })
 
   it('lets * cross separators, matching fnmatch as the predecessor did', () => {
-    // Documented, deliberate, and fail-safe: a wider scope permits MORE,
-    // so widening it is the direction that cannot silently permit a write
-    // the project meant to forbid. See the module header, point 3.
+    // 有文档记录、刻意为之、且失败安全：更宽的作用域允许得更多，所以放宽它是那个
+    // 不会悄悄放行工程本意要禁止的写入的方向。见模块头部第 3 点。
     assert.equal(createWriteScope(['src/*.c']).allows('src/sub/a.c'), true)
   })
 

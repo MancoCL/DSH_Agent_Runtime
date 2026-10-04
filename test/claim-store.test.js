@@ -1,14 +1,14 @@
 /**
- * Write-claim store tests.
+ * 写占用声明存储测试。
  *
- * The store is where the collision guarantee actually lives, so the tests that
- * matter are the ones a single-instance unit test would miss:
+ * 冲突保证真正落脚的地方就是存储，所以要紧的测试是单实例单元测试会漏掉的
+ * 那些：
  *
- *  - two INDEPENDENT store instances (modelling two sessions, or two processes)
- *    must see each other's claims through the filesystem;
- *  - release must be refused for a session that does not hold the claim, or a
- *    forged declaration could free another writer's guard;
- *  - a claim held by a departed session must stop blocking anyone.
+ *  - 两个「相互独立」的存储实例（模拟两个会话，或两个进程）必须通过文件
+ *    系统看见彼此的占用声明；
+ *  - 对一个并不持有该占用声明的会话，释放必须被拒绝，否则一次伪造的声明就
+ *    能释放另一位写者的守卫；
+ *  - 由一个已离场会话持有的占用声明必须停止阻塞任何人。
  */
 
 import assert from 'node:assert/strict'
@@ -25,7 +25,7 @@ after(() => {
   for (const root of scratchRoots) rmSync(root, { recursive: true, force: true })
 })
 
-/** A scratch project root, removed when the suite ends. */
+/** 一个临时工程根目录，测试集结束时删除。 */
 function scratch() {
   const root = mkdtempSync(join(tmpdir(), 'gac-claims-'))
   scratchRoots.push(root)
@@ -33,16 +33,15 @@ function scratch() {
 }
 
 /**
- * A store over a root, with a controllable set of live sessions.
+ * 一个架在某个根目录之上的存储，其存活会话集合可控。
  *
- * With no `live` argument the predicate reports UNKNOWN liveness, which is the
- * conservative posture: claims are kept. An earlier version defaulted to an empty
- * live set, so every acquire call deleted the previous claim as an orphan and
- * collision detection was silently disabled — the tests passed for the wrong
- * reason and the bug they existed to catch survived.
+ * 不传 `live` 参数时，判定函数上报的存活状态是「未知」，这是保守姿态：占用
+ * 声明被保留。更早的版本默认一个空的存活集合，于是每次 acquire 调用都把先前的
+ * 占用声明当作孤儿删掉，冲突检测就被悄悄禁用了 —— 测试因为错误的理由通过，
+ * 而它们本该抓住的那个缺陷活了下来。
  *
  * @param {string} root
- * @param {string[]} [live] - session ids considered alive; omit for "unknown".
+ * @param {string[]} [live] - 被视为存活的会话 id；省略表示「未知」。
  * @returns {{store: ClaimStore, setLive: (ids: string[]|undefined) => void}}
  */
 function storeAt(root, live) {
@@ -51,7 +50,7 @@ function storeAt(root, live) {
   return { store, setLive: (ids) => { liveSessions = ids } }
 }
 
-/** A scope declaration for one session. */
+/** 一个会话的作用域声明。 */
 function declaration(sessionId, scope, overrides = {}) {
   return {
     session_id: sessionId,
@@ -95,15 +94,15 @@ describe('acquiring a claim', () => {
     const root = scratch()
     const { store } = storeAt(root)
     store.acquire(declaration('s-1', ['src/']))
-    // Re-declaring the same scope is how a task advances; it must not self-block.
+    // 重新声明同一个作用域正是一个任务推进的方式；它绝不能自己阻塞自己。
     assert.equal(store.acquire(declaration('s-1', ['src/'], { node_id: 'T2' })).acquired, true)
   })
 })
 
 describe('two independent stores see each other through the filesystem', () => {
   it('blocks a colliding declaration made by a separate instance', () => {
-    // Models two sessions, or two processes over one checkout. An in-memory
-    // registry would pass a single-store test and fail this one.
+    // 模拟两个会话，或同一个检出上的两个进程。一份内存中的注册表会通过
+    // 单存储测试，却会在这个测试上失败。
     const root = scratch()
     const first = storeAt(root).store
     const second = storeAt(root).store
@@ -128,9 +127,8 @@ describe('two independent stores see each other through the filesystem', () => {
 
 describe('release authorisation', () => {
   it('refuses to release a claim on behalf of another session', () => {
-    // The predecessor runtime recorded this as a real defect: a result that
-    // named someone else's dispatch id could free their guard while their work
-    // was still in flight.
+    // 前身运行时把这一点记为真实缺陷：一个指名了别人 dispatch id 的结果，
+    // 能在对方的工作仍在飞行中时释放他们的守卫。
     const root = scratch()
     const { store } = storeAt(root)
     store.acquire(declaration('s-1', ['src/']))
@@ -149,9 +147,8 @@ describe('release authorisation', () => {
 
 describe('orphaned claims', () => {
   it('does not prune while liveness is unknown', () => {
-    // Without the host's view of live sessions, an old claim is kept: blocking a
-    // writer is recoverable, two writers on one file is not. Age is never
-    // treated as death.
+    // 没有宿主对存活会话的视角时，一条陈旧的占用声明会被保留：阻塞一位写者
+    // 是可恢复的，两位写者落在同一个文件上则不是。年龄从不会被当作死亡。
     const root = scratch()
     const { store } = storeAt(root)
     store.acquire(declaration('s-1', ['src/']))
@@ -186,8 +183,8 @@ describe('orphaned claims', () => {
   })
 
   it('does not let a known-live session’s claim be pruned by another session acquiring', () => {
-    // The regression that mattered: an unknown or empty live set must never be
-    // read as "the existing holder is dead".
+    // 那个真正要紧的回归：一个未知或空的存活集合，绝不能读成「现有的持有者
+    // 已经死了」。
     const root = scratch()
     const { store, setLive } = storeAt(root, ['s-1'])
     store.acquire(declaration('s-1', ['src/']))
@@ -219,9 +216,8 @@ describe('unreadable claims are reported, not skipped', () => {
     const view = store.inspect()
     assert.equal(view.unreadable.length, 1)
     assert.match(view.unreadable[0].file, /s-broken\.json/u)
-    // Skipping it silently would drop protection for the paths it named while
-    // the protection still looked present. It is also not deleted: an
-    // unreadable claim is evidence.
+    // 悄悄跳过它，会让它所点名的那些路径失去保护，而保护看起来还在。它也
+    // 不会被删除：一条读不出来的占用声明是证据。
     assert.equal(existsSync(broken), true)
   })
 
@@ -230,7 +226,7 @@ describe('unreadable claims are reported, not skipped', () => {
     const { store } = storeAt(root)
     const directory = join(root, ...CLAIMS_RELATIVE_DIR.split('/'))
     store.acquire(declaration('s-1', ['src/']))
-    // A file placed by hand must not be able to claim to be someone else.
+    // 一个手工放进去的文件，绝不能声称自己就是别人。
     writeFileSync(join(directory, 's-forged.json'), JSON.stringify({
       dispatch_id: 'd', session_id: 's-someone-else', task_id: 'R', node_id: 'N',
       write_scope: ['src/'], created_at: 0, heartbeat_at: 0,
@@ -240,10 +236,9 @@ describe('unreadable claims are reported, not skipped', () => {
   })
 
   it('reports an unreadable claims directory rather than calling it empty', () => {
-    // `list()` returning [] for a missing directory is correct — there are no
-    // claims yet. What must not happen is treating a directory that EXISTS but
-    // cannot be read as empty, because a writer would then proceed against
-    // unknown holders.
+    // 对不存在的目录，`list()` 返回 [] 是正确的 —— 那里还没有任何占用声明。
+    // 绝不能发生的是：把一个「存在」却读不了的目录当作空目录，因为那样一位
+    // 写者就会在持有者未知的情况下继续动手。
     const root = scratch()
     const asFile = join(root, 'not-a-directory')
     writeFileSync(asFile, 'x', 'utf8')
@@ -263,11 +258,10 @@ describe('unreadable claims are reported, not skipped', () => {
 
 describe('filenames are safe', () => {
   it('keeps a crafted session id inside the claims directory', () => {
-    // The check is that the claim lands INSIDE the store directory and is
-    // readable back under its own id. An earlier version of this test asserted
-    // the absence of a sibling file, which was unreliable: that sibling path
-    // resolves into the shared temp directory and could pre-exist for unrelated
-    // reasons, making the test pass or fail on ambient state.
+    // 检查的是占用声明落在存储目录「内部」，而且能按它自己的 id 读回来。
+    // 这个测试更早的版本断言不存在一个同级文件，那并不可靠：那个同级路径会
+    // 解析进共享的临时目录，可能因为无关的原因早已存在，于是测试的通过或
+    // 失败取决于环境状态。
     const root = scratch()
     const { store } = storeAt(root)
     const hostile = '../../escape'
@@ -276,11 +270,10 @@ describe('filenames are safe', () => {
     const directory = join(root, ...CLAIMS_RELATIVE_DIR.split('/'))
     const files = readdirSync(directory)
     assert.equal(files.length, 1, 'exactly one file, inside the claims directory')
-    // What matters is that no path SEPARATOR survives. A literal `..` substring
-    // is harmless once separators are percent-encoded, so asserting its absence
-    // would test the wrong property.
+    // 要紧的是没有任何路径「分隔符」存活下来。一旦分隔符被百分号编码，字面
+    // 的 `..` 子串就是无害的，所以断言它不存在，测的会是错误的性质。
     assert.equal(/[\\/]/u.test(files[0]), false, `filename must not contain a separator: ${files[0]}`)
-    // Lossless round trip: the original id survives encoding.
+    // 无损往返：原始 id 在编码之后仍然存活。
     assert.equal(store.get(hostile)?.session_id, hostile)
   })
 

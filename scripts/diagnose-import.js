@@ -1,8 +1,8 @@
 /**
- * Ad-hoc diagnostic: resolve AND import a DSH package, reporting each stage.
+ * 临时诊断脚本：既解析又导入一个 DSH 包，逐阶段报告。
  *
- * Resolution and import fail for different reasons, and conflating them is what
- * made the earlier "not resolvable" report misleading. This script prints both.
+ * 解析与导入会因为不同的原因失败，而把两者混为一谈，正是早先那份「不可解析」报告
+ * 具有误导性的原因。本脚本把两者都打印出来。
  *
  *     node scripts/diagnose-import.js
  */

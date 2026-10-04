@@ -1,14 +1,13 @@
 /**
- * Project-state tests: loading the adapter from disk and resolving modes.
+ * 工程状态测试：从磁盘加载适配器并解析执行模式。
  *
- * The interesting behaviour here is not "does it read a file" but the caching
- * contract, because a wrong cache turns a fixable mistake into one that needs a
- * restart:
+ * 这里有趣的行为不是「它会不会读文件」，而是缓存契约，因为错误的缓存会把一个本可修好的
+ * 失误变成需要重启才能解决：
  *
- *  - an absent adapter IS cached (re-probing every call is I/O for nothing);
- *  - an absent adapter is NOT an error (a project need not be adopted);
- *  - an INVALID adapter is NOT cached, because it is a transient authoring
- *    mistake a user is likely fixing right now.
+ *  - 适配器缺失「会」被缓存（每次调用都重新探测纯属无谓的 I/O）；
+ *  - 适配器缺失「不是」错误（工程不必被纳管）；
+ *  - 适配器「无效」时「不」缓存，因为那是一个转瞬即逝的编写失误，用户很可能正在修
+ *    它。
  */
 
 import assert from 'node:assert/strict'
@@ -19,7 +18,7 @@ import { after, describe, it } from 'node:test'
 
 import { ADAPTER_RELATIVE_PATH, ProjectState } from '../lib/project-state.js'
 
-/** Roots to remove when the suite finishes. */
+/** 套件结束时需要删除的根目录。 */
 const scratchRoots = []
 
 after(() => {
@@ -27,10 +26,10 @@ after(() => {
 })
 
 /**
- * A scratch project root with an optional adapter file.
+ * 一个临时的工程根目录，可附带一个适配器文件。
  *
  * @param {string|undefined} adapterText
- * @returns {string} the root.
+ * @returns {string} 根目录。
  */
 function scratchProject(adapterText) {
   const root = mkdtempSync(joinPath(tmpdir(), 'gac-project-'))
@@ -42,7 +41,7 @@ function scratchProject(adapterText) {
   return root
 }
 
-/** A valid adapter with two high-risk paths. */
+/** 一个合法的适配器，含两条高风险路径。 */
 const VALID = JSON.stringify({
   schema_version: 1,
   project: { id: 'proj', title: 'Proj' },
@@ -52,7 +51,7 @@ const VALID = JSON.stringify({
 })
 
 /**
- * A state instance whose root resolver returns a fixed root.
+ * 一个状态实例，其根目录解析器返回固定的根目录。
  *
  * @param {string} root
  * @returns {ProjectState}
@@ -67,15 +66,14 @@ describe('adapter loading', () => {
     const loaded = stateAt(root).loadAdapter(root)
     assert.equal(loaded.status, 'loaded')
     assert.equal(loaded.adapter.project.id, 'proj')
-    // Reported paths use `/` throughout, matching the convention the
-    // write-scope matcher normalises to, whatever the host separator is.
+    // 上报的路径一律使用 `/`，与写作用域匹配器规范化后所采用的约定一致，无论宿主分隔符
+    // 是什么。
     assert.ok(loaded.path.endsWith('.dsh/gac/project.json'))
     assert.equal(loaded.path.includes('\\'), false, `path must be /-separated: ${loaded.path}`)
   })
 
   it('reports a missing adapter as absent, not as an error', () => {
-    // A project need not be adopted. Treating this as a failure would make the
-    // plugin unusable everywhere it has not been configured.
+    // 工程不必被纳管。把它当作失败处理，会让该插件在所有尚未配置它的地方都无法使用。
     const root = scratchProject(undefined)
     const loaded = stateAt(root).loadAdapter(root)
     assert.equal(loaded.status, 'absent')
@@ -99,7 +97,7 @@ describe('adapter loading', () => {
   it('names the adapter path in its result, so a bad file is findable', () => {
     const root = scratchProject(VALID)
     const loaded = stateAt(root).loadAdapter(root)
-    // The adapter is where it was asked to be, reported readably.
+    // 适配器就在它被要求的位置，且以可读的方式上报。
     assert.ok(loaded.path.startsWith(root.replace(/\\/gu, '/')))
     assert.ok(loaded.path.endsWith(ADAPTER_RELATIVE_PATH))
   })
@@ -110,7 +108,7 @@ describe('caching contract', () => {
     const root = scratchProject(VALID)
     const state = stateAt(root)
     state.loadAdapter(root)
-    // Change the file on disk; the cached result must not follow.
+    // 改动磁盘上的文件；缓存结果不应随之改变。
     writeFileSync(joinPath(root, '.dsh', 'gac', 'project.json'), JSON.stringify({
       ...JSON.parse(VALID),
       project: { id: 'changed' },
@@ -128,8 +126,8 @@ describe('caching contract', () => {
   })
 
   it('does NOT cache an invalid adapter, so a fix needs no restart', () => {
-    // The important one: a user authoring project.json will get it wrong once,
-    // fix it, and expect the fix to take effect.
+    // 最重要的一个：用户编写 project.json 时会先写错一次，然后修好它，并期望修改立即
+    // 生效。
     const root = scratchProject('{ broken')
     const state = stateAt(root)
     assert.equal(state.loadAdapter(root).status, 'invalid')
@@ -180,7 +178,7 @@ describe('mode resolution', () => {
   })
 
   it('marks a declaration unchecked when the project has no adapter', () => {
-    // The honest state: a mode was declared but nothing could confirm it.
+    // 诚实的表述：声明了模式，但没有任何东西能确认它。
     const root = scratchProject(undefined)
     const decision = stateAt(root).declareMode({
       session_id: 's1',
