@@ -62,6 +62,62 @@ describe('validateProjectAdapter — accepts a well-formed adapter', () => {
   })
 })
 
+describe('execution 一节 —— 运行时真正读取的字段必须能通过校验', () => {
+  it('未声明时给出去掉猜测的默认值', () => {
+    // 校验器不认识的字段，运行时也不该去读。反过来同样成立：运行时读的字段，校验器必须
+    // 放行——否则适配器里写了会被整体拒绝，不写则永远读到 undefined，而读到的空值看起来
+    // 与「没有配置」一模一样。
+    const parsed = adapter()
+    assert.deepEqual({ ...parsed.execution.provider_routes }, {})
+    assert.deepEqual([...parsed.execution.require_contract], [])
+  })
+
+  it('接受 provider_routes 并冻结每一层', () => {
+    const parsed = adapter({
+      execution: { provider_routes: { verifier: { provider: 'p', model: 'm' } } },
+    })
+    assert.equal(parsed.execution.provider_routes.verifier.model, 'm')
+    assert.equal(Object.isFrozen(parsed.execution.provider_routes.verifier), true)
+    assert.throws(() => { parsed.execution.provider_routes.verifier.model = 'x' }, TypeError)
+  })
+
+  it('拒绝空的 provider 或 model', () => {
+    assert.throws(
+      () => adapter({ execution: { provider_routes: { verifier: { model: '' } } } }),
+      /non-empty string/u,
+    )
+  })
+
+  it('拒绝非对象的 provider_routes', () => {
+    assert.throws(
+      () => adapter({ execution: { provider_routes: ['verifier'] } }),
+      /must be an object/u,
+    )
+  })
+
+  it('接受 require_contract 的两种写法，并归一成一个模式名数组', () => {
+    // 消费方只关心「哪些模式要求契约」，不该同时理解两种写法。
+    const asArray = adapter({ execution: { require_contract: ['high_risk_task'] } })
+    assert.deepEqual([...asArray.execution.require_contract], ['high_risk_task'])
+    const asObject = adapter({ execution: { require_contract: { modes: ['high_risk_task'] } } })
+    assert.deepEqual([...asObject.execution.require_contract], ['high_risk_task'])
+  })
+
+  it('拒绝 require_contract 里的未知执行模式', () => {
+    assert.throws(
+      () => adapter({ execution: { require_contract: ['no_such_mode'] } }),
+      /execution modes/u,
+    )
+  })
+
+  it('拒绝 execution 里的未知键', () => {
+    assert.throws(
+      () => adapter({ execution: { require_contracted: [] } }),
+      /unknown "execution" key/u,
+    )
+  })
+})
+
 describe('validateProjectAdapter — refuses malformed input', () => {
   const cases = [
     ['a non-object top level', []],

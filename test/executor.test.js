@@ -12,6 +12,7 @@ import { describe, it } from 'node:test'
 import {
   EXECUTION_STATUSES,
   createInProcessExecutor,
+  createRoutedExecutors,
   createSessionExecutor,
   pickExecutor,
 } from '../lib/executor.js'
@@ -91,6 +92,36 @@ describe('EXECUTION_STATUSES', () => {
 
 /** 正常流里那段文本，供断言复用而不是各写一遍。 */
 const GOOD_TEXT = '检查了三条验收，全部通过'
+
+describe('createRoutedExecutors — 名字必须逐字等于路由的键', () => {
+  /** 一条最小可用的路由。 */
+  const ROUTES = {
+    builder: { provider: 'p1', model: 'm1' },
+    verifier: { provider: 'p2', model: 'm2' },
+  }
+
+  it('名字取自路由的键，不加任何修饰', () => {
+    // 派遣时按名字 `find(name === routed.executor)` 找执行者，而 routed.executor 来自适配器
+    // `executors` 里列出的名字。名字一旦被拼成别的东西，这个查找就永远落空，并静默退化到
+    // 「谁 supports 就谁上」——声明的路由被忽略，表面上却一切正常。
+    const built = createRoutedExecutors({ routes: ROUTES, llmFor: () => ({ stream: () => goodStream('x') }) })
+    assert.deepEqual(built.map((executor) => executor.name).sort(), ['builder', 'verifier'])
+  })
+
+  it('每个执行者用自己那条路由的模型', () => {
+    // 「验证者用另一个模型」正是独立性的落点；串了路由就等于两个执行者是同一个观察者。
+    const built = createRoutedExecutors({ routes: ROUTES, llmFor: () => undefined })
+    const byName = new Map(built.map((executor) => [executor.name, executor]))
+    assert.equal(byName.get('builder').route.provider, 'p1')
+    assert.equal(byName.get('verifier').route.provider, 'p2')
+    assert.equal(byName.get('verifier').route.model, 'm2')
+  })
+
+  it('没有路由时不造出任何执行者', () => {
+    assert.deepEqual(createRoutedExecutors({ routes: {}, llmFor: () => undefined }), [])
+    assert.deepEqual(createRoutedExecutors({ llmFor: () => undefined }), [])
+  })
+})
 
 describe('createInProcessExecutor — 只承载不写文件的节点', () => {
   const executor = createInProcessExecutor({

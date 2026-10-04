@@ -100,7 +100,7 @@ describe('工具形状', () => {
     const store = new TaskStore({ root: scratch() })
     const options = taskToolOptions({ taskStoreFor: () => store, sessionRootFor: () => store.root })
     assert.deepEqual([...options.parameters.action.enum], [
-      'create', 'plan', 'advance', 'reopen', 'status', 'list', 'complete',
+      'create', 'grill', 'contract', 'plan', 'advance', 'reopen', 'status', 'list', 'complete',
     ])
     for (const [name, spec] of Object.entries(options.parameters)) {
       assert.equal(Object.hasOwn(spec, 'required'), false, `${name} 不应带 required 键`)
@@ -790,6 +790,225 @@ describe('验证证据门禁 —— 收口要看证据', () => {
     assert.equal(value.action, 'complete_refused')
     assert.equal(value.blockers.includes('GAC_INDEPENDENT_EVIDENCE_MISSING'), true)
     assert.match(value.message, /V2/u)
+  })
+})
+
+describe('访谈循环门禁 —— 需求必须以用户确认结束', () => {
+  const RECORD = {
+    grill_action: 'record',
+    round: {
+      focus: '范围',
+      questions: [
+        { id: 'Q1', question: '影响哪些文件？', answer: '只有 src/a.c' },
+        { id: 'Q2', question: '要兼容旧行为吗？', answer: '不知道' },
+      ],
+    },
+  }
+
+  it('一开始什么都不知道', async () => {
+    const h = dispatchHarness()
+    await createStandard(h)
+    const value = await h.tool.execute({ action: 'grill', task_id: 'REQ-1' }, h.exec)
+    assert.equal(value.action, 'grill_status')
+    assert.match(value.message, /还没有进行过访谈/u)
+  })
+
+  it('记下一轮，并把「不知道」列为未决', async () => {
+    const h = dispatchHarness()
+    await createStandard(h)
+    const value = await h.tool.execute({ action: 'grill', task_id: 'REQ-1', ...RECORD }, h.exec)
+    assert.equal(value.action, 'round_recorded')
+    assert.deepEqual(value.nodes, ['Q2'], '「不知道」是一条真实答复，但决策还没定')
+  })
+
+  it('提出收敛，但明确说明它不结束访谈', async () => {
+    const h = dispatchHarness()
+    await createStandard(h)
+    await h.tool.execute({ action: 'grill', task_id: 'REQ-1', ...RECORD }, h.exec)
+    const value = await h.tool.execute({ action: 'grill', task_id: 'REQ-1', grill_action: 'converge' }, h.exec)
+    assert.equal(value.action, 'convergence_proposed')
+    assert.match(value.message, /不结束访谈/u)
+    assert.match(value.message, /没有外部依据/u)
+  })
+
+  it('没有用户确认原话就不能冻结需求', async () => {
+    const h = dispatchHarness()
+    await createStandard(h)
+    await h.tool.execute({ action: 'grill', task_id: 'REQ-1', ...RECORD }, h.exec)
+    await h.tool.execute({ action: 'grill', task_id: 'REQ-1', grill_action: 'converge' }, h.exec)
+    await assert.rejects(
+      () => h.tool.execute({ action: 'grill', task_id: 'REQ-1', grill_action: 'confirm' }, h.exec),
+      (error) => error.code === 'GAC_GRILLING_NOT_CONFIRMED',
+    )
+  })
+
+  it('拿到确认原话后冻结需求', async () => {
+    const h = dispatchHarness()
+    await createStandard(h)
+    await h.tool.execute({ action: 'grill', task_id: 'REQ-1', ...RECORD }, h.exec)
+    await h.tool.execute({ action: 'grill', task_id: 'REQ-1', grill_action: 'converge' }, h.exec)
+    const value = await h.tool.execute({
+      action: 'grill',
+      task_id: 'REQ-1',
+      grill_action: 'confirm',
+      confirmation: '可以，就按这个做',
+      acceptance_criteria: ['AC1'],
+    }, h.exec)
+    assert.equal(value.action, 'requirement_frozen')
+    assert.match(value.message, /AC1|1 条/u)
+  })
+
+  it('冻结之后不能再追加轮次', async () => {
+    const h = dispatchHarness()
+    await createStandard(h)
+    await h.tool.execute({ action: 'grill', task_id: 'REQ-1', ...RECORD }, h.exec)
+    await h.tool.execute({ action: 'grill', task_id: 'REQ-1', grill_action: 'converge' }, h.exec)
+    await h.tool.execute({
+      action: 'grill', task_id: 'REQ-1', grill_action: 'confirm', confirmation: '可以',
+    }, h.exec)
+    await assert.rejects(
+      () => h.tool.execute({ action: 'grill', task_id: 'REQ-1', ...RECORD }, h.exec),
+      (error) => error.code === 'GAC_REQUIREMENT_ALREADY_FROZEN',
+    )
+  })
+})
+
+describe('接口契约门禁 —— 必须在动手之前', () => {
+  /** 一份契约参数，含子动作。 */
+  const CONTRACT_ARGS = {
+    contract_action: 'freeze',
+    criteria: ['AC1'],
+    interface_contract: {
+      name: 'parseConfig',
+      covers: ['AC1'],
+      operations: [
+        {
+          name: 'parseConfig',
+          signature: 'parseConfig(text: string): Config',
+          behavior: '解析失败时抛出 ConfigError；空文本返回空配置。',
+          errors: ['ConfigError'],
+          covers: ['AC1'],
+        },
+      ],
+    },
+  }
+
+  /**
+   * 一个声明了 require_contract 的实例。
+   *
+   * @returns {object}
+   */
+  function contractHarness() {
+    const store = new TaskStore({ root: scratch() })
+    const mk = (name) => ({
+      name,
+      supports: () => true,
+      run: async () => ({ status: 'completed', summary: `${name} 完成` }),
+    })
+    return {
+      store,
+      exec: { agent: { session: { id: 'session-1' } } },
+      tool: createTaskTool({
+        defineTool: identityDefineTool,
+        taskStoreFor: () => store,
+        sessionRootFor: () => store.root,
+        adapterFor: () => ({
+          executors: { implementation: ['builder'], verification: ['verifier'] },
+          execution: { require_contract: { modes: ['standard_task', 'high_risk_task'] } },
+        }),
+        executorsFor: () => [mk('builder'), mk('verifier')],
+      }),
+    }
+  }
+
+  it('声明了 require_contract 时，写文件的节点在契约冻结前不派遣', async () => {
+    const h = contractHarness()
+    await createStandard(h)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    assert.equal(value.action, 'contract_required')
+    assert.deepEqual(value.nodes, ['T1'])
+    assert.match(value.message, /结构性失败/u)
+    // T1 没有被派遣，也没有被执行者调用。
+    assert.equal(h.store.load('REQ-1').nodes.get('T1').status, 'pending')
+  })
+
+  it('契约冻结之后可以派遣', async () => {
+    const h = contractHarness()
+    await createStandard(h)
+    const frozen = await h.tool.execute({ action: 'contract', task_id: 'REQ-1', ...CONTRACT_ARGS }, h.exec)
+    assert.equal(frozen.action, 'contract_frozen')
+    assert.ok(frozen.plan_id)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    // 一波只走一层：T1 跑完，T2 就绪，于是下一步仍是 dispatch——它的意思是「还有活儿
+    // 可以推」，而不是「刚才那批已经被派遣了」。
+    assert.equal(value.action, 'dispatch')
+    assert.deepEqual(value.nodes, ['T2'])
+    assert.equal(h.store.load('REQ-1').nodes.get('T1').status, 'completed')
+  })
+
+  it('未声明 require_contract 时不设这道门，行为与之前一致', async () => {
+    // 门禁由工程适配器声明而不是硬编码：小改动不需要先写契约，要求它写只是无谓的仪式。
+    const h = dispatchHarness()
+    await createStandard(h)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    assert.equal(value.action, 'dispatch')
+    assert.equal(h.store.load('REQ-1').nodes.get('T1').status, 'completed')
+  })
+
+  it('只拦写文件的节点，不拦只回传报告的节点', async () => {
+    const h = contractHarness()
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-R',
+      mode: 'standard_task',
+      plan: { nodes: [
+        { id: 'T1', objective: '出方案', required_capabilities: ['implementation'], write_scope: [] },
+      ] },
+    }, h.exec)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-R' }, h.exec)
+    assert.equal(value.action, 'complete_task', '不写文件的节点无需契约，直接跑完')
+    assert.equal(h.store.load('REQ-R').nodes.get('T1').status, 'completed')
+  })
+
+  it('同一份契约重复冻结是幂等的', async () => {
+    const h = contractHarness()
+    await createStandard(h)
+    await h.tool.execute({ action: 'contract', task_id: 'REQ-1', ...CONTRACT_ARGS }, h.exec)
+    const again = await h.tool.execute({ action: 'contract', task_id: 'REQ-1', ...CONTRACT_ARGS }, h.exec)
+    assert.equal(again.action, 'contract_unchanged')
+  })
+
+  it('以另一份契约覆盖已冻结的会被拒', async () => {
+    const h = contractHarness()
+    await createStandard(h)
+    await h.tool.execute({ action: 'contract', task_id: 'REQ-1', ...CONTRACT_ARGS }, h.exec)
+    await assert.rejects(
+      () => h.tool.execute({
+        action: 'contract',
+        contract_action: 'freeze',
+        task_id: 'REQ-1',
+        criteria: ['AC1'],
+        interface_contract: {
+          name: 'parseConfig',
+          covers: ['AC1'],
+          operations: [
+            { name: 'parseConfig', signature: 'parseConfig(text: string): Config', behavior: '改过了', covers: ['AC1'] },
+          ],
+        },
+      }, h.exec),
+      /拒绝以另一份/u,
+    )
+  })
+
+  it('contract status 报出已冻结的契约', async () => {
+    const h = contractHarness()
+    await createStandard(h)
+    const before = await h.tool.execute({ action: 'contract', task_id: 'REQ-1' }, h.exec)
+    assert.match(before.message, /还没有冻结/u)
+    await h.tool.execute({ action: 'contract', task_id: 'REQ-1', ...CONTRACT_ARGS }, h.exec)
+    const after = await h.tool.execute({ action: 'contract', task_id: 'REQ-1' }, h.exec)
+    assert.match(after.message, /已冻结/u)
+    assert.ok(after.plan_id)
   })
 })
 

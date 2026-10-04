@@ -16,6 +16,10 @@
     "review": ["reviewer"],
     "documentation": ["builder"]
   },
+  "execution": {
+    "require_contract": ["high_risk_task"],
+    "provider_routes": {}
+  },
   "risk": {
     "high_risk_paths": [
       "lib/write-scope.js",
