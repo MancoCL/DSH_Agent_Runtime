@@ -57,22 +57,41 @@ appends it to `dsh.profile.bundles`. Consequences worth knowing:
   restart picks up code changes.
 
   To iterate without restarts, widen the HMR watch roots in the *profile* patch
-  (`~/.dsh/profiles/<profile>/cordis.patch.yml`):
+  (`~/.dsh/profiles/<profile>/cordis.patch.yml`). Use an **absolute path**:
 
   ```yaml
   - id: hmr
     name: "@deepseek-ai/dsh-hmr"
     config:
-      root: ["."]
+      root:
+        - D:/WorkSpace/99_Others/02_UserProject/Agent_Runtime
   ```
 
   A profile patch layer has the highest precedence, so it overrides the base
   bundle's `root: []`. It takes effect on the next restart; afterwards `lib/*.js`
   edits reload on their own.
 
+  Do **not** use `root: ["."]`. Watch roots resolve against `baseDir`, which is
+  the profile directory (`dsh-hmr/lib/index.js:319`), so `"."` watches the
+  profile and never the plugin — which is linked from outside it. That was this
+  file's original advice and it was wrong: it would have looked configured while
+  changing nothing.
+
 - Because it is a link, the plugin keeps its own `node_modules` and cannot
   bare-import `@deepseek-ai/*`. `lib/resolve-dsh.js` resolves those from the
   profile directory instead.
+
+### Current state on this machine
+
+Already applied, so future edits to `lib/*.js` reload without a restart:
+
+- `dsh-gac-runtime` is installed into the `core-020` profile as a link to this
+  directory.
+- `~/.dsh/profiles/core-020/cordis.patch.yml` carries the `hmr` override above.
+  A timestamped backup of that file sits beside it.
+
+Still requires a restart: changes to `package.json`, `cordis.patch.yml`, or
+anything that alters the set of registered plugins or tools.
 
 ### Which profile?
 
