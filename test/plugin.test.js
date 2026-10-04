@@ -256,6 +256,39 @@ describe('the scope tool must stay callable while a scope is active', () => {
   })
 })
 
+describe('运行时自己的工具不能被它自己执行的作用域挡住', () => {
+  // 上一组只修了 `gac_scope` 一个工具。同一张表里其余的 GAC 工具当时仍被算作 `unknown`，
+  // 于是**推进任务的那个工具**在作用域生效时会被自己的门禁拒掉：模型写完了文件，却再也
+  // 推不动任务，而它看到的只是一句「这个工具无法检查」——正是把作用域变成陷阱的同一个形状。
+  const callable = [
+    ['gac_task', { action: 'advance', task_id: 'REQ-1' }],
+    ['gac_project', { mode: 'standard_task' }],
+    ['gac_scope', {}],
+    ['gac_evidence', {}],
+    ['gac_metrics', {}],
+  ]
+
+  for (const [name, args] of callable) {
+    it(`allows ${name}`, () => {
+      const core = governed(['src/a.c'])
+      assert.equal(core.preExecute(exec(name, args)).kind, 'allow')
+    })
+  }
+
+  it('an empty scope still permits them — the worst shape of the same trap', () => {
+    const core = governed([])
+    assert.equal(
+      core.preExecute(exec('gac_task', { action: 'advance', task_id: 'REQ-1' })).kind,
+      'allow',
+    )
+  })
+
+  it('product files are still refused: what is allowed is bookkeeping, not the write surface', () => {
+    const core = governed(['src/a.c'])
+    assert.equal(core.preExecute(exec('write', { file_path: 'outside.c' })).kind, 'deny')
+  })
+})
+
 describe('the nomination of the guard itself', () => {
   it('every denial states a reason a model can act on', () => {
     const core = governed(['src/'])
