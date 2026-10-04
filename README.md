@@ -24,7 +24,8 @@ GAC plugin      →  execution mode, write scope, write claims, verification, ev
 | 0 | `lib/plugin.js` — the `tools/pre-execute` gate | done, 28 tests |
 | 0.5 | `lib/tool-scope.js` — the `gac_scope` tool | done |
 | 0.5 | `lib/index.js` — DSH shell, installed in the `core-020` profile | **verified in a live session** |
-| 1 | Project Adapter loaded from `.dsh/gac/project.json` | not started |
+| 1 | `lib/project-state.js` — Project Adapter loaded from `.dsh/gac/project.json` | done |
+| 1 | `lib/tool-project.js` — `gac_project`: adapter inspection + mode declaration | done |
 | 2 | Write claims (cross-session collision protection) | not started |
 | 3 | Coordinator: DAG, ready nodes, STANDARD_TASK | not started |
 | 4 | Independent verification: plan, falsification, traceability | not started |
@@ -152,7 +153,38 @@ as a missing tool after a restart.
 
 ## Use
 
-Declare the paths a task may write, then work normally:
+### Declare how much process the work needs
+
+```text
+gac_project {}                          # what project am I in, and what does it call risky?
+gac_project { mode: "direct_edit", reason: "one config value", target_paths: ["config/app.json"] }
+```
+
+Modes, cheapest sufficient process first:
+
+| Mode | Use for | What it commits to |
+| --- | --- | --- |
+| `read_only` | explain, search, read, analyse | no task record |
+| `direct_edit` | one unambiguous, local, reversible change | no task record, no verifier |
+| `standard_task` | ordinary bugfix / feature / local refactor | an independent verifier checks the result |
+| `high_risk_task` | security, auth, persistent state, migrations, public contracts, boot, production | a verification plan derived from the requirement *before* implementation, then an independent review |
+
+**The mode is cross-checked, not trusted.** Declaring a mode whose `target_paths`
+fall in a project-declared high-risk path is escalated to `high_risk_task`
+automatically:
+
+```text
+gac_project { mode: "direct_edit", reason: "tweak one comparison",
+              target_paths: ["lib/write-scope.js"] }
+→ Escalated from direct_edit to high_risk_task: declared direct_edit, but 1 target
+  path(s) fall in a project-declared high-risk path: lib/write-scope.js.
+```
+
+Do not try to pre-empt that check; declare honestly and report what you are told.
+A model that guessed at the gate would sometimes pick a heavier process than the
+work needs, which is the ceremony the design exists to avoid.
+
+### Declare which paths the task may write
 
 ```text
 gac_scope { task_id: "REQ-20261004-xyz", scope: ["src/", "docs/api.md"] }
@@ -171,6 +203,27 @@ While a scope is active, four things are refused before dispatch:
 gac_scope {}                    # inspect the current scope
 gac_scope { clear: true }       # release it, returning to ungoverned
 ```
+
+### Declare what the project considers risky
+
+`.dsh/gac/project.json` at the project root. Unknown top-level keys are
+**rejected**, so a typo in `risk.high_risk_paths` fails loudly instead of
+silently disabling the escalation gate:
+
+```json
+{
+  "schema_version": 1,
+  "project": { "id": "my-project", "title": "My Project" },
+  "capabilities": ["implementation", "verification"],
+  "executors": { "implementation": ["builder"], "verification": ["verifier"] },
+  "risk": { "high_risk_paths": ["src/auth/", "src/boot/**"], "default_level": "low" }
+}
+```
+
+A project with no adapter is **ungoverned**, not broken: `gac_project` reports
+it as such, and a declared mode is recorded but marked `NOT cross-checked`.
+An **invalid** adapter is not cached, so fixing the file takes effect on the next
+call rather than needing a restart.
 
 ### Scope semantics
 
@@ -236,10 +289,12 @@ shape and that no module imports a bare `@deepseek-ai/*` package at module scope
 
 ```text
 lib/
-  index.js           DSH shell: registers the gate and the scope tool
+  index.js           DSH shell: registers the guard and the declaration tools
   plugin.js          the pre-execute gate (fails closed on every unknown)
   write-scope.js     strict path containment — the security boundary
-  project.js         Project Adapter validation + execution-mode escalation
+  project.js         adapter validation + execution-mode escalation (pure)
+  project-state.js   adapter loading, caching, and per-session mode state
+  tool-project.js    the gac_project tool
   tool-targets.js    which tool calls write which paths
   tool-scope.js      the gac_scope tool
   session-scope.js   per-session declared scope registry
