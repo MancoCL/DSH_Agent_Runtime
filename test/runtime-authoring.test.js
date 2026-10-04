@@ -15,8 +15,13 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { createGacCore } from '../lib/plugin.js'
+import { ProjectState } from '../lib/project-state.js'
 import { importDshPackage } from '../lib/resolve-dsh.js'
+import { TaskStore } from '../lib/task-store.js'
+import { METRICS_TOOL_NAME, createMetricsTool } from '../lib/tool-metrics.js'
+import { PROJECT_TOOL_NAME, createProjectTool } from '../lib/tool-project.js'
 import { SCOPE_TOOL_NAME, createScopeTool, scopeToolOptions } from '../lib/tool-scope.js'
+import { TASK_TOOL_NAME, createTaskTool } from '../lib/tool-task.js'
 
 const toolsPackage = await importDshPackage('@deepseek-ai/dsh-tools')
 const canRun = typeof toolsPackage?.defineTool === 'function'
@@ -68,7 +73,78 @@ describe('the scope tool survives the runtime authoring helper', { skip: !canRun
       )
     }
   })
+})
 
+describe('每一个登记的工具都要过真实 defineTool 这一关', { skip: !canRun }, () => {
+  /**
+   * 造出全部工具，键为工具名。
+   *
+   * 刻意**不写死清单**：写死清单会在新增工具时静默漏掉它，而本组断言存在的唯一理由就是
+   * 「新增的工具也得过这一关」。这条路是踩出来的——`gac_metrics` 第一次加进来时漏了
+   * `output`，测试全绿而插件在真实加载时报
+   * `Cannot read properties of undefined (reading 'render')`，于是四个工具一个都没注册上。
+   * 当时本文件只检查了 `gac_scope` 一个工具。
+   *
+   * @returns {Record<string, object>}
+   */
+  function buildAllTools() {
+    const core = createGacCore()
+    const root = process.cwd()
+    const store = new TaskStore({ root })
+    const state = new ProjectState({ resolveRoot: () => root })
+    const defineTool = toolsPackage.defineTool
+    return {
+      [SCOPE_TOOL_NAME]: createScopeTool({ core, defineTool }),
+      [PROJECT_TOOL_NAME]: createProjectTool({ state, defineTool }),
+      [TASK_TOOL_NAME]: createTaskTool({ defineTool, taskStoreFor: () => store, sessionRootFor: () => root }),
+      [METRICS_TOOL_NAME]: createMetricsTool({ defineTool, taskStoreFor: () => store, sessionRootFor: () => root, evidenceFor: () => [] }),
+    }
+  }
+
+  const built = buildAllTools()
+
+  it('造出了每一个已在工具模块里导出了名字的工具', () => {
+    // 双向核对：这里造出的集合，与各模块导出的工具名集合必须一致。少造一个就漏检一个。
+    assert.deepEqual(
+      Object.keys(built).sort(),
+      [METRICS_TOOL_NAME, PROJECT_TOOL_NAME, SCOPE_TOOL_NAME, TASK_TOOL_NAME].sort(),
+    )
+  })
+
+  for (const [name, tool] of Object.entries(built)) {
+    describe(name, () => {
+      it('defineTool 接受它的选项', () => {
+        assert.equal(tool.name, name)
+      })
+
+      it('声明了运行时期待的全部成员', () => {
+        assert.equal(typeof tool.description, 'string')
+        assert.equal(typeof tool.parameters, 'object')
+        assert.equal(typeof tool.execute, 'function')
+        // 漏掉 output 时 defineTool 会在读 `.render` 上抛错，而那时工具**一个都**注册不上。
+        assert.ok(tool.output, '每个工具都必须声明 output')
+        assert.equal(typeof tool.output.render, 'function')
+        assert.equal(typeof tool.output.schema, 'object')
+      })
+
+      it('编译出的参数是真正的 JSON Schema', () => {
+        assert.equal(tool.parameters.type, 'object')
+        assert.ok(tool.parameters.properties, '参数必须编译出 properties')
+      })
+
+      it('没有把可选参数写成 required: false', () => {
+        // 创作 DSL 接受 `required: true` 或该键缺失，并以 UNSUPPORTED_SCHEMA 拒绝
+        // `required: false`；写成 false 会让工具根本注册不上。
+        for (const [param, spec] of Object.entries(tool.parameters.properties ?? {})) {
+          if (spec === null || typeof spec !== 'object') continue
+          assert.notEqual(spec.required, false, `${name}.${param} 不应把 required 写成 false`)
+        }
+      })
+    })
+  }
+})
+
+describe('defineTool 拒绝创作错误：让它在这里响，而不是在加载时静默', { skip: !canRun }, () => {
   it('an authoring mistake fails loudly here rather than silently at load', () => {
     const core = createGacCore()
     const broken = scopeToolOptions({ core })
@@ -79,6 +155,17 @@ describe('the scope tool survives the runtime authoring helper', { skip: !canRun
     )
   })
 
+  it('缺少 output 时必须抛错，而不是让整批工具都注册不上', () => {
+    // 这正是 gac_metrics 第一次加进来时的样子：漏了 output，测试全绿，插件在真实加载时
+    // 抛 `Cannot read properties of undefined (reading 'render')`。
+    const core = createGacCore()
+    const broken = scopeToolOptions({ core })
+    delete broken.output
+    assert.throws(() => toolsPackage.defineTool(broken))
+  })
+})
+
+describe('the scope tool survives the runtime authoring helper', { skip: !canRun }, () => {
   it('keeps every optional parameter optional, since all four overload one tool', () => {
     const core = createGacCore()
     const tool = createScopeTool({ core, defineTool: toolsPackage.defineTool })

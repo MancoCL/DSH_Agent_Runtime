@@ -18,6 +18,7 @@ import { describe, it } from 'node:test'
 import {
   EXECUTION_MODES,
   ProjectAdapterError,
+  RISK_LEVELS,
   isHighRiskPath,
   loadProjectAdapterFromText,
   modeForRisk,
@@ -304,6 +305,63 @@ describe('mode / risk tables', () => {
 
   it('rejects an unknown risk instead of guessing', () => {
     assert.throws(() => modeForRisk('severe'), ProjectAdapterError)
+  })
+})
+
+describe('每一个对外宣告的模式都必须真的能声明', () => {
+  /**
+   * 一份可用的适配器。
+   *
+   * @returns {object}
+   */
+  function governed() {
+    return adapter()
+  }
+
+  it('EXECUTION_MODES 的每一项都能解析出模式与风险', () => {
+    // 这条断言拦的是一整类缺陷：工具把模式列在 enum 里、模型照着选，而运行时在某个环节
+    // 拒收它。早先 `read_only` 正是如此——它在白名单里，却因为风险反查表里没有它而抛错，
+    // 于是目录里排在最前、最常用的那个模式根本声明不了。逐项跑一遍是唯一能发现它的动作：
+    // 只测其中一项时，恰好漏掉的就是没被选中的那些。
+    for (const mode of EXECUTION_MODES) {
+      const resolved = resolveExecutionMode({
+        declared_mode: mode,
+        reason: 'test',
+        adapter: governed(),
+      })
+      assert.equal(resolved.mode, mode, `${mode} 应当可用`)
+      assert.ok(RISK_LEVELS.includes(resolved.risk), `${mode} 的风险必须是已知档位`)
+    }
+  })
+
+  it('正向表与反向表一致：每档风险的起点模式，其风险就是那一档', () => {
+    // 两张表各自可以是对的，却互相矛盾。矛盾时会有一条路径给出错误的风险级别。
+    for (const risk of RISK_LEVELS) {
+      assert.equal(modeToRisk(modeForRisk(risk)), risk, `${risk} 的起点模式风险应当仍是 ${risk}`)
+    }
+  })
+
+  it('read_only 是最便宜的一档，不会把目标路径升级', () => {
+    const resolved = resolveExecutionMode({
+      declared_mode: 'read_only',
+      reason: '只看不改',
+      target_paths: ['src/anything.c'],
+      adapter: governed(),
+    })
+    assert.equal(resolved.mode, 'read_only')
+    assert.equal(resolved.escalated, false)
+  })
+
+  it('read_only 命中高风险路径时同样升级', () => {
+    // 只看不改也可能踩到高风险面；升级规则不因模式便宜而放宽。
+    const resolved = resolveExecutionMode({
+      declared_mode: 'read_only',
+      reason: '读一个高风险文件',
+      target_paths: ['src/auth/session.c'],
+      adapter: governed(),
+    })
+    assert.equal(resolved.mode, 'high_risk_task')
+    assert.equal(resolved.escalated, true)
   })
 })
 
