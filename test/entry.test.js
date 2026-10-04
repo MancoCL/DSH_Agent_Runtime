@@ -10,7 +10,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, it } from 'node:test'
@@ -18,22 +18,29 @@ import { describe, it } from 'node:test'
 const here = dirname(fileURLToPath(import.meta.url))
 const libDir = join(here, '..', 'lib')
 
-/** lib/ 中的每个模块，靠发现而非列举，这样新增的模块也会被覆盖。 */
-const modules = [
-  'index.js',
-  'claims.js',
-  'claim-store.js',
-  'plugin.js',
-  'project.js',
-  'project-state.js',
-  'path-utils.js',
-  'resolve-dsh.js',
-  'session-scope.js',
-  'tool-project.js',
-  'tool-scope.js',
-  'tool-targets.js',
-  'write-scope.js',
-]
+/**
+ * lib/ 中的每个模块，靠发现而非列举。
+ *
+ * 这里刻意不写死清单：写死的清单会在新增模块时静默漏掉它——而本文件存在的全部理由
+ * 就是「没被导入的模块没人检查」。发现式列举让「新增了模块但忘了加进来」不可能发生。
+ *
+ * @returns {Promise<string[]>} 模块文件名，已排序。
+ */
+async function discoverModules() {
+  const entries = await readdir(libDir, { withFileTypes: true })
+  return entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.js'))
+    .map((entry) => entry.name)
+    .sort()
+}
+
+const modules = await discoverModules()
+
+describe('lib/ 里确实有模块可被发现', () => {
+  it('发现到不止一个模块', () => {
+    assert.ok(modules.length > 1, `expected modules in ${libDir}, found ${modules.length}`)
+  })
+})
 
 describe('every library module parses and imports', () => {
   for (const file of modules) {

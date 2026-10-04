@@ -27,7 +27,8 @@ GAC plugin      →  execution mode, write scope, write claims, verification, ev
 | 1 | `lib/project-state.js` — Project Adapter loaded from `.dsh/gac/project.json` | done |
 | 1 | `lib/tool-project.js` — `gac_project`: adapter inspection + mode declaration | done |
 | 2 | `lib/claims.js` + `lib/claim-store.js` — write claims | done |
-| 3 | Coordinator: DAG, ready nodes, STANDARD_TASK | not started |
+| 3 | `lib/coordinator.js` — DAG, ready nodes, state transitions | done (logic) |
+| 3 | Driving the DAG from a live session (task tool + dispatch) | not started |
 | 4 | Independent verification: plan, falsification, traceability | not started |
 | 5 | Session event projection | not started |
 | 6 | Evidence capture and AC traceability | not started |
@@ -300,6 +301,49 @@ module header of `lib/write-scope.js`.
 
 ---
 
+## The coordinator (`lib/coordinator.js`)
+
+Pure logic, and the module the rest of the runtime will be driven by. It is
+written and tested ahead of any tool that exposes it, because the rules it
+enforces are the ones worth getting exactly right in isolation.
+
+Three properties are structural rather than conventional:
+
+**An executor never declares completion.** `applyResult` accepts a structured
+result and decides the transition from an explicit table. `completed` and
+`superseded` appear in no table's *source* position, so "a terminal state cannot
+be moved by a late result" is a property of the table itself, not a check
+scattered across branches.
+
+**Attempts are never reused.** Every dispatch mints a new identity
+(`attempt`, `dispatch_id`). A result whose `dispatch_id` does not match the
+node's active execution is classified `stale` and changes nothing — otherwise a
+late result from a previous attempt would look like the current one and rewrite
+state it has no claim to.
+
+**Parallelism is decided by facts, not intent.** A node is *ready* when its
+dependencies are complete; it joins the execution *batch* only if its write scope
+is disjoint from every in-flight and same-batch node AND it shares no exclusive
+resource. Ready-but-not-batched is reported with a reason, so "why is this not
+running" has an answer.
+
+```text
+compileTask(plan)   → validate: existence, cycles, non-empty capabilities,
+                      declared write scope. Rejects before any file is touched.
+resolveReady(task)  → { ready, batch, reason }
+dispatch(task, ids) → new attempt + dispatch identity per node
+applyResult(t, r)   → { classification: accepted | stale | rejected }
+reopen(t, id, why)  → a reason is mandatory; terminal states move only explicitly
+nextAction(task)    → dispatch | await | blocked | repair | complete_task | done
+```
+
+Note that `await` is deliberately distinct from `blocked`: waiting on a
+subagent you dispatched is internal, and recording it as an external blockage
+would hide the difference between "the world is preventing progress" and "my own
+work is still running".
+
+---
+
 ## Known limits
 
 Stated here rather than discovered later (adaptation plan §7):
@@ -334,7 +378,7 @@ Stated here rather than discovered later (adaptation plan §7):
 ## Develop
 
 ```bash
-npm test          # 119 tests, no DSH required
+npm test          # 296 tests, no DSH required
 ```
 
 The library modules are pure and dependency-injected precisely so the suite runs
@@ -349,6 +393,7 @@ lib/
   write-scope.js     strict path containment — the security boundary
   claims.js          write-claim conflict detection (pure)
   claim-store.js     durable one-file-per-claim store with orphan pruning
+  coordinator.js     task DAG, ready resolution, state transitions (pure)
   project.js         adapter validation + execution-mode escalation (pure)
   project-state.js   adapter loading, caching, and per-session mode state
   tool-project.js    the gac_project tool
