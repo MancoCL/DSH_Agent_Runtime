@@ -1,15 +1,13 @@
 /**
- * Guard behaviour tests — the deny path.
+ * 守卫行为测试——拒绝路径。
  *
- * Architecture outline §22 requires an out-of-scope write to be stopped BEFORE
- * execution, not observed afterwards (§25). This suite is the executable proof
- * of that gate, and it is deliberately written against the shape DSH actually
- * hands a `tools/pre-execute` listener.
+ * 架构大纲 §22 要求越出作用域的写入必须在执行之前被拦下，而不是事后才被观察到（§25）。
+ * 本套件是该门禁的可执行证明，并且刻意按照 DSH 实际交给 `tools/pre-execute` 监听器的
+ * 形状来编写。
  *
- * The suite is also the honest record of what the gate does NOT cover (shell,
- * unknown tools): those cases assert a denial, because the alternative —
- * claiming coverage this seam cannot provide — is the failure the adaptation
- * plan §7 warns about.
+ * 本套件同时也是该门禁「不」覆盖哪些情形的诚实记录（shell、未知工具）：这些用例断言
+ * 拒绝，因为另一种做法——声称提供这个接缝无法提供的覆盖——正是适配计划 §7 所警告的
+ * 失败。
  */
 
 import assert from 'node:assert/strict'
@@ -21,7 +19,7 @@ const SESSION = 'session-1'
 const ROOT = 'D:/work/proj'
 
 /**
- * Build a `ToolExecution`-shaped object as DSH presents it at pre-execute.
+ * 构造一个 `ToolExecution` 形状的对象，与 DSH 在 pre-execute 时呈现的一致。
  *
  * @param {string} name
  * @param {object} args
@@ -40,7 +38,7 @@ function exec(name, args, sessionId = SESSION) {
 }
 
 /**
- * A core with one declared scope for the default session.
+ * 一个核心实例，为默认会话声明了一个作用域。
  *
  * @param {readonly string[]} writeScope
  * @param {object} [options]
@@ -229,10 +227,9 @@ describe('scope lifecycle', () => {
 })
 
 describe('the scope tool must stay callable while a scope is active', () => {
-  // A real defect, found by running the gate in a live session rather than in
-  // this suite: `gac_scope` was absent from the known table, so the guard
-  // refused it once a scope was declared. That turned the scope into a trap —
-  // it could not be inspected, re-declared, or released.
+  // 一个真实缺陷，是在实时会话中运行该门禁、而不是在本套件中发现的：`gac_scope` 不在
+  // 已知表里，因此一旦声明了作用域，守卫就会拒绝它。这把作用域变成了陷阱——它无法被
+  // 查看、重新声明或释放。
   it('allows gac_scope, so the current scope can always be inspected', () => {
     const core = governed(['src/a.c'])
     assert.equal(core.preExecute(exec('gac_scope', {})).kind, 'allow')
@@ -252,8 +249,8 @@ describe('the scope tool must stay callable while a scope is active', () => {
   })
 
   it('an empty scope still permits the scope tool — the trap case', () => {
-    // With an empty scope every write is refused. If the scope tool were also
-    // refused, nothing could ever undo it.
+    // 空作用域下每一次写入都会被拒绝。如果作用域工具也被拒绝，那就再也没有任何东西能
+    // 撤销它了。
     const core = governed([])
     assert.equal(core.preExecute(exec('gac_scope', { clear: true })).kind, 'allow')
   })

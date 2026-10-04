@@ -1,15 +1,14 @@
 /**
- * Runtime-authoring integration test.
+ * 运行时编写（runtime-authoring）集成测试。
  *
- * This is the one test in the suite that runs against the real DSH runtime
- * rather than a stub, and it exists because the parameter DSL `defineTool`
- * accepts is the runtime's own: a mistake in it cannot be found by reading our
- * code, only by running it through the real helper.
+ * 这是本测试集中唯一对真实 DSH 运行时、而不是对桩件运行的测试；它存在的原因是：
+ * `defineTool` 接受的参数 DSL 是运行时自己的东西——其中的错误无法靠阅读我们的代码
+ * 发现，只能让真实的辅助函数跑一遍。
  *
- * The alternative — restarting the harness to find out — was tried, and it cost
- * two restart cycles for one wrong field. This test is the cheap version.
+ * 另一条路——重启 harness 去查明——已经试过，为一个写错的字段付出了两轮重启的
+ * 代价。本测试是那个廉价的版本。
  *
- * Skipped when DSH is not installed, so the unit suite still runs anywhere.
+ * DSH 未安装时跳过，因此单元测试集在任何环境下都仍能运行。
  */
 
 import assert from 'node:assert/strict'
@@ -42,13 +41,12 @@ describe('the scope tool survives the runtime authoring helper', { skip: !canRun
   it('compiles the parameter DSL into the JSON Schema the model is shown', () => {
     const core = createGacCore()
     const tool = createScopeTool({ core, defineTool: toolsPackage.defineTool })
-    // The compiled schema must be real JSON Schema, not our authoring spec.
+    // 编译出来的 schema 必须是真正的 JSON Schema，而不是我们的编写规范。
     assert.equal(tool.parameters.type, 'object')
     assert.ok(tool.parameters.properties?.scope, 'scope must survive compilation')
     assert.ok(tool.parameters.properties?.task_id, 'task_id must survive compilation')
-    // The runtime omits `required` entirely when nothing is mandatory, which is
-    // what standard JSON Schema does; an empty array would also be valid, so
-    // accept either rather than pinning an implementation detail.
+    // 没有任何必填项时，运行时会完全省略 `required`，这正是标准 JSON Schema 的
+    // 做法；空数组同样合法，所以两种都接受，而不是把一个实现细节钉死。
     const required = tool.parameters.required
     assert.ok(
       required === undefined || (Array.isArray(required) && required.length === 0),
@@ -59,10 +57,9 @@ describe('the scope tool survives the runtime authoring helper', { skip: !canRun
   it('does not mark optional parameters with required: false', () => {
     const core = createGacCore()
     const tool = createScopeTool({ core, defineTool: toolsPackage.defineTool })
-    // The runtime's authoring DSL accepts `required: true` or the key's absence,
-    // and REJECTS `required: false` with UNSUPPORTED_SCHEMA. Omitting the key is
-    // how a parameter is declared optional; writing `required: false` instead
-    // makes defineTool throw, so the tool never registers at all.
+    // 运行时的创作 DSL 接受 `required: true` 或该键缺失，并以 UNSUPPORTED_SCHEMA
+    // 拒绝 `required: false`。省略该键才是声明参数可选的方式；改成写
+    // `required: false` 会让 defineTool 抛错，于是工具根本注册不上。
     for (const [name, spec] of Object.entries(scopeToolOptions({ core }).parameters)) {
       assert.equal(
         Object.hasOwn(spec, 'required'),
@@ -85,8 +82,8 @@ describe('the scope tool survives the runtime authoring helper', { skip: !canRun
   it('keeps every optional parameter optional, since all four overload one tool', () => {
     const core = createGacCore()
     const tool = createScopeTool({ core, defineTool: toolsPackage.defineTool })
-    // Declaring any of them required would break inspect and clear, which send
-    // only a subset.
+    // 把其中任何一个声明为必填都会破坏 inspect 与 clear，它们只发送其中一部分
+    // 参数。
     const required = tool.parameters.required
     assert.ok(
       required === undefined || required.length === 0,

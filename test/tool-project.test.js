@@ -1,10 +1,9 @@
 /**
- * `gac_project` tool tests.
+ * `gac_project` 工具测试。
  *
- * This tool carries the execution-mode ladder to the model, so the tests check
- * two kinds of thing: that a declaration is recorded and escalated correctly,
- * and that the model-facing text actually states the consequences of each level.
- * A mode vocabulary the model cannot act on is a vocabulary it will guess at.
+ * 这个工具把执行模式阶梯带到模型面前，所以这些测试检查两类事情：声明是否被正确
+ * 记录并升级，以及面向模型的文本是否真的说明了每一级的后果。模型无法据以行动的
+ * 模式词汇表，就是一份它只能靠猜的词汇表。
  */
 
 import assert from 'node:assert/strict'
@@ -31,9 +30,9 @@ const VALID_ADAPTER = JSON.stringify({
 })
 
 /**
- * Build the tool with a stubbed authoring helper and a fixed project root.
+ * 用桩掉的编写辅助函数和一个固定的工程根目录构建该工具。
  *
- * @param {string|undefined} root - undefined models an unresolvable root.
+ * @param {string|undefined} root - undefined 表示一个无法解析的根目录。
  * @param {string|undefined} adapterText
  * @returns {{tool: object, exec: object, state: ProjectState}}
  */
@@ -54,7 +53,7 @@ function harness(root, adapterText) {
   }
 }
 
-/** A scratch project root, removed when the suite ends. */
+/** 一个临时工程根目录，测试集结束时删除。 */
 function scratch() {
   const root = mkdtempSync(join(tmpdir(), 'gac-tool-project-'))
   scratchRoots.push(root)
@@ -74,8 +73,8 @@ describe('tool shape', () => {
 
   it('states the consequence of each mode, not just its name', () => {
     const { tool } = harness(scratch(), VALID_ADAPTER)
-    // "standard_task" means nothing alone; "an independent verifier checks the
-    // result" is something the model can reason with.
+    // 「standard_task」单独一个词说明不了什么；「由独立验证者检查结果」才是模型
+    // 能据以推理的东西。
     assert.match(tool.description, /no task record is created/iu)
     assert.match(tool.description, /independent verifier/iu)
     assert.match(tool.description, /verification plan/iu)
@@ -189,8 +188,8 @@ describe('declaring a mode', () => {
   })
 
   it('inspects a rootless session with a sentence, not a TypeError', async () => {
-    // An earlier version dereferenced the absent adapter while inspecting and
-    // threw at the model instead of explaining itself.
+    // 更早的版本在检视时解引用了缺席的适配器，于是把异常抛给模型，而不是把情况
+    // 说清楚。
     const root = scratch()
     const h = harness(root, VALID_ADAPTER)
     h.setRoot(undefined)
@@ -231,7 +230,7 @@ describe('escalation is recorded for auditing', () => {
       target_paths: ['src/auth/token.c'],
     }, exec)
     const recorded = state.modeFor('session-1')
-    // Both facts survive: what was claimed, and what it became.
+    // 两个事实都保留下来：当初声称的是什么，以及它变成了什么。
     assert.equal(recorded.declared_mode, 'direct_edit')
     assert.equal(recorded.mode, 'high_risk_task')
     assert.equal(recorded.escalated, true)

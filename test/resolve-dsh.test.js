@@ -1,11 +1,10 @@
 /**
- * Package-resolution tests.
+ * 包解析测试。
  *
- * These exist because of a real failure: the anchor list resolved correctly in a
- * developer shell and failed inside the host process, so the plugin loaded with
- * its scope tool silently absent and reported only "not resolvable". The
- * strategy is therefore tested on its contract — ordered anchors, distinct
- * reasons, no throwing — rather than only on "does it work on this machine".
+ * 它们因一次真实故障而存在：锚点列表在开发者 shell 里解析正常，在宿主进程内却
+ * 失败，于是插件加载时作用域工具静默缺席，只报了一句「不可解析」。因此这里测的是
+ * 该策略的契约——锚点有序、原因各不相同、不抛错——而不是只测「在这台机器上能不能
+ * 跑通」。
  */
 
 import assert from 'node:assert/strict'
@@ -27,8 +26,8 @@ describe('candidateAnchors', () => {
   })
 
   it('leads with this process, not with an environment variable', () => {
-    // A process-grounded anchor is a fact; an environment variable may be unset.
-    // Ordering puts the certain thing first.
+    // 以进程为依据的锚点是事实；环境变量则可能未设置。
+    // 排序把确定的东西放在最前面。
     assert.equal(candidateAnchors()[0], process.execPath)
   })
 
@@ -46,18 +45,17 @@ describe('candidateAnchors', () => {
   })
 
   it('anchors to each profile directory, which is what reaches the hoisted modules', () => {
-    // The regression this list exists for. A profile DIRECTORY is the working
-    // anchor: Node walks upward from it to `profiles/node_modules/@deepseek-ai`.
-    // Anchoring to `profiles/package.json` assumed a manifest that does not
-    // exist, so every anchor missed and the plugin loaded without its tool.
+    // 这个列表就是为这次回归而存在的。可用的锚点是 profile 目录：Node 会从它向上
+    // 走到 `profiles/node_modules/@deepseek-ai`。锚定到 `profiles/package.json`
+    // 等于假设了一个并不存在的清单文件，于是每个锚点都落空，插件加载时连工具都没有。
     const home = process.env.DSH_HOME
       ?? (process.env.USERPROFILE ?? process.env.HOME)
     if (home === undefined) return
 
     const profilesDir = `${home.replace(/\\/gu, '/')}/profiles`.replace(/\//gu, '\\')
     const fromProfiles = candidateAnchors().filter((a) => a.startsWith(profilesDir))
-    // Either a profile directory contributed an anchor, or this machine has no
-    // profiles at all — in which case there is nothing to assert.
+    // 要么某个 profile 目录贡献了一个锚点，要么这台机器压根没有 profile——
+    // 后一种情况下就没有什么可断言的了。
     const hasProfiles = fromProfiles.length > 0
     if (hasProfiles) {
       assert.ok(
@@ -74,8 +72,8 @@ describe('resolveWithDiagnostics', () => {
       const { resolved } = resolveWithDiagnostics('@deepseek-ai/dsh-tools', [anchor])
       return resolved !== undefined
     })
-    // Tolerant by design: a contributor without DSH installed can still run the
-    // unit suite. When it does resolve, the path must be the real package.
+    // 故意宽容：没装 DSH 的贡献者仍然能跑单元测试集。当它确实解析成功时，路径
+    // 必须指向真实的包。
     if (found !== undefined) {
       const { resolved } = resolveWithDiagnostics('@deepseek-ai/dsh-tools', [found])
       assert.match(resolved, /dsh-tools/u)
@@ -90,8 +88,8 @@ describe('resolveWithDiagnostics', () => {
   })
 
   it('records why an existing anchor failed to satisfy the request', () => {
-    // A real file that exists but sits nowhere near the package: the reason must
-    // be a module-resolution code, not "anchor does not exist".
+    // 一个真实存在、但与那个包毫无关系的文件：原因必须是一个模块解析错误码，
+    // 而不是「锚点不存在」。
     const { resolved, attempts } = resolveWithDiagnostics(
       '@deepseek-ai/definitely-not-a-real-package',
       [process.execPath],
@@ -109,8 +107,8 @@ describe('resolveWithDiagnostics', () => {
 
 describe('describeResolutionFailure', () => {
   it('names every anchor tried and its reason', () => {
-    // This is the string that lands in the load report; "not resolvable" alone
-    // sent a real debugging session in the wrong direction.
+    // 这就是落进加载报告里的那段字符串；只有一句「不可解析」曾把一次真实的排查
+    // 引向了错误的方向。
     const message = describeResolutionFailure('@deepseek-ai/definitely-not-a-real-package')
     assert.match(message, /@deepseek-ai\/definitely-not-a-real-package/u)
     assert.match(message, /anchors tried/u)
