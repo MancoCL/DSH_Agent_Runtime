@@ -26,6 +26,7 @@ GAC plugin      →  execution mode, write scope, write claims, verification, ev
 | 0.5 | `lib/index.js` — DSH shell, installed in the `core-020` profile | **verified in a live session** |
 | 1 | `lib/project-state.js` — Project Adapter loaded from `.dsh/gac/project.json` | done |
 | 1 | `lib/tool-project.js` — `gac_project`: adapter inspection + mode declaration | done |
+| 1 | `lib/prompt-section.js` — the GAC state in the model's own system prompt | done, 24 tests, verified live |
 | 2 | `lib/claims.js` + `lib/claim-store.js` — write claims | done |
 | 3 | `lib/coordinator.js` — DAG, ready nodes, state transitions | done (logic) |
 | 3 | `lib/task-store.js` + `lib/tool-task.js` — durable task records, `gac_task` | done |
@@ -95,12 +96,11 @@ plugin_manager { action: install_bundle, target: "<this directory>" }
 This adds `dsh-gac-runtime` as a `link:` dependency of the active profile and
 appends it to `dsh.profile.bundles`. Consequences worth knowing:
 
-- **A restart is required.** The harness HMR entry watches *configuration*, not
-  module files (the base bundle sets `root: []` when a launcher supplies a
-  profile context). Editing `lib/*.js` therefore does **not** reload the plugin.
-  Disabling and re-enabling the entry re-runs `apply` but does **not** re-import
-  the module, so it keeps executing the code it loaded at startup — only a
-  restart picks up code changes.
+- **A restart is required — unless the watch roots are widened.** The harness HMR
+  entry watches *configuration*, not module files (the base bundle sets `root: []`
+  when a launcher supplies a profile context). Out of the box, editing `lib/*.js`
+  therefore does **not** reload the plugin, and only a restart picks up code
+  changes.
 
   To iterate without restarts, widen the HMR watch roots in the *profile* patch
   (`~/.dsh/profiles/<profile>/cordis.patch.yml`). Use an **absolute path**:
@@ -122,6 +122,32 @@ appends it to `dsh.profile.bundles`. Consequences worth knowing:
   profile and never the plugin — which is linked from outside it. That was this
   file's original advice and it was wrong: it would have looked configured while
   changing nothing.
+
+- **Disable the plugin before you edit it.** With the watch root widened, every
+  write to `lib/*.js` hot-reloads into the host process — which is the process the
+  model is working in. Half-finished code therefore goes live: a write-scope gate
+  that denies everything, or a prompt provider that throws during assembly, takes
+  away the very tools that would be used to fix it. The safe loop, measured on
+  2026-10-04:
+
+  ```yaml
+  # ~/.dsh/profiles/<profile>/cordis.patch.yml
+  - id: gac-runtime
+    disabled: true      # the plugin unloads live; the report records plugin-unloaded
+  ```
+
+  edit `lib/*.js`, run the suite, then set `disabled: false` again. This file
+  previously claimed that re-enabling only re-runs `apply` and keeps executing the
+  code loaded at startup, so a restart was the only way to pick up changes. That
+  was wrong **once the watch root is widened**: HMR replaces the module cache when
+  a watched file changes, so re-enabling imports the new module. Measured, not
+  reasoned: after a disable → edit → re-enable cycle the load report carried the
+  new code's own field (`prompt-section-registered`), with no restart.
+
+  Cost of the safe loop: the plugin's declared modes and scopes live in memory and
+  are lost when it unloads (task records are on disk and survive). So a task
+  cannot be *governed* by the plugin while the plugin's own gate code is being
+  edited — see [docs/CUTOVER.md](docs/CUTOVER.md) §6.
 
 - Because it is a link, the plugin keeps its own `node_modules` and cannot
   bare-import `@deepseek-ai/*`. `lib/resolve-dsh.js` resolves those from the
@@ -184,6 +210,70 @@ as a missing tool after a restart.
 ---
 
 ## Use
+
+### What the model is told, and when it is told nothing
+
+A governed project gets one prompt section, `gac:protocol` at order 700
+(`lib/prompt-section.js`). It is **state, not policy**: the mode ladder lives in
+`gac_project`'s description and the scope semantics in `gac_scope`'s, so the
+section does not repeat them — two copies of a rule drift, and the drifting copy
+is the one the model reads. What it adds is what a tool description cannot know:
+
+```text
+GAC runtime: project `dsh-gac-runtime` is governed by .dsh/gac/project.json. No
+execution mode has been declared for this session, so there is no task record and
+no write scope is being enforced. Declare the lowest sufficient mode with
+gac_project before you change anything, and declare the exact paths this task may
+modify with gac_scope before you edit files; both tools' descriptions state what
+each level commits you to. Evidence ids are issued by the runtime: list them with
+gac_evidence before citing one in a task report — an id the runtime never issued
+is refused at close-out.
+```
+
+and once things are declared:
+
+```text
+Declared mode for this session: `standard_task` (risk medium) — <reason>. An
+independent verifier is expected to check the result. Write scope active for task
+`REQ-X` node `build`: [lib/, test/]. Writes outside it, shell commands, and tools
+this runtime cannot check are refused before dispatch (GAC_WRITE_SCOPE_DENIED /
+GAC_SHELL_DENIED_UNDER_SCOPE / GAC_UNGUARDABLE_WRITE_DENIED); such a refusal is
+this declaration being enforced, not an obstacle to route around.
+```
+
+Three properties are load-bearing:
+
+- **It disappears** when the project is ungoverned and nothing is declared. The
+  gate is inert there, and a section that appeared anyway would be claiming an
+  enforcement that is not happening.
+- **Visibility is decided from disk, not from session memory.** "Governed" means
+  `.dsh/gac/project.json` exists, which survives a plugin reload; the declared
+  mode and scope do not. Keying visibility off session state would make the
+  section flicker in and out across reloads.
+- **It cannot throw.** The text provider runs inside prompt assembly, where a
+  throw fails *every model step* — including the step the model would use to fix
+  it. So the provider is wrapped, returns a string for any input, and registers
+  with `interpolate: false`: the text embeds project-supplied values verbatim
+  (paths, reasons), and an open interpolation pass would fail at render time on a
+  `{{` in one of them.
+
+`test/prompt-wiring.test.js` drives the real `apply()` against a fake context and
+asserts the section is registered with those properties — and that a combination
+without the `systemPrompt` service still installs the write-scope gate, because
+losing a prompt section must never cost an enforcement.
+
+The section was verified live, by reading it back out of the session's own log
+(`~/.dsh/sessions/<workspace>/<session>/session.v4.jsonl.zstd`, zstd frames) after
+the plugin reloaded with the new code:
+
+```text
+type: system/message ... "You are an AI agent powered by DeepSeek Harness. ...
+GAC runtime: project `dsh-gac-runtime` is governed by .dsh/gac/project.json. No
+execution mode has been declared for this session, ..."
+```
+
+The file is not evidence that the section exists; the **system-role message in the
+model's own history** is.
 
 ### Declare how much process the work needs
 
