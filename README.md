@@ -34,8 +34,9 @@ GAC plugin      →  execution mode, write scope, write claims, verification, ev
 | 4 | Plan and evidence gates wired into `gac_task` | done |
 | 5 | `lib/grilling.js` — multi-round requirement refinement | done |
 | 5 | `lib/contract.js` — interface contract freeze | done |
+| 6 | `lib/evidence.js` + `lib/evidence-store.js` — runtime-issued evidence | done |
+| 6 | `lib/metrics.js` + `lib/tool-metrics.js` — metrics with a read-only outlet | done |
 | 5 | Session event projection | not started |
-| 6 | Evidence capture and AC traceability | not started |
 
 **Phase 0 is verified, not merely tested.** In a live session with
 `scope: ["docs/scratch.md"]`:
@@ -549,6 +550,65 @@ through to "whoever supports it" — the declared route was ignored while
 everything looked fine. It also lets two executors of the *same* capability use
 different models, which is what independence needs.
 
+### Evidence: issued by the runtime, not written by the agent
+
+Before this, a verification report's `evidence_ref` was just a string the model wrote.
+Writing `ev-1` and actually running a command were **identical in the data**, so "every
+case has evidence" could be satisfied by inventing it. The plugin now subscribes to
+`tools/result` and records every observation; the **runtime issues the ids**.
+
+```text
+ev-3  |  pwsh  |  exit=0  |  is_error=false  |  output digest 67d02982
+```
+
+An `evidence_ref` is `evidence_id#detail`. Same id with **different** details is
+legitimate — one test-suite run substantiates many cases, each in its own part of the
+output. Same id with the **same** detail is pooled evidence: one observation standing in
+for two claims.
+
+Three things are hard facts, not judgements:
+
+| Check | Why |
+| --- | --- |
+| the id was never issued | the reference is invented |
+| `is_error` is true | that call did not succeed |
+| `exit_code` is non-zero | **a command that failed proves nothing passed** |
+
+Capture is scoped to **engaged** sessions (a write scope declared, or an execution mode
+declared). Recording every read and every directory listing in every session would bury
+the verification evidence that actually needs reviewing.
+
+**What the frozen result does and does not carry.** `tools/result` yields
+`{ isError, value, content, meta }`, plus `error.info.code` on failure. There is **no
+top-level CWD / stdout / stderr**, and `exitCode` is not top-level either — it lives inside
+`result.value`, whose shape **differs per tool**. So the capture reads `exitCode` /
+`signal` / `timedOut` only when the value really is an object carrying those fields, and
+**omits the field when it cannot be read**: a missing fact is honest, a guessed one is not.
+Output is stored as a digest and a short preview, never in full.
+
+### Metrics, and the metrics that cannot be computed
+
+`gac_metrics` is read-only and exists so the numbers are actually reachable — code that is
+written but never called is the same as code that was never written, and this repo has had
+to fix that mistake more than once.
+
+The one number to watch is **unauthorized write attempts**, which **should always be 0**. A
+non-zero value does not mean the gate failed (the gate stopped it) — it means the prompt and
+the documentation have a problem: the model is attempting something it should never have
+tried. Treating "we blocked it" as success is how that signal gets ignored forever.
+
+Four metrics from the outline cannot be computed here, and `gac_metrics` lists them with
+reasons rather than omitting them — omitting one makes it look fine:
+
+| Metric | Why not |
+| --- | --- |
+| Agent Call Amplification | needs a count of *requirements* as denominator; the runtime tracks sessions and tool calls, not requirement boundaries |
+| Token Usage / Context Reuse | needs `tokenMeter` readings; the evidence log holds tool calls, not token accounting |
+| False-positive Escalation | needs the after-the-fact judgement of whether escalation was truly needed — not a runtime fact |
+| Critical Path Duration | needs task-level start/end events |
+
+Duplicate Read Ratio *is* computed: same session, same read tool, same argument digest.
+
 ---
 
 ## Known limits
@@ -585,7 +645,7 @@ Stated here rather than discovered later (adaptation plan §7):
 ## Develop
 
 ```bash
-npm test          # 494 tests, no DSH required
+npm test          # 574 tests, no DSH required
 ```
 
 The library modules are pure and dependency-injected precisely so the suite runs
@@ -603,10 +663,14 @@ lib/
   capability-router.js  pick an executor by required capabilities (pure)
   contract.js        interface contract: freeze it before parallel work (pure)
   executor.js        execution boundary: invoke, or refuse honestly
+  evidence.js        runtime-issued evidence records and refs (pure)
+  evidence-store.js  append-only JSONL log; the runtime issues the ids
+  metrics.js         reduction over evidence and tasks (pure)
   coordinator.js     task DAG, ready resolution, state transitions (pure)
   grilling.js        multi-round requirement refinement (pure)
   task-store.js      durable one-file-per-task store, plans, load-time revalidation
   tool-task.js       the gac_task tool
+  tool-metrics.js    the read-only gac_metrics tool
   verification.js    verification plan, falsification, traceability gates (pure)
   project.js         adapter validation + execution-mode escalation (pure)
   project-state.js   adapter loading, caching, and per-session mode state

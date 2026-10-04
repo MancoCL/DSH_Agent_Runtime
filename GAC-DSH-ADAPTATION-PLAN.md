@@ -341,12 +341,25 @@ GAC_INDEPENDENT_EVIDENCE_MISSING     计划用例缺已执行证据
 ### 4.5 证据层（`gac/evidence`）
 
 大纲 §41–§42「证据来自运行时而非 Agent 自报」。DSH 里 `tools/result` 已经携带
-冻结的最终结果（含 exit code、stdout/stderr、CWD），**不需要自己抓**，只需订阅并落盘关联：
+冻结的最终结果，**不需要自己抓**，只需订阅并落盘关联：
 
 ```text
-Command / CWD / Input State / Start / End / ExitCode / stdout / stderr / Artifact / Related AC
-                                ↑ 内核已有        ↑ GAC 补这一段关联
+Tool / Input / IsError / ErrorCode / ExitCode / Output digest / Related AC
+                 ↑ 内核已有                    ↑ GAC 补这一段关联
 ```
+
+**实测修正（Phase 6 落地时发现）**：`tools/result` 给出的是
+`{ isError, value, content, meta }` 与失败时的 `{ error: { message, info: { code } } }`。
+**冻结结果里没有顶层的 CWD / stdout / stderr 字段**，`exitCode` 也不在顶层——它在
+`result.value` 里，而**各工具 `value` 的形状不同**（`pwsh` 的 value 带
+`exitCode`/`signal`/`timedOut`/`aborted`，并带 `kind` 判别联合）。
+`exitCode`/`stdout` 出现在 `TerminalResultView` 上，那是 `presentResult` 产出的**展示类型**，
+不是冻结结果。
+
+因此证据层采取的口径是：`result.error.info.code` 原样记下（这是 `GAC_WRITE_SCOPE_DENIED`
+这类信号的来源，且是内核给的、可核对）；`result.value` 只**在确实是对象时**按已知字段读
+`exitCode`/`signal`/`timedOut`，**读不到就不写这一项**——缺失是诚实的，猜出来的是假的。
+产出本身只留摘要与前缀，不落全文。
 
 ### 4.6 事件与状态投影（`gac/events`）
 
@@ -432,6 +445,12 @@ Phase 5  事件与投影
 
 Phase 6  证据与指标
   tools/result 订阅、AC 关联、§55 指标采集
+  ↳ 已落地：`lib/evidence.js`（记录与引用）、`lib/evidence-store.js`（只追加 JSONL、
+    运行时发号）、`lib/metrics.js`（归约）、`lib/tool-metrics.js`（只读出口）
+  ↳ 关键性质：**运行时没发过的证据号一律不认**。在此之前 `evidence_ref` 只是模型写下的
+    字符串，写下 `ev-1` 与真的跑过一条命令在数据上完全一样，于是「每条用例都有证据」
+    可以靠编造满足。引用形如 `证据号#明细`，同号不同明细合法（一次套件运行支撑多条用例），
+    同号同明细判为取证摊薄。
 
 Phase 7  Legacy 切换
   ~/.claude/workflow 只读归档；新任务默认走 DSH

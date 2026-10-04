@@ -304,6 +304,7 @@ describe('advance — 不能宣告完成', () => {
  * @param {object} [options]
  * @param {object} [options.executors] - 适配器里的 executors 映射。
  * @param {readonly object[]} [options.runtimeExecutors] - 可用执行者；缺省给一对 builder/verifier。
+ * @param {readonly object[]} [options.evidence] - 运行时发出过的证据记录，供收口核对引用。
  * @returns {{tool: object, store: TaskStore, exec: object, calls: object[]}}
  */
 function dispatchHarness(options = {}) {
@@ -332,8 +333,23 @@ function dispatchHarness(options = {}) {
     sessionRootFor: () => store.root,
     adapterFor: () => adapters,
     executorsFor: () => executors,
+    evidenceFor: () => options.evidence ?? [],
   })
   return { tool, store, exec: { agent: { session: { id: 'session-1' } } }, calls }
+}
+
+/**
+ * 造一条运行时发出过的证据记录。
+ *
+ * 只填验证层真正会看的字段：号、工具、是否报错、退出码。证据的形状由
+ * `compileEvidence` 定义，测试里手写一份完整记录只会与它悄悄走样。
+ *
+ * @param {string} id
+ * @param {object} [overrides]
+ * @returns {object}
+ */
+function evidenceRecord(id, overrides = {}) {
+  return { schema_version: 1, id, tool: 'pwsh', is_error: false, exit_code: 0, ...overrides }
 }
 
 describe('advance 真的调用执行者', () => {
@@ -751,7 +767,62 @@ describe('验证证据门禁 —— 收口要看证据', () => {
   })
 
   it('证据齐备且计划对得上时收口成功', async () => {
-    const h = dispatchHarness()
+    // 引用必须指向运行时真实发出过的证据号；这里把证据交给 harness，模拟一次真的跑过的
+    // 命令。
+    const h = dispatchHarness({
+      evidence: [evidenceRecord('ev-1'), evidenceRecord('ev-2')],
+    })
+    const plan = await reachAllDone(h)
+    const { planId } = await import('../lib/verification.js')
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-HR',
+      evidence: {
+        all_criteria_covered: true,
+        verification: {
+          plan_id: planId(plan),
+          executions: [
+            { case_id: 'V1', outcome: 'passed', evidence_ref: 'ev-1#AC1' },
+            { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-2#AC1' },
+          ],
+        },
+      },
+    }, h.exec)
+    assert.equal(value.action, 'completed')
+    assert.equal(h.store.load('REQ-HR').status, 'completed')
+  })
+
+  it('运行时没发过的证据号一律不认', async () => {
+    // 这是本阶段的核心：在此之前 evidence_ref 只是模型写下的字符串，写下 ev-1 与真的跑过
+    // 一条命令在数据上完全一样，于是「每条用例都有证据」可以靠编造满足。
+    const h = dispatchHarness({ evidence: [evidenceRecord('ev-1')] })
+    const plan = await reachAllDone(h)
+    const { planId } = await import('../lib/verification.js')
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-HR',
+      evidence: {
+        all_criteria_covered: true,
+        verification: {
+          plan_id: planId(plan),
+          executions: [
+            { case_id: 'V1', outcome: 'passed', evidence_ref: 'ev-1#AC1' },
+            { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-999#AC1' },
+          ],
+        },
+      },
+    }, h.exec)
+    assert.equal(value.action, 'complete_refused')
+    assert.equal(value.blockers.includes('GAC_EVIDENCE_NOT_FROM_RUNTIME'), true)
+    assert.match(value.message, /ev-999/u)
+    assert.match(value.message, /没有发出过/u)
+  })
+
+  it('退出码非零的命令不能证明任何东西通过', async () => {
+    // 可核对的事实，不是判断：退出码非零的命令跑失败了。
+    const h = dispatchHarness({
+      evidence: [evidenceRecord('ev-1'), evidenceRecord('ev-2', { exit_code: 1 })],
+    })
     const plan = await reachAllDone(h)
     const { planId } = await import('../lib/verification.js')
     const value = await h.tool.execute({
@@ -768,8 +839,80 @@ describe('验证证据门禁 —— 收口要看证据', () => {
         },
       },
     }, h.exec)
+    assert.equal(value.action, 'complete_refused')
+    assert.match(value.message, /退出码为 1/u)
+  })
+
+  it('报错的那次调用不能充当通过证据', async () => {
+    const h = dispatchHarness({
+      evidence: [
+        evidenceRecord('ev-1'),
+        evidenceRecord('ev-2', { is_error: true, error_code: 'GAC_WRITE_SCOPE_DENIED' }),
+      ],
+    })
+    const plan = await reachAllDone(h)
+    const { planId } = await import('../lib/verification.js')
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-HR',
+      evidence: {
+        all_criteria_covered: true,
+        verification: {
+          plan_id: planId(plan),
+          executions: [
+            { case_id: 'V1', outcome: 'passed', evidence_ref: 'ev-1' },
+            { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-2' },
+          ],
+        },
+      },
+    }, h.exec)
+    assert.equal(value.action, 'complete_refused')
+    assert.match(value.message, /GAC_WRITE_SCOPE_DENIED/u)
+  })
+
+  it('同一个证据号配不同明细是合法的：一次套件运行里各用例各自成立', async () => {
+    // 引用带明细的全部意义在这里。跑一遍测试套件同时支撑多条用例是常态，把它们一律判成
+    // 取证摊薄会让真实用法无法通过。
+    const h = dispatchHarness({ evidence: [evidenceRecord('ev-1')] })
+    const plan = await reachAllDone(h)
+    const { planId } = await import('../lib/verification.js')
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-HR',
+      evidence: {
+        all_criteria_covered: true,
+        verification: {
+          plan_id: planId(plan),
+          executions: [
+            { case_id: 'V1', outcome: 'passed', evidence_ref: 'ev-1#用例解析空配置' },
+            { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-1#用例拒绝越界' },
+          ],
+        },
+      },
+    }, h.exec)
     assert.equal(value.action, 'completed')
-    assert.equal(h.store.load('REQ-HR').status, 'completed')
+  })
+
+  it('同一个证据号配相同明细是取证摊薄', async () => {
+    const h = dispatchHarness({ evidence: [evidenceRecord('ev-1')] })
+    const plan = await reachAllDone(h)
+    const { planId } = await import('../lib/verification.js')
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-HR',
+      evidence: {
+        all_criteria_covered: true,
+        verification: {
+          plan_id: planId(plan),
+          executions: [
+            { case_id: 'V1', outcome: 'passed', evidence_ref: 'ev-1#同一段' },
+            { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-1#同一段' },
+          ],
+        },
+      },
+    }, h.exec)
+    assert.equal(value.action, 'complete_refused')
+    assert.equal(value.blockers.includes('GAC_EVIDENCE_POOLED_ACROSS_CASES'), true)
   })
 
   it('缺证据的报告被拒，并指出缺哪条用例', async () => {

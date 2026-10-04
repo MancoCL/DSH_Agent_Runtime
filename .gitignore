@@ -21,6 +21,9 @@ node_modules/
 .dsh/gac/grilling/
 .dsh/gac/contracts/
 
+# The append-only evidence log is runtime state
+.dsh/gac/evidence/
+
 # OS noise
 Thumbs.db
 .DS_Store
