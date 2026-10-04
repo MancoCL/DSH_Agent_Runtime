@@ -36,6 +36,7 @@ GAC plugin      →  execution mode, write scope, write claims, verification, ev
 | 5 | `lib/contract.js` — interface contract freeze | done |
 | 6 | `lib/evidence.js` + `lib/evidence-store.js` — runtime-issued evidence | done |
 | 6 | `lib/metrics.js` + `lib/tool-metrics.js` — metrics with a read-only outlet | done |
+| 6 | `lib/tool-evidence.js` — evidence ids discoverable, so they can be cited | done |
 | 5 | Session event projection | not started |
 
 **Phase 0 is verified, not merely tested.** In a live session with
@@ -609,6 +610,50 @@ reasons rather than omitting them — omitting one makes it look fine:
 
 Duplicate Read Ratio *is* computed: same session, same read tool, same argument digest.
 
+### The gates guard the artifact, not a risk label
+
+Two gates were wrong in the same way, and a real requirement walked end to end found
+both. Each keyed on the **execution mode** while guarding something that has nothing
+to do with risk:
+
+| Gate | Was keyed on | The condition that actually matters |
+| --- | --- | --- |
+| interface contract | `high_risk_task` | **≥2 nodes writing files in one batch** — that is when two authors can invent different interfaces |
+| verification evidence | `high_risk_task` | **a frozen verification plan exists** — that is when there is a promise to check against |
+
+The consequences were not cosmetic. A `standard_task` with parallel code and test
+nodes dispatched **without a contract** — the exact structural failure the contract
+gate exists to prevent. And a `standard_task` with a 20-case frozen plan closed with
+`all_criteria_covered: true` and **zero evidence cited**, discarding the plan's whole
+value at the finish line while everything looked fine.
+
+A gate that keys on a risk label is a gate you can walk around by not declaring the
+label. Both now key on the artifact they guard, and both say which trigger fired —
+"your batch has parallel writers" and "your adapter declares this mode" mean different
+things to whoever has to act.
+
+### Discovery is part of the loop
+
+`gac_evidence` exists because the evidence gate was **unusable in practice**: it demands
+references to runtime-issued ids, and nothing let a model learn what ids existed. A rule
+that requires citing real evidence, with no way to find real evidence, is a rule that
+gets satisfied by inventing ids.
+
+Two things about it were learned the hard way:
+
+**`render` is part of the interface, not a presentation detail.** The first version
+returned correct data and rendered only a summary line — so the model saw "there are 8
+evidence records" and not one id. The data was right and the tool was useless. What the
+model *reads* is as much a part of the contract as what the function returns, and the
+frozen contract for this task omitted it — which is exactly why the defect survived all
+the way to verification.
+
+**Capture must not depend on in-memory state.** Evidence capture was scoped to sessions
+that had declared a scope or mode — both in-memory. A plugin reload silently dropped
+them, and capture simply stopped: two test runs recorded nothing while everything
+appeared normal. It now keys on whether the *project* is governed (an adapter on disk),
+which survives reloads.
+
 ---
 
 ## Known limits
@@ -645,7 +690,7 @@ Stated here rather than discovered later (adaptation plan §7):
 ## Develop
 
 ```bash
-npm test          # 574 tests, no DSH required
+npm test          # 642 tests, no DSH required
 ```
 
 The library modules are pure and dependency-injected precisely so the suite runs
@@ -671,6 +716,7 @@ lib/
   task-store.js      durable one-file-per-task store, plans, load-time revalidation
   tool-task.js       the gac_task tool
   tool-metrics.js    the read-only gac_metrics tool
+  tool-evidence.js   the read-only gac_evidence tool
   verification.js    verification plan, falsification, traceability gates (pure)
   project.js         adapter validation + execution-mode escalation (pure)
   project-state.js   adapter loading, caching, and per-session mode state

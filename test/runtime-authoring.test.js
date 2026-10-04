@@ -12,12 +12,16 @@
  */
 
 import assert from 'node:assert/strict'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, it } from 'node:test'
 
 import { createGacCore } from '../lib/plugin.js'
 import { ProjectState } from '../lib/project-state.js'
 import { importDshPackage } from '../lib/resolve-dsh.js'
 import { TaskStore } from '../lib/task-store.js'
+import { EVIDENCE_TOOL_NAME, createEvidenceTool } from '../lib/tool-evidence.js'
 import { METRICS_TOOL_NAME, createMetricsTool } from '../lib/tool-metrics.js'
 import { PROJECT_TOOL_NAME, createProjectTool } from '../lib/tool-project.js'
 import { SCOPE_TOOL_NAME, createScopeTool, scopeToolOptions } from '../lib/tool-scope.js'
@@ -87,6 +91,19 @@ describe('每一个登记的工具都要过真实 defineTool 这一关', { skip:
    *
    * @returns {Record<string, object>}
    */
+  /**
+   * 每个工具一组能让它跑起来的参数。
+   *
+   * render 体检必须真的执行一次 execute 才有值可渲染，因此每个工具都要有一个可用的最小入参。
+   *
+   * @param {string} name
+   * @returns {object}
+   */
+  function representativeArgs(name) {
+    if (name === TASK_TOOL_NAME) return { action: 'list' }
+    return {}
+  }
+
   function buildAllTools() {
     const core = createGacCore()
     const root = process.cwd()
@@ -98,6 +115,7 @@ describe('每一个登记的工具都要过真实 defineTool 这一关', { skip:
       [PROJECT_TOOL_NAME]: createProjectTool({ state, defineTool }),
       [TASK_TOOL_NAME]: createTaskTool({ defineTool, taskStoreFor: () => store, sessionRootFor: () => root }),
       [METRICS_TOOL_NAME]: createMetricsTool({ defineTool, taskStoreFor: () => store, sessionRootFor: () => root, evidenceFor: () => [] }),
+      [EVIDENCE_TOOL_NAME]: createEvidenceTool({ defineTool, sessionRootFor: () => root, evidenceFor: () => [] }),
     }
   }
 
@@ -107,7 +125,7 @@ describe('每一个登记的工具都要过真实 defineTool 这一关', { skip:
     // 双向核对：这里造出的集合，与各模块导出的工具名集合必须一致。少造一个就漏检一个。
     assert.deepEqual(
       Object.keys(built).sort(),
-      [METRICS_TOOL_NAME, PROJECT_TOOL_NAME, SCOPE_TOOL_NAME, TASK_TOOL_NAME].sort(),
+      [EVIDENCE_TOOL_NAME, METRICS_TOOL_NAME, PROJECT_TOOL_NAME, SCOPE_TOOL_NAME, TASK_TOOL_NAME].sort(),
     )
   })
 
@@ -132,6 +150,20 @@ describe('每一个登记的工具都要过真实 defineTool 这一关', { skip:
         assert.ok(tool.parameters.properties, '参数必须编译出 properties')
       })
 
+      it('render 必须真的产出内容', async () => {
+        // 数据对了不等于目的达到了。一个只渲染出一句空话（或什么都不渲染）的 render 会让
+        // 工具在测试里全绿、在模型眼里毫无用处——`gac_evidence` 一度正是如此：它的 render
+        // 只输出汇总句，模型看得到「共有 N 条证据」却看不到任何一个证据号。
+        //
+        // 这里只做通用检查（非空且含文本），工具特定的内容由各自的测试文件负责。
+        assert.equal(typeof tool.output.render, 'function')
+        const value = await tool.execute(representativeArgs(name), { agent: { session: { id: 'session-authoring' } } })
+        const blocks = tool.output.render(representativeArgs(name), value)
+        assert.ok(Array.isArray(blocks) && blocks.length > 0, `${name} 的 render 必须产出至少一个块`)
+        const text = blocks.map((block) => block.text ?? '').join('')
+        assert.ok(text.length > 0, `${name} 的 render 产出的文本不能为空`)
+      })
+
       it('没有把可选参数写成 required: false', () => {
         // 创作 DSL 接受 `required: true` 或该键缺失，并以 UNSUPPORTED_SCHEMA 拒绝
         // `required: false`；写成 false 会让工具根本注册不上。
@@ -142,6 +174,177 @@ describe('每一个登记的工具都要过真实 defineTool 这一关', { skip:
       })
     })
   }
+})
+
+describe('每个动作返回的字段都必须在 output schema 里声明', { skip: !canRun }, () => {
+  /**
+   * 核对一次返回值没有带出未声明的字段。
+   *
+   * 运行时的输出校验以 `additionalProperties: false` 拒绝未声明的字段，**整次调用作废**。
+   * 这条断言拦的就是那件事：`plan` 与 `contract` 曾返回 `plan_id` 而 schema 里没有它，
+   * 于是**登记验证计划与冻结契约在真实插件里根本做不成**，而单测全绿——测试用的是透传的
+   * `defineTool`，它不做输出校验。声明了什么就必须与真正返回什么一致。
+   *
+   * @param {object} tool
+   * @param {object} value
+   * @param {string} label
+   */
+  function assertDeclared(tool, value, label) {
+    const declared = new Set(Object.keys(tool.output.schema.properties ?? {}))
+    const extra = Object.keys(value).filter((key) => !declared.has(key))
+    assert.deepEqual(
+      extra,
+      [],
+      `${label} 返回了未在 output schema 里声明的字段：${extra.join(', ')}；`
+      + `真实运行时会以 additionalProperties: false 拒绝整次调用`,
+    )
+  }
+
+  /**
+   * 一个可推进的任务工具，带临时存储。
+   *
+   * @returns {object}
+   */
+  function taskHarness() {
+    const root = mkdtempSync(join(tmpdir(), 'gac-authoring-'))
+    const store = new TaskStore({ root })
+    return {
+      root,
+      store,
+      tool: createTaskTool({
+        defineTool: toolsPackage.defineTool,
+        taskStoreFor: () => store,
+        sessionRootFor: () => root,
+        adapterFor: () => ({ executors: { implementation: ['builder'] } }),
+        executorsFor: () => [{ name: 'builder', supports: () => true, run: async () => ({ status: 'completed', summary: 'ok' }) }],
+        evidenceFor: () => [{ id: 'ev-1', tool: 'pwsh', is_error: false, exit_code: 0 }],
+      }),
+      exec: { agent: { session: { id: 'session-authoring' } } },
+    }
+  }
+
+  it('gac_task 的 create / status / list 都不带出未声明字段', async () => {
+    const h = taskHarness()
+    assertDeclared(h.tool, await h.tool.execute({ action: 'list' }, h.exec), 'list')
+    const created = await h.tool.execute({
+      action: 'create',
+      task_id: 'R',
+      plan: { nodes: [{ id: 'T1', objective: 'x', required_capabilities: ['implementation'], write_scope: ['lib/a.js'] }] },
+    }, h.exec)
+    assertDeclared(h.tool, created, 'create')
+    assertDeclared(h.tool, await h.tool.execute({ action: 'status', task_id: 'R' }, h.exec), 'status')
+  })
+
+  it('gac_task 的 plan 返回 plan_id，且它已被声明', async () => {
+    // 这一条是本组断言存在的理由：plan_id 曾是未声明字段。
+    const h = taskHarness()
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'R',
+      mode: 'high_risk_task',
+      plan: { nodes: [{ id: 'T1', objective: 'x', required_capabilities: ['implementation'], write_scope: [] }] },
+    }, h.exec)
+    const planned = await h.tool.execute({
+      action: 'plan',
+      task_id: 'R',
+      criteria: ['AC1'],
+      verification_plan: { cases: [
+        { id: 'V1', covers: ['AC1'], type: 'positive', expect: 'x' },
+        { id: 'V2', covers: ['AC1'], type: 'falsification', expect_failure: 'y' },
+      ] },
+    }, h.exec)
+    assert.equal(planned.action, 'planned')
+    assert.ok(planned.plan_id, 'plan 应当返回 plan_id')
+    assertDeclared(h.tool, planned, 'plan')
+  })
+
+  it('gac_task 的 contract 返回 plan_id，且它已被声明', async () => {
+    const h = taskHarness()
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'R',
+      plan: { nodes: [
+        { id: 'T1', objective: 'x', required_capabilities: ['implementation'], write_scope: ['lib/a.js'] },
+        { id: 'T2', objective: 'y', required_capabilities: ['implementation'], write_scope: ['test/a.js'] },
+      ] },
+    }, h.exec)
+    const frozen = await h.tool.execute({
+      action: 'contract',
+      contract_action: 'freeze',
+      task_id: 'R',
+      interface_contract: {
+        name: 'a',
+        operations: [{ name: 'a', signature: 'a(): void', behavior: '无副作用。' }],
+      },
+    }, h.exec)
+    assert.equal(frozen.action, 'contract_frozen')
+    assert.ok(frozen.plan_id, 'contract 应当返回 plan_id')
+    assertDeclared(h.tool, frozen, 'contract')
+  })
+
+  it('gac_task 的 grill 各个子动作都不带出未声明字段', async () => {
+    const h = taskHarness()
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'R',
+      plan: { nodes: [{ id: 'T1', objective: 'x', required_capabilities: ['implementation'], write_scope: [] }] },
+    }, h.exec)
+    assertDeclared(h.tool, await h.tool.execute({ action: 'grill', task_id: 'R' }, h.exec), 'grill/status')
+    assertDeclared(h.tool, await h.tool.execute({
+      action: 'grill',
+      task_id: 'R',
+      grill_action: 'record',
+      round: { questions: [{ id: 'Q1', question: 'q', answer: 'a' }] },
+    }, h.exec), 'grill/record')
+    assertDeclared(h.tool, await h.tool.execute({ action: 'grill', task_id: 'R', grill_action: 'converge' }, h.exec), 'grill/converge')
+    assertDeclared(h.tool, await h.tool.execute({
+      action: 'grill', task_id: 'R', grill_action: 'confirm', confirmation: '可以',
+    }, h.exec), 'grill/confirm')
+  })
+
+  it('gac_task 的 advance 与 complete 都不带出未声明字段', async () => {
+    const h = taskHarness()
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'R',
+      plan: { nodes: [{ id: 'T1', objective: 'x', required_capabilities: ['implementation'], write_scope: [] }] },
+    }, h.exec)
+    assertDeclared(h.tool, await h.tool.execute({ action: 'advance', task_id: 'R' }, h.exec), 'advance')
+    assertDeclared(h.tool, await h.tool.execute({
+      action: 'complete',
+      task_id: 'R',
+      evidence: { all_criteria_covered: true },
+    }, h.exec), 'complete')
+  })
+
+  it('gac_metrics 不带出未声明字段', async () => {
+    const h = taskHarness()
+    const tool = createMetricsTool({
+      defineTool: toolsPackage.defineTool,
+      taskStoreFor: () => h.store,
+      sessionRootFor: () => h.root,
+      evidenceFor: () => [],
+    })
+    assertDeclared(tool, await tool.execute({}, h.exec), 'gac_metrics')
+  })
+
+  it('gac_evidence 的字段在它自己的模块里被声明（若该工具已存在）', async () => {
+    // 这条断言在工具尚未实现时会因为导入失败而报错，因此用动态导入：它让本文件在
+    // 工具落地之前仍可运行，落地之后自动开始体检。
+    let module
+    try {
+      module = await import('../lib/tool-evidence.js')
+    } catch {
+      return
+    }
+    const h = taskHarness()
+    const tool = module.createEvidenceTool({
+      defineTool: toolsPackage.defineTool,
+      sessionRootFor: () => h.root,
+      evidenceFor: () => [],
+    })
+    assertDeclared(tool, await tool.execute({}, h.exec), 'gac_evidence')
+  })
 })
 
 describe('defineTool 拒绝创作错误：让它在这里响，而不是在加载时静默', { skip: !canRun }, () => {
