@@ -32,7 +32,8 @@ GAC plugin      →  execution mode, write scope, write claims, verification, ev
 | 3 | `lib/capability-router.js` + `lib/executor.js` — dispatch actually invokes | done |
 | 4 | `lib/verification.js` — plan, falsification, traceability gates | done |
 | 4 | Plan and evidence gates wired into `gac_task` | done |
-| 5 | Grilling loop (multi-round requirement refinement) | not started |
+| 5 | `lib/grilling.js` — multi-round requirement refinement | done |
+| 5 | `lib/contract.js` — interface contract freeze | done |
 | 5 | Session event projection | not started |
 | 6 | Evidence capture and AC traceability | not started |
 
@@ -417,9 +418,10 @@ completed and `all_criteria_covered` is true — a refusal leaves the status
 untouched, because half a close-out is harder to unwind than none. Before this
 existed, `complete_task` repeated forever and a task could never close.
 
-Provider routes come from the adapter's `execution.provider_routes`, so
-"the verifier runs on a different model" is configuration rather than convention
-— which is what makes independence real instead of nominal.
+Provider routes come from the adapter's `execution.provider_routes` (keyed by
+executor name — see [Model routing](#model-routing)), so "the verifier runs on a
+different model" is configuration rather than convention — which is what makes
+independence real instead of nominal.
 
 ---
 
@@ -473,6 +475,82 @@ implement" into three serial steps and discard the parallelism that is the point
 
 ---
 
+### Requirement refinement (grilling)
+
+The loop is run by fixed code; the questions are asked by the session. "Which
+decisions are still unmade" is a semantic judgement that code cannot make, so
+**the session supplies the questions**. But "how many rounds happened, what did
+each cover, has it converged, did the user confirm" are facts, and those are
+recorded here. The model thinks; the runtime attests.
+
+```text
+gac_task { action: "grill", grill_action: "status" }                        # what has been asked
+gac_task { action: "grill", grill_action: "record",  round: { questions: [...] } }
+gac_task { action: "grill", grill_action: "converge" }                      # you think you are done
+gac_task { action: "grill", grill_action: "confirm", confirmation: "<用户的原话>" }
+```
+
+**The loop does not end on the model's self-assessment.** A model with a wrong
+understanding will confidently believe it has asked everything, so the loop ends
+only when the *user* says it is enough. Recording `converge` does not end
+anything — it states an opinion. `confirm` requires the user's actual words.
+
+**A round must contain both a question and an answer.** An answer of "不知道" is
+a real finding and is recorded and reported as unresolved; a *missing* answer is
+different from "the user doesn't know", and conflating them loses the distinction
+between a decision that is still open and one nobody asked about.
+
+**Round count has no ceiling semantics.** A requirement that genuinely needs five
+rounds must get five. The limit is a runaway guard, not a statement that "this
+many should be enough".
+
+### Interface contract (freeze before parallel work)
+
+This is what makes "write the implementation and the tests in parallel" more than
+a slogan. A test author writing tests does not know what the implementation looks
+like. If the two sides invent interfaces independently, the tests fail because the
+*interfaces* disagree — a structural failure, not a defect, and one that yields no
+information about correctness. Freezing a minimal contract first means both
+branches depend only on it: tests derive from **contract + acceptance criteria**
+(without reading the implementation), code from **contract + design** (without
+reading the tests). Two separated information paths — which is also what makes
+verification independence real rather than nominal.
+
+**`behavior` is required, not just `signature`.** With only a signature, "what does
+it return" is still a guess, and the guessed expectation is exactly where the two
+sides diverge. The behaviour note need not be exhaustive, only sufficient for
+someone else to write an assertion from.
+
+**The freeze is a gate before dispatch, and it is declared by the project.** The
+adapter states it, so small changes need no ceremony:
+
+```json
+"execution": { "require_contract": ["high_risk_task"] }
+```
+
+Only *writing* nodes are held back; nodes that just return a report are not. And
+like the verification plan, the contract is content-addressed and refuses to be
+overwritten — a change after both branches are working against it is precisely the
+divergence the freeze exists to prevent.
+
+### Model routing
+
+`execution.provider_routes` is keyed by **executor name** (the names listed in
+`executors`), not by capability:
+
+```json
+"execution": { "provider_routes": { "verifier": { "provider": "p", "model": "m" } } }
+```
+
+Keyed by name because capability routing returns a *name*, and that name has to
+find the executor it denotes. Keying by capability and naming executors
+`capability:provider/model` meant the lookup never matched and silently fell
+through to "whoever supports it" — the declared route was ignored while
+everything looked fine. It also lets two executors of the *same* capability use
+different models, which is what independence needs.
+
+---
+
 ## Known limits
 
 Stated here rather than discovered later (adaptation plan §7):
@@ -507,7 +585,7 @@ Stated here rather than discovered later (adaptation plan §7):
 ## Develop
 
 ```bash
-npm test          # 439 tests, no DSH required
+npm test          # 494 tests, no DSH required
 ```
 
 The library modules are pure and dependency-injected precisely so the suite runs
@@ -523,8 +601,10 @@ lib/
   claims.js          write-claim conflict detection (pure)
   claim-store.js     durable one-file-per-claim store with orphan pruning
   capability-router.js  pick an executor by required capabilities (pure)
+  contract.js        interface contract: freeze it before parallel work (pure)
   executor.js        execution boundary: invoke, or refuse honestly
   coordinator.js     task DAG, ready resolution, state transitions (pure)
+  grilling.js        multi-round requirement refinement (pure)
   task-store.js      durable one-file-per-task store, plans, load-time revalidation
   tool-task.js       the gac_task tool
   verification.js    verification plan, falsification, traceability gates (pure)

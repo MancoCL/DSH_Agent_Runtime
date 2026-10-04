@@ -17,6 +17,10 @@ node_modules/
 # Frozen verification plans are runtime state too
 .dsh/gac/plans/
 
+# Interview records and frozen interface contracts are runtime state
+.dsh/gac/grilling/
+.dsh/gac/contracts/
+
 # OS noise
 Thumbs.db
 .DS_Store
