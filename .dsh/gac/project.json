@@ -35,6 +35,15 @@
   },
   "checkpoint": {
     "provider": "git",
-    "policy": "required_per_task"
+    "policy": "required_per_task",
+    "message_format": {
+      "subject": "type(scope): 中文简述",
+      "body": "空行后写功能段落：改了什么行为、为什么、影响哪些场景；不逐文件罗列",
+      "layout": "段落内不折行；段间恰好一个空行；末尾不加署名行",
+      "language": "zh-CN"
+    },
+    "commit_scope": "只提交本任务负责的路径（git add <path>...）；禁止 git add . / git add -A；永不 push、永不 amend",
+    "convention": "AGENTS.md",
+    "note": "口径来自同机 00_GAC_Project 的 .claude 提交约定，格式全文与复核方法见 AGENTS.md。此处只作声明：运行时尚无代码消费 checkpoint（lib/ 只在适配器校验时放行该键，不读取内容），因此它不是机器强制。"
   }
 }
