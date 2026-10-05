@@ -85,13 +85,13 @@ describe('入口点把 DSH 导入推迟到调用时', () => {
   })
 })
 
-describe('零子 Agent —— E2E-1 的第三条断言', () => {
+describe('子会话的引入方式 —— 判据变更（见 docs/ADR-0001-子会话执行载体.md）', () => {
   /**
    * 把注释剥掉，只留代码。
    *
-   * 这条断言问的是「有没有子 Agent **调用**」，而注释里提一句某个工具的名字（例如说明某个宿主把
-   * Team 那几个工具注册进了 agent 自己的层）并不是调用。早先直接对源码做词面扫描，于是那样一条
-   * 注释会把测试弄红——**红得没有道理**，而一条会因为没道理地红而被删掉的测试，比没有测试更糟。
+   * 这些断言问的是「代码怎么用子会话」，而注释里提一句某个名字（例如说明宿主的 Team 工具是
+   * 作用域内注册的）并不是调用。早先直接对源码做词面扫描，于是那样一条注释会把测试弄红——
+   * **红得没有道理**，而一条会因为没道理地红而被删掉的测试，比没有测试更糟。
    *
    * @param {string} source
    * @returns {string}
@@ -103,19 +103,52 @@ describe('零子 Agent —— E2E-1 的第三条断言', () => {
       .replace(/([^:'"])\/\/.*$/gmu, '$1')
   }
 
-  it('lib/ 的代码里没有任何子 Agent 调用（注释不算）', async () => {
-    // E2E-1 要求「零子 Agent 调用」，而这条性质此前只是没人写过而已——没人写过与「不会写」
-    // 是两件事。适配计划 §3.2 说得很清楚：需要独立上下文时用 `ctx.llm.stream`（进程内的一次
-    // 模型调用），只有需要独立会话、独立工作目录时才轮到子 Agent。因此这里断言的是**这个决定
-    // 被钉住了**：一旦有人真的调用它，这条测试会红，而那时该先回答「为什么需要独立会话」——
-    // 那是一个架构决定，不该顺手做掉。
-    const offenders = []
+  /** 读一遍 lib/ 的代码（注释已剥）。 */
+  async function libSources() {
+    const entries = []
     for (const file of await readdir(libDir)) {
       if (!file.endsWith('.js')) continue
-      const source = stripComments(await readFile(join(libDir, file), 'utf8'))
-      if (/subagents?\b/u.test(source)) offenders.push(file)
+      entries.push({ file, source: stripComments(await readFile(join(libDir, file), 'utf8')) })
     }
-    assert.deepEqual(offenders, [], '引入子 Agent 之前先回答：为什么进程内模型调用不够')
+    return entries
+  }
+
+  it('判据变更说明：原先的「零子 Agent」断言已作废，改成只约束引入方式', async () => {
+    // 这条断言本身**不再**要求「一个子会话都不能有」。原先那条是为逼出一次自觉的架构决定而写的，
+    // 当时的结论是「独立上下文用 `ctx.llm.stream` 就够」。这个结论被推翻了：`llm.stream` 给不了
+    // 独立 session identity、独立工具面、独立写作用域与结构化结果，而这四样正是「独立验证」的实质
+    // （ADR-0001 §5）。**这是判据变更，不是把测试删掉让门变绿**——所以这里改成断言引入方式。
+    const sources = await libSources()
+    const childUsers = sources.filter(({ source }) => /\bsubagents\b|\bagents\.create\b/u.test(source))
+    assert.ok(
+      childUsers.length > 0,
+      '按 ADR-0001，节点执行应当走原生子会话；一条都没有说明这条接缝又断开了',
+    )
+  })
+
+  it('子会话只能经服务接缝取得，不 import DSH 的子会话包', async () => {
+    // 注入而非 import：这条接缝可能不在（本机就可能），缺席时要能优雅降级，而不是让插件加载失败。
+    // 检查分两步：① 没有任何文件 import 它的包；② **取接缝的那一处**必须是 `ctx.inject` / `ctx.get`
+    // ——而不是要求每个提到它的文件都自己取一次（执行者模块是经参数拿到它的，那正是接缝的正确形状）。
+    const sources = await libSources()
+    const importers = sources
+      .filter(({ source }) => /from\s+['"]@deepseek-ai\/dsh-subagent/u.test(source))
+      .map(({ file }) => file)
+    assert.deepEqual(importers, [], '子会话的包不要 import')
+
+    const seamSites = sources.filter(({ source }) =>
+      /inject\(\[[^\]]*['"]subagents['"]/u.test(source) || /get\??\.\(['"]subagents['"]\)/u.test(source))
+    assert.ok(seamSites.length > 0, '必须有一处经 ctx.inject / ctx.get 取 subagents')
+  })
+
+  it('不引入 Agent Teams 依赖 —— 它不在 profile 的解析集里，且不是执行基座', async () => {
+    // Team 与原生子会话是同一个基座上的两个消费者，但它的看板没有 mode / 写作用域 / 证据 / 验证计划
+    // / 风险升级，两套任务模型必然漂移（ADR-0001 §3 D3）。这里把它钉成结构性约束。
+    const offenders = []
+    for (const { file, source } of await libSources()) {
+      if (/agentTeams|spawn_teammate|team_task_|dsh-experimental-agent-team/u.test(source)) offenders.push(file)
+    }
+    assert.deepEqual(offenders, [], '不要把执行基座建在 Agent Teams 上')
   })
 })
 
