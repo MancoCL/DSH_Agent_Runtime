@@ -26,22 +26,23 @@ GAC plugin      →  执行模式、写作用域、写占用声明、验证、�
 | 1 | `lib/prompt-section.js` —— 把 GAC 状态放进模型自己的系统提示 | 已完成，24 个测试，实测通过 |
 | 2 | `lib/claims.js` + `lib/claim-store.js` —— 写占用声明 | 已完成 |
 | 3 | `lib/coordinator.js` —— 任务 DAG、就绪节点、状态迁移 | 已完成（逻辑） |
+| 3 | `lib/child-executor.js` —— 节点由**原生子会话**承载（角色工具面、真并发、深度上限） | 已完成并**活体验收通过**：子会话 id 与父不同、子会话自己写的文件、结果回到 `applyResult`、父会话不自锁；三条残留见 [docs/ADR-0001-子会话执行载体.md](docs/ADR-0001-子会话执行载体.md) §10-§12 |
 | 3 | `lib/task-store.js` + `lib/tool-task.js` —— 持久化任务记录、`gac_task` | 已完成 |
 | 3 | `lib/capability-router.js` + `lib/executor.js` —— 派遣会真正调用 | 已完成 |
 | 4 | `lib/verification.js` —— 计划、反例与可追溯性门禁 | 已完成 |
 | 4 | 计划与证据门禁已接进 `gac_task` | 已完成 |
 | 4 | `lib/review.js` + `assets/ENGINEERING_POLICY.md` —— 独立复核：六问与五个质量维度 | 已完成，24 个测试 |
-| 4 | `lib/role-guard.js` —— 只读角色的写入面收权（E2E-6） | 已完成（单测覆盖收权、撤销、降级三条路径）；未活体验证 |
+| 4 | `lib/role-guard.js` —— 只读角色的写入面收权（E2E-6） | 已完成；**已活体验证 6 轮**：`write`/`edit` 被守卫逐字拒绝、探针文件从未落地、回报后立刻恢复。收权本身在它自己那个作用域上生效（`write`/`edit` 已不在 `view(agent).visible` 里），但模型面清单依赖的**装配作用域是哪一个仍未查明**——见 [docs/CUTOVER.md](docs/CUTOVER.md) §3 E2E-6 |
 | 5 | `lib/grilling.js` —— 多轮需求精化 | 已完成 |
 | 5 | `lib/contract.js` —— 接口契约冻结 | 已完成 |
 | 6 | `lib/evidence.js` + `lib/evidence-store.js` —— 由运行时签发的证据 | 已完成 |
 | 6 | `lib/metrics.js` + `lib/tool-metrics.js` —— 带只读出口的指标 | 已完成 |
 | 6 | `lib/tool-evidence.js` —— 证据号可被发现，因而可以被引用 | 已完成 |
-| 5 | `lib/gac-events.js` —— 会话日志里的 GAC 事件 + 消息投影 | 已完成（可视性，不是状态权威） |
+| 5 | `lib/gac-events.js` + `lib/gac-event-log.js` —— GAC 审计事件（写工程自己的文件，**不**写会话日志） | 已完成（审计，不是状态权威） |
 | 6 | `lib/workspace-witness.js` —— 工作区差异观测（witness 的原生替代） | 已完成，55 个测试；本机 profile 未装配观测源，因此它是惰性的 |
 | 7 | 遗留系统切换 —— 处置与 E2E 状态已记录 | 记录在 [docs/CUTOVER.md](docs/CUTOVER.md) 中；本仓库之外的东西一律未动 |
 
-**在相信上面这张表之前，先读 [docs/CUTOVER.md](docs/CUTOVER.md)。** 它逐项记录了什么是真正验证过的、什么不是——包括大纲的**六条 E2E 判据里只有两条**被验证过，以及有三条没有按规格实现。这里的表说的是哪些东西有代码；那份文档说的是哪些东西有证据。
+**在相信上面这张表之前，先读 [docs/CUTOVER.md](docs/CUTOVER.md)。** 它逐项记录了什么是真正验证过的、什么不是——包括大纲的**六条 E2E 判据里有四条跑过真实会话、两条与字面判据仍有差别**，以及阶段 1-3（节点由原生子会话承载）的实测结论与三条残留。这里的表说的是哪些东西有代码；那份文档说的是哪些东西有证据。
 
 **阶段 0 是验证过的，不只是测过。** 在一次作用域为 `scope: ["docs/scratch.md"]` 的真实会话里：
 
@@ -359,17 +360,43 @@ complete { evidence: { all_criteria_covered: true } } → completed
 advance → done
 ```
 
+一次 `executorsFor(root)` 装配出来的执行者，按优先级是这三个：
+
+| 执行者 | 什么时候在 | 承载什么 |
+| --- | --- | --- |
+| **原生子会话**（`child:<provider>`） | 适配器声明 `execution.native_child_dispatch: true` 时（**代码默认 `false`**，见下） | **所有节点**：写文件的与只读的各跑一个独立会话 |
+| 路由进来的进程内执行者 | 适配器声明了 `execution.provider_routes` | 只承载 `write_scope` 为空的节点——它没有写入工具 |
+| 会话型执行者 | 总在（兜底） | 需要落盘的节点被如实登记为 `in_progress` 等待会话执行，而不是伪造一份没写任何文件的成功报告 |
+
+**子会话执行者排在最前**，因为路由选中的名字（例如 `builder`）往往只是适配器声明的执行者名，在运行时的执行者数组里找不到——`invokeNode` 于是退到「第一个 `supports(node)` 的执行者」。要写文件的节点必须由它接住，否则就退回主会话。
+
 有四条性质让这件事是诚实的，而不是装饰性的：
 
 **路由偏好最贴合的执行者。** 在覆盖所需能力的执行者当中，*额外能力最少*的那个胜出，这样一个通才就不会把所有节点都吸走——否则能力声明就是装饰性的，而验证的独立性也不可能成立。没有任何单个执行者能覆盖的节点会在任何文件被触碰之前被拒绝，并指明缺口（`拆节点`——不要把一个执行者声明成无所不能）。
 
-**进程内调用不能写入。** 它没有写工具，所以只服务 `write_scope` 为空的节点，其余的一概*拒绝*。需要写入的节点交给会话型执行者，它会把它登记为 `in_progress`，而不是伪造一份关于自己从未触碰过的文件的报告。
+**进程内调用不能写入。** 它没有写工具，所以只服务 `write_scope` 为空的节点，其余的一概*拒绝*。
 
-**`in_progress` 是一个真实的答案。** 一次还在跑的运行，或一次没能启动的运行，既不是通过也不是失败。两者都不被编造出来。
+**`in_progress` 是一个真实的答案。** 一次还在跑的运行，或一次没能启动的运行，既不是通过也不是失败。两者都不被编造出来；原生子会话接缝缺席或能力不足时，它返回的是**显式降级**与原因，而不是静默落回主会话。
 
 **收口以证据为门禁。** 除非每个节点都已完成且 `all_criteria_covered` 为 true，否则 `complete` 会被拒绝——拒绝不改变状态，因为收了一半比完全没收更难回退。在这条存在之前，`complete_task` 会永远重复，任务永远收不了口。
 
 Provider 路由来自适配器的 `execution.provider_routes`（按执行者名作键——见[模型路由](#模型路由)），所以「验证者跑在另一个模型上」是配置而不是约定——这正是让独立性变成真的、而不是名义上的原因。
+
+---
+
+### 节点跑在独立子会话里
+
+打开 `execution.native_child_dispatch` 之后，节点由 `ctx.subagents.start()` 拉起的**真子会话**承载（provider 默认 `spawn`）。这不是「换个 prompt 的同一段上下文」：子会话有自己的 session identity、自己的上下文、自己的一份工具面，父会话只等它的结构化产出。决策与取舍记在 [docs/ADR-0001-子会话执行载体.md](docs/ADR-0001-子会话执行载体.md)。
+
+**工具面在创建时就定死。** 子会话创建窗口里会 join 父会话的 preset，再叠加 per-child 的 persona 与 `toolFilter`。GAC 因此按角色点名：写范围为空的节点连 `write`/`edit` 一起去掉，两类节点都去掉委派类与父会话协调类（`gac_task`/`gac_scope`/…）——后者是因为子会话里也装着 GAC 自己，它会自己声明作用域、并试着回报它那一侧的派遣。名单只从**父会话的可收集合**里点（子会话 join 父会话的 preset，那份集合正是继承面的安全子集），因为 `toolFilter` 被直接交给创建窗口里的 `restrict`，点错一个名字会让整次创建失败；被拒绝时退到无过滤重试，但**把「这一层没生效」写进结果**，不静默降级。实测（会话日志里的 `request/header.tools`）：父会话 43 个工具、子会话 35 个，`write` 与 `edit` 都不在后者清单里。
+
+**同一批是真的同时开工。** `resolveReady` 会把写范围不相交的节点算进同一批，派遣循环先 `Promise.all` 同时起、再按批次顺序收结果（启动重叠、记录写入仍串行）。这条以前是 `for … await`，也就是**实现侧的伪并行**。实测：同一批的两个子会话建立相差 2 ms、活跃区间重叠约 19 秒。
+
+**深度上限按调用方算。** 每次派遣只允许再开一层（上限 = 调用方深度 + 1，深度取会话头的 `delegationDepth` 与 `AgentOptions.subagentDepth` 里更深的一个）。写死成 1 会让「调用方自己就是子会话」的场景整个用不了——实测撞过 `subagent depth 2 exceeds maxDepth 1`。
+
+**返回文本里带子会话 id 与产物**（`advance` 返回「子会话 `<id>`」），任务记录里落 `result_ref: child-session:<id>`，将来要复核「是谁写的」从这个 id 追回去。
+
+**三条如实留下的残留**（都在 ADR 里）：① 设计节点的盲区只保证**启动时**没被推入实现信息，它完全可以自己去读——`read`/`grep`/`glob` 对它开着；② 子会话仍拿得到 `subagent`（它是 agent 自己那一层注册的，`restrict` 摘不掉）；③ 代码默认仍是 `false`，只有本工程适配器打开。
 
 ---
 
