@@ -445,9 +445,20 @@ gac_task { action: "review", task_id: "REQ-1", review_report: {
 
 审查节点的执行者，系统提示里带的是 `assets/ENGINEERING_POLICY.md` 的**原文**（从原运行时逐字搬来，同一个 SHA-256），任务提示里则是六问与五个维度的清单——清单从 `lib/review.js` 的定义生成，只有一份，免得提示词与门禁核对的那份漂移。
 
-### 只读角色：写入面根本不在它手里
+### 只读角色：收权加守卫两层，写入面不在它手里
 
-写作用域门禁守的是**已经声明过作用域**的会话，而只读节点（`write_scope` 为空）通常就没有 `gac_scope` 声明——于是「验证者不该写产品代码」在此之前只是一句期望。现在节点被派遣时，`lib/role-guard.js` 把该角色**自己那一格**工具视野里的写入面拿掉（`agent.ctx.tools.restrict`，只作用于这一个 agent）：`write` / `edit` / `apply_patch` / … 与 PTC 传输从此调用返回 `UNKNOWN_TOOL`——**「这个工具不存在」，而不是一次被拒绝的调用**。
+写作用域门禁守的是**已经声明过作用域**的会话，而只读节点（`write_scope` 为空）通常就没有 `gac_scope` 声明——于是「验证者不该写产品代码」在此之前只是一句期望。现在节点被派遣时，`lib/role-guard.js` 把该角色的写入面从**内核视野**里拿掉（`agent.ctx.tools.restrict`，只作用于这一个 agent）。
+
+**两层，观测到的形态不一样，别把它们混起来**（四轮活体验证之后才写清）：
+
+| 层 | 是什么 | 观测到的样子 |
+| --- | --- | --- |
+| 收权 | `tools.restrict` 把名字从该作用域的**视野**里去掉 | 收权之后按同一作用域复查 `view(agent).visible`，`write`/`edit` 已不在；但**那一轮**模型已经拿到的工具清单不会重排 |
+| 守卫 | `tools/pre-execute` 上的拒绝 | 逐字拒绝：`GAC: 会话 … 当前在推进只读节点 [T1] …`，报告里记成 `guard-denied` / `GAC_READ_ONLY_ROLE_DENIED` |
+
+实测到的拦截**总是守卫**，而**不是** `UNKNOWN_TOOL`。原因已查明，不是缺陷：内核的顺序是「`createExecution` → `tools/pre-execute` 瀑布 → dispatch 时才 `resolveExecution`」（`dsh-tools` 的 `prepareExecution`），所以同一轮里对已收权工具的调用一定先撞上守卫；`UNKNOWN_TOOL` 只可能出现在**新一轮**（工具根本不再被提供）。判据字面要求的那个形态因此**还没被观察到**，见 [docs/CUTOVER.md](docs/CUTOVER.md) §3 E2E-6 与 §6 第 2 条。
+
+**别只看收权那一层。** 第 1 轮活体验证里，收权与兜底各自都「看着没问题」，实际两次本该被拦的写入全部成功：`createGacCore` 没拿到 `roleGuard`，兜底那一层根本不存在，而收权因为名单里混了 7 个作用域内注册的工具（宿主的 Team 工具）直接抛错→降级。**收权自己复查**这件事因此是必需项，不是保险：只有 `mode: restricted` 才表示「名字确实从视野里没了」；`mode: guard-only` + `revoked: []` + `role-revocation-unverified` 才是「没真收掉，只剩守卫」的诚实读数。
 
 四条设计取舍，每条都有理由：
 
@@ -456,7 +467,7 @@ gac_task { action: "review", task_id: "REQ-1", review_report: {
 | 判据是**声明的写范围为空**，不是能力名 | 写范围是计划里唯一可核对的事实；用能力名当判据，会让一个同样只读但没叫 `verifier` 的节点躲过收权 |
 | `gac_task` / `gac_scope` / `gac_project` **留着** | 收掉它们，角色就再也回报不了结果、也清不掉自己的作用域——把角色变成陷阱，与 `gac_scope` 当初被自己的门禁拒掉是同一个形状 |
 | `shell` **默认不收** | 验证者要逐条执行计划用例才能留下证据，而执行用例靠 shell。收掉它会让「每条用例都要有独立证据」的收口门禁永远过不去——那是拿掉验证者的能力，不是收窄它的权限 |
-| 未知工具**收回** | 与门禁对 `unknown` 的处置同一条推理：运行时升级带来的新工具不会悄悄落进只读角色手里（代价是它也会丢掉委派类工具，而那正是想要的） |
+| 名单取自 `view(agent).restrictableNames` | `restrict` 只接受「这个作用域**继承**来的」名字，**不接受它自己那一层注册的**（内核原文：a restriction filters what a scope inherits … and never what its OWN layer registers），而且**按名字拒绝 `run_code`**（原文：cannot name reserved PTC mode presentation transport）。用别的来源都会让整次收权抛错或静默退化——两次都真实发生过 |
 
 **项目可以换回计划原文的行为。** E2E-6 的字面判据是连 `pwsh` 一起收回，而计划 §4.4 阶段 3 又要求验证者执行用例——两条不能同时成立。默认选了保住证据路径；要字面行为就在适配器里声明：
 
@@ -466,7 +477,7 @@ gac_task { action: "review", task_id: "REQ-1", review_report: {
 
 那时越界的 shell 写入只剩 witness 事后观测（§「事后观测」），也就是适配计划 §7 边界 1 说的那个接缝极限。
 
-**拿不到收权接缝时退到守卫兜底，而不是静默失效。** 工具视野读不出来、或 `tools.restrict` 不存在时，门禁按**同一张表**拒绝（`GAC_READ_ONLY_ROLE_DENIED`），加载报告里留下 `role-restricted` / `role-revocation-failed`。一条静默失效的收权比没有收权更糟——它会让人以为角色已经安全了。
+**收不掉的那些要留名。** 守卫兜底按**同一张表**拒绝（`GAC_READ_ONLY_ROLE_DENIED`），加载报告里留下 `role-restricted` / `role-revocation-failed` / `role-revocation-unverified`。`shadowed` 是「按表该收、而实测仍在视野里」的名字（`run_code` 必在，因为内核不许收它；作用域内注册的委派类工具也在）。一条静默失效的收权比没有收权更糟——它会让人以为角色已经安全了。
 
 **收回必须能撤销，而且撤销必须可靠。** 收权若撤不掉，那个会话再也写不了文件——「把自己关在门外」的同一个形状，只是这次关的是用户。因此每次状态变化都**重算**（而不是逐个事件加减：增量式会漏掉 `reopen`、失败回报、插件重载），插件卸载时 `liftAll()` 全部放开，任何一次 `restrict` 抛错都被吞掉并如实报告。
 
