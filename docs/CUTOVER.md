@@ -31,7 +31,7 @@
 | `routing.py` 并行判定 | → 纯函数 | **已完成**（同批判定 + 写范围相交排除） |
 | `runtime.py` | → 协调器 + session events | **已完成**（`coordinator.js` + `gac-events.js`） |
 | `claims.py` | → `gac/write-claims` | **已完成**（`claims.js` + `claim-store.js` + `gac_scope`） |
-| `witness.py` | **退役**，改订阅 `workspaceChanges` + `fs/observed` | **未做**。没有任何 `workspaceChanges` 订阅；变更证据目前只来自工具调用的参数与产出 |
+| `witness.py` | **退役**，改订阅 `workspaceChanges` + `fs/observed` | **已完成（有一处有意收窄）**。`lib/workspace-witness.js`（纯模块）+ `lib/index.js` 订阅 `session/event` 的 `workspace/changes`，把每一轮变更集按已声明的写作用域归成 in_scope / out_of_scope / outside_project，记成一条证据（`source: workspace-changes`），并从证据、加载报告、指标三个出口出来。**收窄点**：本轮只订阅 `workspaceChanges`，**不**订阅 `fs/observed`——后者是逐次文件读写的观测流，把它也接进来会让「这一轮改了什么」与「某个工具碰过什么」混在同一个出口里，而前者才是越界归属需要的口径。这条收窄是任务 `REQ-WITNESS` 的接口契约里写明的 non_goal，不是遗漏 |
 | `invocation.py` | 简化：只留写范围与产物声明 | **部分**。执行者收到结构化输入（`{ node, task, root, dispatchId }`），但没有一份显式的调用契约 |
 | `memory.py` / `MEMORY.md` | scope 分类保留，接薄 memory 层 | **未做** |
 | `hook-entry.py` + Claude Code hooks | **退役** | 本仓库不适用（从未挂载） |
@@ -62,7 +62,7 @@
 | `fs/write-intent` 不能拒绝写入 | 不适用（从未使用该接缝） |
 | **PTC（`run_code`）内层调用需单独处理** | **未实现，且行为与方案不同**。`run_code` 不在任何名单里 → 归类为 `UNKNOWN` → **作用域生效时被整体拒绝**。这是**失败即拒绝**（安全方向），但它不是「处理内层调用」，而是**PTC 在作用域下完全不可用** |
 | 独立验证的独立性来自信息路径 | **部分**。契约确实把两条推导路径分开了（测试只依据契约，实现只依据契约与方案），但**唯一一次真实走查里两边出自同一个作者** |
-| `workspaceChanges` 覆盖面需实测确认 | **未测量**：从未订阅 |
+| `workspaceChanges` 覆盖面需实测确认 | **测了一半，诚实结果是「这一层在本机是惰性的」**。已核实的：`workspace/changes` 是 `dsh-session` 声明的**已知事件类型**，而它的生产者 `@deepseek-ai/dsh-workspace-changes` **不在** `core-020` 的 `bundles` 列表里（也不在 `~/.dsh/profiles/node_modules/@deepseek-ai/` 下），因此没有东西会追加该事件、`ctx.workspaceChanges` 也不存在。插件按契约用 `ctx.inject` 降级：照常加载、照常订阅，加载报告写一条 `witness-seam` 说明该源不在。**仍未测的**：把该包装进 profile 之后，摘要的覆盖面（`maxFiles` 上限、`oversized`/`binary` 的标记是否如期到达）以及真实越界发现——那需要一次插件在场并声明了写作用域的会话 |
 | **插件改自己的代码时无法自管** | **按文档处置**：改 `lib/*.js` 前先在 profile patch 里 `disabled: true`，改完再开。开着改，每一笔写入都会热重载进模型自己正在用的宿主进程，而门禁与提示段落的失败方向分别是「拒绝一切」与「每一步装配失败」——那会把自己关在门外，且没有工具能用来修。代价：插件的模式与写作用域是**内存**状态，卸载即丢（任务记录在盘上，不丢），所以这段时间里没有 GAC 管辖。实测的关闭/重开循环见 README「Install」 |
 
 ## 5. 「新任务默认走 DSH」具体指什么
@@ -92,7 +92,7 @@
    写工具来间接成立。
 3. **E2E-5 语义与规格不同。** 串行与拒绝是两种不同的保证，文档必须说清是哪种。
 4. **PTC 被整体拒绝。** 任何依赖 `run_code` 的流程在作用域下无法运行。
-5. **witness 替代品缺失。** 变更证据只有工具调用，没有工作区差异比对。
+5. ~~**witness 替代品缺失。** 变更证据只有工具调用，没有工作区差异比对。~~ **已补（任务 `REQ-WITNESS`）**：`lib/workspace-witness.js` + 入口订阅，变更集按已声明写作用域归属，越界影响证据可用性但不阻断调用。**仍未证明的**：这一层在本机 profile 下收不到任何事件（生产者未装配，见 §4），所以它的单测覆盖的是契约行为，不是线上行为；它的独立验证（原计划的 W3）也还没有做。
 6. **独立性未证明。** 契约起了作用，但两边出自同一个作者。
 7. **从未交付过一个不是自己编的需求。** 上面每一条门禁都拦住过我，但拦住的**都是我自己写下的
    缺陷**。这证明的是「门禁能工作」，还没证明「门禁能拦住别人」。
