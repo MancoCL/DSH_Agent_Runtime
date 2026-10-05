@@ -17,13 +17,16 @@ import { createRoleGuard } from '../lib/role-guard.js'
 /**
  * 一个假 agent 的工具服务：记下收权请求，并给出可撤销的凭据。
  *
- * `global` 是**全局注册表**的视野（`schemas()` 不带 scope 时读到的），`visible` 是这个 agent 的
- * 视野。两者不相等是实测里真实发生的事：宿主把 Team 那几个工具注册进了 agent 自己的层，而全局
- * 注册表里没有它们，于是整次收权被它们拖垮。
+ * 三个视野刻意分开，因为它们真的不相等（活体实测纠正过一次）：
+ *  - `visible`：这个 agent 看得见的（含**作用域自己那一层**注册的，例如宿主的 Team 工具）；
+ *  - `restrictable`：`restrict` 会接受的（内核口径是「这个作用域**继承**来的」，不含 own 层）；
+ *  - `global`：兜底路径里 `schemas()` 不带 scope 读到的东西（≠ restrictable）。
  *
  * @param {object} [options]
  * @param {readonly string[]} [options.visible]
- * @param {readonly string[]} [options.global] - 缺省与 visible 相同。
+ * @param {readonly string[]} [options.restrictable] - 缺省与 visible 相同。
+ * @param {readonly string[]} [options.global] - 兜底路径用；缺省与 visible 相同。
+ * @param {boolean} [options.withView] - 是否提供 `view()`；false 模拟老宿主，走兜底。
  * @param {boolean} [options.throwOnRestrict]
  * @param {boolean} [options.throwOnSchemas]
  * @param {readonly string[]} [options.unknownToRestrict] - 这些名字一旦出现在 deny 里就让 restrict
@@ -32,7 +35,9 @@ import { createRoleGuard } from '../lib/role-guard.js'
  */
 function fakeTools({
   visible = ['read', 'write', 'edit', 'pwsh', 'run_code', 'gac_task'],
+  restrictable,
   global,
+  withView = true,
   throwOnRestrict = false,
   throwOnSchemas = false,
   unknownToRestrict = [],
@@ -40,7 +45,16 @@ function fakeTools({
   const restrictions = []
   const disposed = []
   const globalView = global ?? visible
+  const restrictableView = restrictable ?? visible
   const tools = {
+    ...(withView
+      ? {
+        view: () => ({
+          visible: new Map(visible.map((name) => [name, { name }])),
+          restrictableNames: new Set(restrictableView),
+        }),
+      }
+      : {}),
     schemas: (scope) => {
       if (throwOnSchemas) throw new Error('视野读不出来')
       const names = scope === undefined ? globalView : visible
@@ -50,7 +64,7 @@ function fakeTools({
       if (throwOnRestrict) throw new Error('收权接缝拒绝了这个过滤器')
       const unknown = (filter?.deny ?? []).filter((name) => unknownToRestrict.includes(name))
       if (unknown.length > 0) {
-        // 与宿主一致的措辞：它对全局注册表不认识的名字直接抛错。
+        // 与宿主一致的措辞：它对不在可收集合里的名字直接抛错。
         throw new Error(
           `tools.restrict() names unknown global tools ${unknown.map((n) => `"${n}"`).join(', ')}`,
         )
@@ -84,8 +98,11 @@ describe('sync —— 按在飞的只读节点收权', () => {
       agent: { id: 'a1' },
     })
     assert.equal(record.mode, 'restricted')
-    assert.deepEqual([...record.revoked], ['write', 'edit', 'run_code'])
-    assert.deepEqual(restrictions, [{ deny: ['write', 'edit', 'run_code'] }])
+    // `run_code` 不在名单里：内核按名字拒绝它（cannot name reserved PTC mode presentation
+    // transport "run_code"），所以 PTC 传输只能由守卫兜底拒绝。
+    assert.deepEqual([...record.revoked], ['write', 'edit'])
+    assert.deepEqual(restrictions, [{ deny: ['write', 'edit'] }])
+    assert.deepEqual([...record.shadowed], ['run_code'])
   })
 
   it('项目要求连 shell 一起收回时，shell 也在名单里', () => {
@@ -98,9 +115,36 @@ describe('sync —— 按在飞的只读节点收权', () => {
       includeShell: true,
       agent: { id: 'a1' },
     })
-    assert.deepEqual([...record.revoked], ['write', 'edit', 'pwsh', 'run_code'])
+    assert.deepEqual([...record.revoked], ['write', 'edit', 'pwsh'])
     assert.equal(record.include_shell, true)
-    assert.deepEqual(restrictions, [{ deny: ['write', 'edit', 'pwsh', 'run_code'] }])
+    assert.deepEqual(restrictions, [{ deny: ['write', 'edit', 'pwsh'] }])
+  })
+
+  it('名单来自内核的可收集合，而不是「看得见」那一份', () => {
+    // 这是活体实测踩过的坑：拿 `schemas()`（不给 scope）当全局视野，`write`/`edit` 被判成收不掉，
+    // 于是收权静默退化。内核的口径是「这个作用域**继承**来的」（全局层加祖先层），own 层不算。
+    const { tools, restrictions } = fakeTools({
+      visible: ['read', 'write', 'edit', 'spawn_teammate', 'subagent'],
+      restrictable: ['read', 'write', 'edit'],
+    })
+    const { guard } = guardOf({ toolsFor: () => tools })
+    const record = guard.sync({ sessionId: 's1', taskId: 'R', readOnlyNodes: ['T2'], agent: {} })
+    assert.equal(record.mode, 'restricted')
+    assert.deepEqual(restrictions, [{ deny: ['write', 'edit'] }])
+    assert.deepEqual([...record.shadowed], ['spawn_teammate', 'subagent'])
+  })
+
+  it('没有 view() 的老宿主退到两个 schemas 视野的交集', () => {
+    const { tools, restrictions } = fakeTools({
+      withView: false,
+      visible: ['read', 'write', 'edit', 'spawn_teammate'],
+      global: ['read', 'write', 'edit'],
+    })
+    const { guard } = guardOf({ toolsFor: () => tools })
+    const record = guard.sync({ sessionId: 's1', taskId: 'R', readOnlyNodes: ['T2'], agent: {} })
+    assert.equal(record.mode, 'restricted')
+    assert.deepEqual(restrictions, [{ deny: ['write', 'edit'] }])
+    assert.deepEqual([...record.shadowed], ['spawn_teammate'])
   })
 
   it('运行时自己的工具不在名单里 —— 否则角色变成陷阱', () => {
@@ -139,27 +183,27 @@ describe('sync —— 按在飞的只读节点收权', () => {
 })
 
 describe('拿不到收权接缝时如实降级', () => {
-  it('作用域内注册、全局注册表不认识的名字不进 deny —— 它们会让整次收权失败（活体实测）', () => {
+  it('名单里混进一个 restrict 不认识的名字时，整次收权退化成兜底（活体实测的形态）', () => {
     // 实测原文：`tools.restrict() names unknown global tools "spawn_teammate", …, "subagent"`。
-    // 名单里混进一个这样的名字，整次 `restrict` 就抛错、退化成兜底——而兜底本该只是兜底。
-    const { tools, restrictions } = fakeTools({
+    // 这不是我们想要的形态，但它**必须是可见的**：退到兜底、记进事件，而不是静静地什么都不做。
+    // 真正的修法是别把那些名字放进名单（见「名单来自内核的可收集合」），这条守的是退化的那一步。
+    const { tools } = fakeTools({
       visible: ['read', 'write', 'edit', 'spawn_teammate', 'subagent'],
-      global: ['read', 'write', 'edit'],
+      restrictable: ['read', 'write', 'edit', 'spawn_teammate', 'subagent'],
       unknownToRestrict: ['spawn_teammate', 'subagent'],
     })
-    const { guard } = guardOf({ toolsFor: () => tools })
+    const { guard, events } = guardOf({ toolsFor: () => tools })
     const record = guard.sync({ sessionId: 's1', taskId: 'R', readOnlyNodes: ['T2'], agent: {} })
-    assert.equal(record.mode, 'restricted', '能收的照样收，不该因为有两个收不掉就一个都不收')
-    assert.deepEqual([...record.revoked], ['write', 'edit'])
-    assert.deepEqual(restrictions, [{ deny: ['write', 'edit'] }])
-    // 收不掉的那些必须留下痕迹：它们仍会被守卫拒绝，但「没被收回」这件事本身要可见。
-    assert.deepEqual([...record.shadowed], ['spawn_teammate', 'subagent'])
+    assert.equal(record.mode, 'guard-only')
+    assert.deepEqual([...record.revoked], [], '没成功收掉任何东西，就不能声称收掉了')
+    assert.equal(events.some((entry) => entry.event === 'role-revocation-failed'), true)
+    assert.equal(guard.active('s1').mode, 'guard-only', '兜底状态必须记下，否则守卫不知道要拒什么')
   })
 
   it('收不掉的名字被报进 role-restricted 事件', () => {
     const { tools } = fakeTools({
       visible: ['read', 'write', 'spawn_teammate'],
-      global: ['read', 'write'],
+      restrictable: ['read', 'write'],
     })
     const { guard, events } = guardOf({ toolsFor: () => tools })
     guard.sync({ sessionId: 's1', taskId: 'R', readOnlyNodes: ['T2'], agent: {} })
@@ -179,9 +223,18 @@ describe('拿不到收权接缝时如实降级', () => {
   })
 
   it('工具视野读不出来时同样退到守卫兜底，而不是猜一份名单', () => {
-    // 猜出来的名单与真实视野不一致，而 `restrict` 对未注册的名字会抛错——那会变成一次工具调用
-    // 失败，代价比收权失败本身大得多。
+    // 猜出来的名单与真实视野不一致，而 `restrict` 对不在可收集合里的名字会抛错——那会变成一次
+    // 工具调用失败，代价比收权失败本身大得多。
+    const { tools, restrictions } = fakeTools({ withView: false, throwOnSchemas: true })
+    const { guard } = guardOf({ toolsFor: () => tools })
+    const record = guard.sync({ sessionId: 's1', taskId: 'R', readOnlyNodes: ['T2'], agent: {} })
+    assert.equal(record.mode, 'guard-only')
+    assert.deepEqual(restrictions, [])
+  })
+
+  it('view() 抛错时退到兜底，而不是让收权整条失效', () => {
     const { tools, restrictions } = fakeTools({ throwOnSchemas: true })
+    tools.view = () => { throw new Error('视野读不出来') }
     const { guard } = guardOf({ toolsFor: () => tools })
     const record = guard.sync({ sessionId: 's1', taskId: 'R', readOnlyNodes: ['T2'], agent: {} })
     assert.equal(record.mode, 'guard-only')
