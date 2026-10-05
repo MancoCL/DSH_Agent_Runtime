@@ -51,6 +51,27 @@ patch 90 秒后仍没有新记录；**重启之后的宿主上约 2 秒内就应
 会话也没被任何调用拒掉——但它是**违反本节规则的真实实例**，按本仓库的习惯留在这里：先
 `plugin:off`，再改代码，再开。
 
+### 绝不把插件自有的事件类型写进会话日志（硬性，2026-10-05 踩过）
+
+**不要 `session.append('<插件类型>', …)`。** 会话日志的事件词表由宿主**构建期生成**
+（`dsh-session` 的 `KNOWN_SESSION_EVENT_TYPES`），外部插件的类型按构造就不在其中；而
+`Session.append(type, data, ...opts)` 只把 `sourceEventSeqs` 与 `surfaceOp` 放进日志，**没有任何
+途径**给一条事件打上 `ignorable` 标记。持久化层读回日志时因此整份拒读
+（`dsh-session-persistence` 的 `validateStoredEvents`：`unknown to this harness and not marked
+ignorable; refusing to interpret the log`），代价不是「少一条事件」，而是**那份会话历史再也打不开**。
+
+实测事故：本插件曾把 `gac/*` 事件写进会话日志，并为它们注册消息投影（理由是「让 GAC 事件出现在
+对话历史里」）。结果本工程含 GAC 事件的会话全部中招——界面上的表现正是「子智能体的历史记录全部
+显示不出来，点进去全报错」；而且**把插件打开也救不回来**，因为拒读发生在读日志的时候，与插件在
+不在无关。当时近千条测试全绿：**没有任何一条断言过「我们往会话日志写了什么」**。
+
+- 审计信息写在**工程自己**的追加文件里：`.dsh/gac/events/events.jsonl`（见 `lib/gac-event-log.js`）。
+- 回归钉子是 `test/session-log-integrity.test.js`：假 ctx 会记录每一次 `append`，它必须**始终为空**；
+  插件也不得注册任何消息投影（投影会让「读这份日志」依赖插件在场，而本插件默认是关的）。
+- 已写坏的历史用 `node scripts/repair-session-events.js --apply` 修：给那些记录补 `ignorable` 标记
+  （宿主为这种情况留的出口——记录作为**不参与重放**的日志项被保留），先备份、再原子替换，并把
+  并发追加之下的新帧接回去。修完复查：本机 23 个会话、97 条记录，剩下 0 条读不动的。
+
 ## 1. 提交信息格式
 
 首行是主题行，空一行后写正文：

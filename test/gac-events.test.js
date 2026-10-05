@@ -15,7 +15,6 @@ import {
   GAC_EVENT_TYPES,
   GacEventError,
   compileGacEvent,
-  createGacProjection,
   gacEventsFrom,
   reduceGacEvents,
 } from '../lib/gac-events.js'
@@ -438,86 +437,6 @@ describe('gacEventsFrom —— 把工具结果翻译成事件', () => {
           `${entry.type} 的载荷过不了词表校验：${JSON.stringify(entry.data)}`,
         )
       }
-    }
-  })
-})
-
-describe('createGacProjection —— 模型实际读到什么', () => {
-  it('产出的消息带 id 与 source', () => {
-    // MessageBase 要求这两个字段，而 deriveEventMessage 对投影结果**不做任何校验**：
-    // 少写字段不会当场报错，而是让形状不全的消息流进对话。
-    const projection = createGacProjection('gac/task-created')
-    const messages = projection.project(event('gac/task-created', 7, {
-      task_id: 'R', mode: 'standard_task', project_id: 'p', node_count: 2,
-    }))
-    const message = messages.get(7)
-    assert.equal(typeof message.id, 'string')
-    assert.ok(message.id.length > 0)
-    assert.equal(message.source.kind, 'user')
-    assert.equal(message.role, 'user')
-    assert.equal(Array.isArray(message.content), true)
-    assert.equal(message.content[0].type, 'text')
-  })
-
-  it('id 跨次派生稳定', () => {
-    // 不稳定的话，同一条事件每次派生出的消息都是新身份，按 id 索引的消费方会认不出来。
-    const projection = createGacProjection('gac/task-created')
-    const input = event('gac/task-created', 42, { task_id: 'R', mode: 'm', project_id: 'p', node_count: 1 })
-    assert.equal(projection.project(input).get(42).id, projection.project(input).get(42).id)
-  })
-
-  it('消息挂在事件的序号上', () => {
-    const projection = createGacProjection('gac/mode-declared')
-    const messages = projection.project(event('gac/mode-declared', 9, {
-      mode: 'read_only', declared_mode: 'read_only', escalated: false, risk: 'low',
-    }))
-    assert.deepEqual([...messages.keys()], [9])
-  })
-
-  it('文本里带 [GAC] 前缀，让它一眼可辨不是用户说的话', () => {
-    // 平台的来源词表里没有「运行时自己」这一格，因此事件必然被归到别人名下；
-    // 前缀是这条失真的可见标记。
-    const projection = createGacProjection('gac/task-completed')
-    const text = projection.project(event('gac/task-completed', 1, { task_id: 'R', status: 'completed' }))
-      .get(1).content[0].text
-    assert.match(text, /^\[GAC\]/u)
-  })
-
-  it('拒绝不是 GAC 的类型', () => {
-    assert.throws(
-      () => createGacProjection('user/message'),
-      (error) => error.code === GAC_EVENT_CODES.UNKNOWN_TYPE,
-    )
-  })
-
-  it('每个 GAC 类型都能造出投影，且都能产出消息', () => {
-    // 逐项跑一遍：只测其中一个时，恰好漏掉的就是没被选中的那些。
-    for (const type of GAC_EVENT_TYPES) {
-      const projection = createGacProjection(type)
-      assert.equal(projection.type, type)
-      assert.equal(typeof projection.project, 'function')
-    }
-  })
-
-  it('每种事件的最小载荷都能讲出一句话', () => {
-    const samples = {
-      'gac/mode-declared': { mode: 'm', declared_mode: 'm', escalated: false, risk: 'low' },
-      'gac/scope-declared': { scope: ['lib/a.js'] },
-      'gac/task-created': { task_id: 'R', mode: 'm', project_id: 'p', node_count: 1 },
-      'gac/requirement-frozen': { task_id: 'R', rounds: 1, criteria: ['AC1'] },
-      'gac/contract-frozen': { task_id: 'R', contract_id: 'c', operation_count: 1 },
-      'gac/plan-registered': { task_id: 'R', plan_id: 'pl', case_count: 1, criteria: ['AC1'] },
-      'gac/review-registered': { task_id: 'R', review_id: 'review-1', blocking_issues: 1, violations: 2 },
-      'gac/node-dispatched': { task_id: 'R', node_id: 'T1', attempt: 1, dispatch_id: 'd' },
-      'gac/node-reported': { task_id: 'R', node_id: 'T1', status: 'completed', classification: 'accepted' },
-      'gac/task-completed': { task_id: 'R', status: 'completed' },
-      'gac/evidence-recorded': { evidence_id: 'ev-1', tool: 'pwsh', usable: true },
-    }
-    for (const [type, data] of Object.entries(samples)) {
-      const messages = createGacProjection(type).project(event(type, 1, data))
-      assert.equal(messages.size, 1, `${type} 应当产出一条消息`)
-      const text = messages.get(1).content[0].text
-      assert.ok(text.length > 0, `${type} 的文本不能为空`)
     }
   })
 })
