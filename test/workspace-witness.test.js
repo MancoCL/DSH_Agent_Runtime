@@ -799,7 +799,6 @@ function createFakeContext({
     sessions: {
       get: (id) => (id === SESSION_ID ? session : undefined),
       list: () => [session],
-      registerMessageProjection: () => disposer,
     },
     tools: { register: () => disposer },
     get: (name) => (name === 'workspaceChanges' && provideWorkspaceChanges

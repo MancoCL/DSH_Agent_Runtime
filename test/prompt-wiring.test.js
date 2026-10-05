@@ -64,7 +64,6 @@ function createFakeContext({ provideSystemPrompt = true, sessionCwd } = {}) {
     sessions: {
       get: (id) => (id === SESSION_ID && sessionCwd !== undefined ? { header: { cwd: sessionCwd } } : undefined),
       list: () => [],
-      registerMessageProjection: () => disposer,
     },
     tools: { register: (definition) => { seen.tools.push(definition); return disposer } },
     on: (event, listener, options) => {
