@@ -46,6 +46,46 @@ describe('分类表把每一类工具都摆在明处', () => {
   })
 })
 
+describe('PTC 传输单独一类：放行外层，内层按名字受管', () => {
+  it('把 run_code 归类为 ptc', () => {
+    assert.equal(classifyCall('run_code', { code: 'x' }).kind, CALL_KINDS.PTC)
+  })
+
+  it('外层传输不产出路径，也不声称自己受守卫', () => {
+    // 它自己不碰文件——真正动手的是它派发的内层子调用，而那些子调用会各自到达守卫。
+    const call = classifyCall('run_code', { file_path: 'src/a.c' })
+    assert.deepEqual(call.paths, [])
+    assert.equal(call.guarded, false)
+    assert.match(call.reason, /内层子调用/u)
+  })
+
+  it('内层子调用按自己的名字分类，而不是继承 ptc', () => {
+    const inner = classifyCall('write', { file_path: 'src/a.c' }, { nested: true })
+    assert.equal(inner.kind, CALL_KINDS.WRITE)
+    assert.deepEqual(inner.paths, ['src/a.c'])
+    assert.equal(classifyCall('pwsh', { command: 'x' }, { nested: true }).kind, CALL_KINDS.SHELL)
+  })
+
+  it('传输派发传输时按未知处理', () => {
+    // 真出现这种调用，说明这张表对内核的理解有偏差；那就落到失败即拒绝那一侧。
+    assert.equal(classifyCall('run_code', { code: 'x' }, { nested: true }).kind, CALL_KINDS.UNKNOWN)
+  })
+
+  it('内核若给传输改名，这里认不出来——落到失败即拒绝那一侧，而不是悄悄放行', () => {
+    assert.equal(classifyCall('run_code_v2', { code: 'x' }).kind, CALL_KINDS.UNKNOWN)
+  })
+
+  it('knownTools 把这一类也列出来', () => {
+    assert.deepEqual(knownTools().ptc, ['run_code'])
+  })
+
+  it('PTC 传输也在收权之列：只读执行者不该拿到派发通道', () => {
+    // 收权与门禁走同一张表。把传输留给一个只读执行者，等于给它在内层派发写入的机会——
+    // 那些内层调用确实会被门禁按名字检查，但收权的意思是「连通道都不给」。
+    assert.deepEqual(writeCapableToolNames(['run_code']), ['run_code'])
+  })
+})
+
 describe('收权：失败即收回', () => {
   it('只读的留下，其余全部收回', () => {
     const deny = writeCapableToolNames([
