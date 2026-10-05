@@ -27,6 +27,8 @@ import { createRoleGuard } from '../lib/role-guard.js'
  * @param {readonly string[]} [options.restrictable] - 缺省与 visible 相同。
  * @param {readonly string[]} [options.global] - 兜底路径用；缺省与 visible 相同。
  * @param {boolean} [options.withView] - 是否提供 `view()`；false 模拟老宿主，走兜底。
+ * @param {boolean} [options.ignoreRestrictions] - true 时 `restrict` 照收不误、但视野里名字照旧还在，
+ *   模拟活体实测里观察到的那个状态（报告说自己收掉了，实际调用仍能发出）。
  * @param {boolean} [options.throwOnRestrict]
  * @param {boolean} [options.throwOnSchemas]
  * @param {readonly string[]} [options.unknownToRestrict] - 这些名字一旦出现在 deny 里就让 restrict
@@ -38,26 +40,32 @@ function fakeTools({
   restrictable,
   global,
   withView = true,
+  ignoreRestrictions = false,
   throwOnRestrict = false,
   throwOnSchemas = false,
   unknownToRestrict = [],
 } = {}) {
   const restrictions = []
   const disposed = []
+  const denied = new Set()
   const globalView = global ?? visible
   const restrictableView = restrictable ?? visible
+  /** 收权生效后这个 agent 还看得见什么（内核的口径是「继承来的减去被限制的」）。 */
+  const visibleNow = () => (ignoreRestrictions
+    ? visible
+    : visible.filter((name) => !denied.has(name)))
   const tools = {
     ...(withView
       ? {
         view: () => ({
-          visible: new Map(visible.map((name) => [name, { name }])),
+          visible: new Map(visibleNow().map((name) => [name, { name }])),
           restrictableNames: new Set(restrictableView),
         }),
       }
       : {}),
     schemas: (scope) => {
       if (throwOnSchemas) throw new Error('视野读不出来')
-      const names = scope === undefined ? globalView : visible
+      const names = scope === undefined ? globalView : visibleNow()
       return names.map((name) => ({ name }))
     },
     restrict: (filter) => {
@@ -69,9 +77,13 @@ function fakeTools({
           `tools.restrict() names unknown global tools ${unknown.map((n) => `"${n}"`).join(', ')}`,
         )
       }
+      for (const name of filter?.deny ?? []) denied.add(name)
       const index = restrictions.length
       restrictions.push(filter)
-      return () => disposed.push(index)
+      return () => {
+        for (const name of filter?.deny ?? []) denied.delete(name)
+        disposed.push(index)
+      }
     },
   }
   return { tools, restrictions, disposed }
@@ -239,6 +251,41 @@ describe('拿不到收权接缝时如实降级', () => {
     const record = guard.sync({ sessionId: 's1', taskId: 'R', readOnlyNodes: ['T2'], agent: {} })
     assert.equal(record.mode, 'guard-only')
     assert.deepEqual(restrictions, [])
+  })
+
+  it('restrict 记上了、可名字还在视野里 → 如实降成兜底，不把「记上了」当成「收掉了」', () => {
+    // 活体实测就是这个状态：报告里 `mode: restricted`、`revoked` 里有 `write`，而同一个会话里
+    // `write` 照旧可调用（靠守卫拦下来的）。收权必须**自己复查**，否则那份报告会让人以为角色已经
+    // 安全了——这正是本模块开头警告过的形态。
+    const { tools } = fakeTools({ ignoreRestrictions: true })
+    const { guard, events } = guardOf({ toolsFor: () => tools })
+    const record = guard.sync({ sessionId: 's1', taskId: 'R', readOnlyNodes: ['T2'], agent: {} })
+    assert.equal(record.mode, 'guard-only')
+    assert.deepEqual([...record.revoked], [], '没收掉就一个都不能声称收掉')
+    assert.ok(record.shadowed.includes('write') && record.shadowed.includes('edit'))
+    const event = events.find((entry) => entry.event === 'role-revocation-unverified')
+    assert.deepEqual(event.names, ['write', 'edit'])
+  })
+
+  it('收权之后读不到视野时同样降成兜底 —— 「没法确认」不等于「已经收掉」', () => {
+    let reads = 0
+    const tools = {
+      view: () => {
+        reads += 1
+        if (reads > 1) throw new Error('视野读不出来')
+        return {
+          visible: new Map([['read', { name: 'read' }], ['write', { name: 'write' }]]),
+          restrictableNames: new Set(['read', 'write']),
+        }
+      },
+      restrict: () => () => {},
+    }
+    const events = []
+    const guard = createRoleGuard({ toolsFor: () => tools, onEvent: (record) => events.push(record) })
+    const record = guard.sync({ sessionId: 's1', taskId: 'R', readOnlyNodes: ['T2'], agent: {} })
+    assert.equal(record.mode, 'guard-only')
+    const event = events.find((entry) => entry.event === 'role-revocation-unverified')
+    assert.match(event.reason, /无法确认/u)
   })
 
   it('收权接缝抛错时吞掉它、记下来、退到守卫兜底', () => {
