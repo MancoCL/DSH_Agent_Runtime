@@ -16,6 +16,7 @@ import {
   GacEventError,
   compileGacEvent,
   createGacProjection,
+  gacEventsFrom,
   reduceGacEvents,
 } from '../lib/gac-events.js'
 
@@ -41,9 +42,10 @@ const FULL_LOG = [
   event('gac/plan-registered', 6, { task_id: 'R', plan_id: 'plan-1', case_count: 4, criteria: ['AC1'] }),
   event('gac/node-dispatched', 7, { task_id: 'R', node_id: 'T1', attempt: 1, dispatch_id: 'R-T1-A1' }),
   event('gac/node-reported', 8, { task_id: 'R', node_id: 'T1', status: 'completed', classification: 'accepted' }),
-  event('gac/evidence-recorded', 9, { evidence_id: 'ev-1', tool: 'pwsh', usable: true }),
-  event('gac/evidence-recorded', 10, { evidence_id: 'ev-2', tool: 'pwsh', usable: false }),
-  event('gac/task-completed', 11, { task_id: 'R', status: 'completed' }),
+  event('gac/review-registered', 9, { task_id: 'R', review_id: 'review-1', blocking_issues: 1, violations: 0 }),
+  event('gac/evidence-recorded', 10, { evidence_id: 'ev-1', tool: 'pwsh', usable: true }),
+  event('gac/evidence-recorded', 11, { evidence_id: 'ev-2', tool: 'pwsh', usable: false }),
+  event('gac/task-completed', 12, { task_id: 'R', status: 'completed' }),
 ]
 
 describe('事件词表', () => {
@@ -151,6 +153,7 @@ describe('reduceGacEvents —— 可重放', () => {
     assert.equal(task.contract_id, 'contract-1')
     assert.equal(task.contract_operations, 2)
     assert.deepEqual(task.requirement, { rounds: 2, criteria: ['AC1'] })
+    assert.deepEqual(task.review, { review_id: 'review-1', blocking_issues: 1, violations: 0 })
     assert.equal(task.status, 'completed')
   })
 
@@ -166,7 +169,7 @@ describe('reduceGacEvents —— 可重放', () => {
   })
 
   it('记下最后一个事件的序号', () => {
-    assert.equal(reduceGacEvents(FULL_LOG).last_seq, 11)
+    assert.equal(reduceGacEvents(FULL_LOG).last_seq, 12)
   })
 
   it('作用域被清除后从视图里消失', () => {
@@ -212,6 +215,220 @@ describe('reduceGacEvents —— 可重放', () => {
     const node = reduceGacEvents(log).tasks.R.nodes.T1
     assert.equal(node.attempt, 2)
     assert.equal(node.dispatch_id, 'R-T1-A2')
+  })
+})
+
+describe('gacEventsFrom —— 把工具结果翻译成事件', () => {
+  /**
+   * 一个只读的假存储：翻译只从盘上的记录取事实，因此这里给出什么，事件里就该出现什么。
+   *
+   * @param {object} [records]
+   * @returns {object}
+   */
+  function storeOf(records = {}) {
+    return {
+      load: () => records.task,
+      loadPlan: () => records.plan,
+      loadContract: () => records.contract,
+      loadGrilling: () => records.grilling,
+      loadReview: () => records.review,
+    }
+  }
+
+  /**
+   * @param {object} [records]
+   * @param {object} [adapter]
+   * @returns {object}
+   */
+  function contextFor(records = {}, adapter = { project: { id: 'demo' } }) {
+    return { root: '/p', storeFor: () => storeOf(records), adapterFor: () => adapter }
+  }
+
+  /** 一份盘上的任务记录，字段形状与 TaskStore.load 的产出一致。 */
+  const TASK = { task_id: 'R', mode: 'standard_task', nodes: new Map([['T1', {}], ['T2', {}]]) }
+
+  /**
+   * 一次 `gac_task` 调用的结果。
+   *
+   * @param {object} value
+   * @returns {object}
+   */
+  function taskResult(value) {
+    return { isError: false, value: { task_id: 'R', ...value } }
+  }
+
+  it('错误结果不产出事件', () => {
+    assert.deepEqual(
+      gacEventsFrom('gac_task', { isError: true, value: { action: 'created' } }, contextFor()),
+      [],
+    )
+  })
+
+  it('value 不是对象时不产出事件', () => {
+    for (const value of [undefined, null, 'ok', 42, []]) {
+      assert.deepEqual(gacEventsFrom('gac_task', { isError: false, value }, contextFor()), [])
+    }
+  })
+
+  it('gac_project 的模式声明', () => {
+    const events = gacEventsFrom('gac_project', {
+      value: { mode: 'direct_edit', declared_mode: 'read_only', escalated: true, risk: 'medium' },
+    }, contextFor())
+    assert.deepEqual(events, [{
+      type: 'gac/mode-declared',
+      data: { mode: 'direct_edit', declared_mode: 'read_only', escalated: true, risk: 'medium' },
+    }])
+  })
+
+  it('没有模式的 gac_project 结果不产出事件', () => {
+    assert.deepEqual(gacEventsFrom('gac_project', { value: { project: 'x' } }, contextFor()), [])
+  })
+
+  it('gac_scope 的声明与清除', () => {
+    assert.deepEqual(
+      gacEventsFrom('gac_scope', { value: { scope: ['src/'], task_id: 'R', node_id: 'T1' } }, contextFor()),
+      [{ type: 'gac/scope-declared', data: { scope: ['src/'], cleared: false, task_id: 'R', node_id: 'T1' } }],
+    )
+    // 空作用域就是「清除」：只记声明不记清除，重放出来会以为它还在生效。
+    assert.deepEqual(
+      gacEventsFrom('gac_scope', { value: { scope: [] } }, contextFor()),
+      [{ type: 'gac/scope-declared', data: { scope: [], cleared: true } }],
+    )
+  })
+
+  it('gac_task create 从盘上的任务取事实，而不是从返回里猜', () => {
+    const events = gacEventsFrom('gac_task', taskResult({ action: 'created' }), contextFor({ task: TASK }))
+    assert.deepEqual(events, [{
+      type: 'gac/task-created',
+      data: { task_id: 'R', mode: 'standard_task', project_id: 'demo', node_count: 2 },
+    }])
+  })
+
+  it('任务读不出来时仍然记一条，但如实报 0 个节点与 unknown 模式', () => {
+    // 事件说「建了个任务」是真的（工具自己报的），而任务记录读不出来是另一件事——把它报成
+    // 0 个节点与 unknown，比凭返回里的字段猜一个更像事实。
+    const events = gacEventsFrom('gac_task', taskResult({ action: 'created' }), contextFor())
+    assert.deepEqual(events[0].data, { task_id: 'R', mode: 'unknown', project_id: 'demo', node_count: 0 })
+  })
+
+  it('gac_task plan 从盘上的计划取用例数', () => {
+    const events = gacEventsFrom('gac_task', taskResult({ action: 'planned', plan_id: 'plan-9' }), contextFor({
+      plan: { cases: [{ id: 'V1' }, { id: 'V2' }], criteria: ['AC1'] },
+    }))
+    assert.deepEqual(events, [{
+      type: 'gac/plan-registered',
+      data: { task_id: 'R', plan_id: 'plan-9', case_count: 2, criteria: ['AC1'] },
+    }])
+  })
+
+  it('计划读不出来时不产出事件', () => {
+    assert.deepEqual(
+      gacEventsFrom('gac_task', taskResult({ action: 'planned' }), contextFor()),
+      [],
+    )
+  })
+
+  it('gac_task contract 从盘上的契约取操作数', () => {
+    const events = gacEventsFrom('gac_task', taskResult({ action: 'contract_frozen', plan_id: 'contract-3' }), contextFor({
+      contract: { operations: [{ name: 'a' }, { name: 'b' }, { name: 'c' }] },
+    }))
+    assert.deepEqual(events, [{
+      type: 'gac/contract-frozen',
+      data: { task_id: 'R', contract_id: 'contract-3', operation_count: 3 },
+    }])
+  })
+
+  it('gac_task grill confirm 从盘上的访谈取轮数与验收标准', () => {
+    const events = gacEventsFrom('gac_task', taskResult({ action: 'requirement_frozen' }), contextFor({
+      grilling: { rounds: [{}, {}, {}], acceptance_criteria: ['AC1', 'AC2'] },
+    }))
+    assert.deepEqual(events, [{
+      type: 'gac/requirement-frozen',
+      data: { task_id: 'R', rounds: 3, criteria: ['AC1', 'AC2'] },
+    }])
+  })
+
+  it('gac_task review 的阻塞问题数取自盘上的报告，命中门禁数取自本次回报', () => {
+    // 两个数来自两处，因为它们是两件事：报告里写下了几个阻塞问题（产物），这次登记命中了
+    // 几条门禁（刚发生的事）。
+    const events = gacEventsFrom('gac_task', taskResult({
+      action: 'reviewed',
+      review_id: 'review-7',
+      blockers: ['GAC_REVIEW_INDEPENDENCE_FAILED', 'GAC_REVIEW_BLOCKING_ISSUES'],
+    }), contextFor({ review: { blocking_issues: ['a', 'b', 'c'] } }))
+    assert.deepEqual(events, [{
+      type: 'gac/review-registered',
+      data: { task_id: 'R', review_id: 'review-7', blocking_issues: 3, violations: 2 },
+    }])
+  })
+
+  it('复核报告读不出来时不产出事件', () => {
+    assert.deepEqual(
+      gacEventsFrom('gac_task', taskResult({ action: 'reviewed', review_id: 'review-7' }), contextFor()),
+      [],
+    )
+  })
+
+  it('gac_task complete', () => {
+    assert.deepEqual(
+      gacEventsFrom('gac_task', taskResult({ action: 'completed' }), contextFor()),
+      [{ type: 'gac/task-completed', data: { task_id: 'R', status: 'completed' } }],
+    )
+  })
+
+  it('逐条迁移 transitions —— 它存在的理由就是精确说出刚才派遣了谁', () => {
+    const events = gacEventsFrom('gac_task', taskResult({
+      action: 'dispatch',
+      transitions: [
+        { kind: 'dispatched', node_id: 'T1', attempt: 2, dispatch_id: 'R-T1-A2' },
+        { kind: 'reported', node_id: 'T1', status: 'completed', classification: 'accepted' },
+        { kind: 'something-else', node_id: 'T2' },
+      ],
+    }), contextFor())
+    assert.deepEqual(events.map((entry) => entry.type), ['gac/node-dispatched', 'gac/node-reported'])
+    assert.deepEqual(events[0].data, { task_id: 'R', node_id: 'T1', attempt: 2, dispatch_id: 'R-T1-A2' })
+    assert.deepEqual(events[1].data, {
+      task_id: 'R', node_id: 'T1', status: 'completed', classification: 'accepted',
+    })
+  })
+
+  it('不认识的动作、别的工具、缺 task_id 的结果都不产出事件', () => {
+    assert.deepEqual(gacEventsFrom('gac_task', taskResult({ action: 'await' }), contextFor()), [])
+    assert.deepEqual(gacEventsFrom('gac_metrics', { value: { action: 'created' } }, contextFor()), [])
+    assert.deepEqual(gacEventsFrom('write', { value: { action: 'created' } }, contextFor()), [])
+    assert.deepEqual(gacEventsFrom('gac_task', { value: { action: 'created' } }, contextFor()), [])
+    assert.deepEqual(gacEventsFrom(undefined, { value: { action: 'created' } }, contextFor()), [])
+  })
+
+  it('翻译出来的每一条都过得了 compileGacEvent —— 否则它会静默地记不进去', () => {
+    // 这是本组最要紧的一条：翻译与词表分处两个地方时，形状对不上不会当场报错，只会让事件在
+    // append 之前被校验拦下——而那条链路只写一条 report，模型与用户什么都看不到。
+    const cases = [
+      ['gac_project', { value: { mode: 'm', declared_mode: 'm', escalated: false, risk: 'low' } }, {}],
+      ['gac_scope', { value: { scope: ['a/'], task_id: 'R', node_id: 'T1' } }, {}],
+      ['gac_task', taskResult({ action: 'created' }), { task: TASK }],
+      ['gac_task', taskResult({ action: 'planned', plan_id: 'p' }), { plan: { cases: [{}], criteria: ['AC1'] } }],
+      ['gac_task', taskResult({ action: 'contract_frozen', plan_id: 'c' }), { contract: { operations: [{}] } }],
+      ['gac_task', taskResult({ action: 'requirement_frozen' }), { grilling: { rounds: [{}], acceptance_criteria: [] } }],
+      ['gac_task', taskResult({ action: 'reviewed', review_id: 'r', blockers: [] }), { review: { blocking_issues: [] } }],
+      ['gac_task', taskResult({ action: 'completed' }), {}],
+      ['gac_task', taskResult({
+        transitions: [{ kind: 'dispatched', node_id: 'T1', attempt: 1, dispatch_id: 'd' }],
+      }), {}],
+      ['gac_task', taskResult({
+        transitions: [{ kind: 'reported', node_id: 'T1', status: 'completed', classification: 'accepted' }],
+      }), {}],
+    ]
+    for (const [toolName, result, records] of cases) {
+      const events = gacEventsFrom(toolName, result, contextFor(records))
+      assert.ok(events.length > 0, `${toolName} 的这一种结果应当产出事件`)
+      for (const entry of events) {
+        assert.doesNotThrow(
+          () => compileGacEvent(entry.type, entry.data),
+          `${entry.type} 的载荷过不了词表校验：${JSON.stringify(entry.data)}`,
+        )
+      }
+    }
   })
 })
 
@@ -280,6 +497,7 @@ describe('createGacProjection —— 模型实际读到什么', () => {
       'gac/requirement-frozen': { task_id: 'R', rounds: 1, criteria: ['AC1'] },
       'gac/contract-frozen': { task_id: 'R', contract_id: 'c', operation_count: 1 },
       'gac/plan-registered': { task_id: 'R', plan_id: 'pl', case_count: 1, criteria: ['AC1'] },
+      'gac/review-registered': { task_id: 'R', review_id: 'review-1', blocking_issues: 1, violations: 2 },
       'gac/node-dispatched': { task_id: 'R', node_id: 'T1', attempt: 1, dispatch_id: 'd' },
       'gac/node-reported': { task_id: 'R', node_id: 'T1', status: 'completed', classification: 'accepted' },
       'gac/task-completed': { task_id: 'R', status: 'completed' },
