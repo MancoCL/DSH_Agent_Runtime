@@ -1597,6 +1597,31 @@ describe('独立复核门禁 —— 六问齐备才能收口', () => {
   })
 })
 
+describe('失败节点的返回文本 —— 不写成「执行完成」，且带出可追溯信息', () => {
+  it('结论与措辞一致，并带出执行者给的可追溯信息', async () => {
+    // 活体验收实测到的那句自相矛盾：「节点 T1 由 child:spawn 执行完成。 T1 失败…」——读的人第一句
+    // 就得到相反的结论；而子会话 id 与「绑了什么作用域」在失败分支里一个字都没出现。
+    const h = dispatchHarness({
+      runtimeExecutors: [{
+        name: 'builder',
+        supports: () => true,
+        run: async () => ({
+          status: 'failed',
+          summary: '做不到',
+          detail: '子会话 child-x；已绑定写作用域 [src/]',
+        }),
+      }],
+    })
+    await createStandard(h)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+
+    assert.match(value.message, /执行结束（结论 failed）/u)
+    assert.doesNotMatch(value.message, /执行完成/u)
+    assert.match(value.message, /子会话 child-x/u)
+    assert.match(value.message, /已绑定写作用域/u)
+  })
+})
+
 describe('同一批真的并行 —— 不是「协调器算了两个、执行排着队」', () => {
   /**
    * 冻结一份最小接口契约（同批两个写者必须先过这道门禁）。

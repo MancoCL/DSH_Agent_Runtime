@@ -209,6 +209,27 @@ describe('守卫查绑定：子会话的越界写在执行前被拒', () => {
     )
   })
 
+  it('**子会话的回报通道必须放行**：绑了作用域之后 structured_output 仍然能用', () => {
+    // 活体验收抓到的第二个坑：绑定写作用域之后，子会话的结构化回报被按「未知工具」拒了
+    // （`GAC_UNGUARDABLE_WRITE_DENIED`），于是它把两件事都做对了却因为回报不上去被判 failed。
+    // 「失败即拒」这条规则是对的，代价是每一个子会话要用的非写入类工具都必须被显式归类。
+    const { core, bindings } = governed()
+    bindWriter(bindings)
+
+    assert.deepEqual(
+      core.preExecute(execution({
+        sessionId: CHILD,
+        name: 'structured_output',
+        args: { status: 'completed', summary: '做完了' },
+      })),
+      { kind: 'allow' },
+    )
+    assert.deepEqual(
+      core.preExecute(execution({ sessionId: CHILD, name: 'todo_write', args: { todos: [] } })),
+      { kind: 'allow' },
+    )
+  })
+
   it('没绑定的会话照旧放行（这条记录的是**现状**，也是绑定的存在理由）', () => {
     const { core } = governed()
     assert.deepEqual(
@@ -333,6 +354,20 @@ describe('子会话执行者：起会话时绑、结束时放', () => {
     const executor = createChildExecutor({ subagentsFor: () => service, bindings })
 
     const outcome = await executor.run(runInput())
+    assert.match(outcome.detail, /已绑定写作用域 \[src\/\]/u)
+  })
+
+  it('回报失败的分支也要给出可追溯信息（子会话 id + 绑了什么）', async () => {
+    // 活体验收里，子会话两件事都做对了、只是结构化回报被门禁拒了；而当时失败分支不返回 `detail`，
+    // 于是 `advance` 返回里连子会话 id 都没有——父会话无从知道该去查谁。
+    const { bindings } = governed()
+    const { service } = fakeSubagents(bindings, { result: { stopReason: 'completed' } })
+    const executor = createChildExecutor({ subagentsFor: () => service, bindings })
+
+    const outcome = await executor.run(runInput())
+
+    assert.equal(outcome.status, 'failed')
+    assert.match(outcome.detail, /子会话 child-session-1/u)
     assert.match(outcome.detail, /已绑定写作用域 \[src\/\]/u)
   })
 
