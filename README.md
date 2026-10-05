@@ -107,6 +107,8 @@ plugin_manager { action: install_bundle, target: "<this directory>" }
 
 - 因为它是链接，本插件保留自己的 `node_modules`，无法裸 import `@deepseek-ai/*`。`lib/resolve-dsh.js` 转而从 profile 目录解析它们。
 
+  **本机上那条路径的真相**：`~/.dsh/profiles/node_modules/@deepseek-ai/*` 是指向桌面安装（`resources/dsh/node_modules`）的 **junction**，而链接集合是桌面安装的**子集**。所以解析会在 profile 目录这个锚点上成功，落点却在桌面安装里；而 `@deepseek-ai/dsh-workspace-changes`（witness 的观测源）、`@deepseek-ai/dsh-ptc-runtime`（PTC）这类包**桌面安装里有、链接集合里没有**，插件因此解析不到——「服务缺席」的准确原因就在这里，与它们是否存在于桌面安装无关。`node scripts/diagnose-resolution.js` 会把成功的那一个锚点单独打出来（`OK <anchor>`），这条信息此前是缺的：它把成功的锚点误报成「未走到」，正好指错地方。
+
 ### 这台机器上的当前状态
 
 下面这些已经应用过了，所以以后对 `lib/*.js` 的编辑无需重启就会重载：
@@ -646,7 +648,7 @@ GAC 把自己的事件追加到会话的事件日志里，并为每个类型注�
 ## 开发
 
 ```bash
-npm test          # 908 个测试，不需要 DSH
+npm test          # 910 个测试，不需要 DSH
 ```
 
 这些库模块是纯的、依赖注入的，正是为了让测试套件不需要 harness 就能跑。`test/entry.test.js` 另外断言了 Cordis 导出的形状，并断言没有任何模块在模块作用域里裸 import `@deepseek-ai/*` 包（那会在求值期间抛错，早于任何插件代码来得及报告原因）。

@@ -27,13 +27,16 @@ for (const note of notes) console.log(`  - ${note}`)
 console.log('')
 console.log(`锚点，按顺序（${anchors.length}）：`)
 
-const { attempts, resolved } = resolveWithDiagnostics(SPECIFIER, anchors)
+const { attempts, resolved, anchor: succeededAt } = resolveWithDiagnostics(SPECIFIER, anchors)
 for (const { anchor, reason } of attempts) {
   console.log(`  ${reason === '锚点不存在' ? 'MISSING' : 'tried  '} ${anchor} [${reason}]`)
 }
-// 成功那个锚点之后的锚点从未被走到。
-if (resolved !== undefined) {
-  const reached = new Set(attempts.map((a) => a.anchor))
+// 成功的那一个要单独打出来：`attempts` 里只有失败的锚点，早先这段代码因此把成功的那个当成
+// 「未走到」打印，正好指错了地方——诊断里最要紧的一条信息就是「它是在哪儿找到的」。
+if (resolved !== undefined && succeededAt !== undefined) {
+  console.log(`  OK      ${succeededAt}`)
+  // 成功那个之后的锚点从未被走到。
+  const reached = new Set([...attempts.map((a) => a.anchor), succeededAt])
   for (const anchor of anchors.filter((a) => !reached.has(a))) {
     console.log(`  （未走到）${anchor}`)
   }
