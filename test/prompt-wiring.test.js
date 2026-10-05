@@ -98,8 +98,13 @@ describe('入口把系统提示段落挂上 systemPrompt', () => {
     const { ctx, seen } = createFakeContext({ sessionCwd: projectRoot })
     await apply(ctx)
 
-    assert.equal(seen.injections.length, 1, '应当恰好注入一次 systemPrompt')
-    assert.deepEqual([...seen.injections[0].deps], ['systemPrompt'])
+    // 断言的是**提示那一次**注入，而不是「注入总数」：插件还会用 `ctx.inject` 接一个可选的
+    // 工作区观测源（`workspaceChanges`，见 lib/index.js），它以同样方式降级、与提示无关。
+    // 原先这里断言的是总数，于是那条可选接缝一加进来这条测试就红了——它测的是接线方式，
+    // 不是本文件声称要测的那件事。
+    const promptInjections = seen.injections.filter((entry) => entry.deps.includes('systemPrompt'))
+    assert.equal(promptInjections.length, 1, '应当恰好注入一次 systemPrompt')
+    assert.deepEqual([...promptInjections[0].deps], ['systemPrompt'])
     assert.equal(seen.sections.length, 1, '应当恰好注册一个段落')
 
     const section = seen.sections[0]
