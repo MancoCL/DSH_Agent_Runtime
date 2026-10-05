@@ -764,6 +764,23 @@ describe('验证证据门禁 —— 收口要看证据', () => {
     assert.deepEqual(value.blockers, ['GAC_VERIFICATION_PLAN_MISSING'])
   })
 
+  it('收口时没交验证载荷 → 报「没交载荷」，而不是「计划被改写」', async () => {
+    // 活体验收实测到的误报：`complete` 里压根没有 `verification`，而拒因写的是「报告对应的不是当前
+    // 计划（报告写的是 undefined）」——把读的人引向「有人改过计划」。盘上计划身份核对其实是 matches。
+    // 两个码分开之后，读的人能直接看出缺的是载荷。
+    const h = dispatchHarness()
+    await reachAllDone(h)
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-HR',
+      evidence: { all_criteria_covered: true },
+    }, h.exec)
+    assert.equal(value.action, 'complete_refused')
+    assert.equal(value.blockers.includes('GAC_VERIFICATION_PAYLOAD_MISSING'), true)
+    assert.equal(value.blockers.includes('GAC_VERIFICATION_PLAN_MUTATED'), false, '不该报成计划被改写')
+    assert.match(value.message, /没有交验证载荷/u)
+  })
+
   it('报告里的 plan_id 与计划不符时被拒，并报出两边', async () => {
     const h = dispatchHarness()
     await reachAllDone(h)
