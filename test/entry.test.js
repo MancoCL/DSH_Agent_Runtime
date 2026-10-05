@@ -85,6 +85,23 @@ describe('入口点把 DSH 导入推迟到调用时', () => {
   })
 })
 
+describe('零子 Agent —— E2E-1 的第三条断言', () => {
+  it('lib/ 里没有任何子 Agent 调用', async () => {
+    // E2E-1 要求「零子 Agent 调用」，而这条性质此前只是没人写过而已——没人写过与「不会写」
+    // 是两件事。适配计划 §3.2 说得很清楚：需要独立上下文时用 `ctx.llm.stream`（进程内的一次
+    // 模型调用），只有需要独立会话、独立工作目录时才轮到子 Agent。因此这里断言的是**这个决定
+    // 被钉住了**：一旦有人引入 `ctx.subagents`，这条测试会红，而那时该先回答「为什么需要独立
+    // 会话」——那是一个架构决定，不该顺手做掉。
+    const offenders = []
+    for (const file of await readdir(libDir)) {
+      if (!file.endsWith('.js')) continue
+      const source = await readFile(join(libDir, file), 'utf8')
+      if (/subagents?\b/u.test(source)) offenders.push(file)
+    }
+    assert.deepEqual(offenders, [], '引入子 Agent 之前先回答：为什么进程内模型调用不够')
+  })
+})
+
 describe('resolve-dsh', () => {
   it('未知包退化为 undefined，而不是抛错', async () => {
     const { resolveDshPackage } = await import('../lib/resolve-dsh.js')

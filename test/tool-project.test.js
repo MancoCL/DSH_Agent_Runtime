@@ -7,7 +7,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
@@ -169,6 +169,19 @@ describe('声明模式', () => {
       target_paths: ['config/app.json'],
     }, exec)
     assert.match(value.summary, /这一级别不创建任务记录/u)
+  })
+
+  it('真的不落任何任务记录 —— 不是只在文字上这么说', async () => {
+    // E2E-1 的那条断言（「无 task-created 事件」）在构造上成立，而构造是可以被改动的；
+    // 这里断言**盘上的事实**：声明 direct_edit 之后，任务目录里一个文件都没有。文字与事实
+    // 分开验，是因为两者可以不一致——而模型读到的是文字，事后能核对的只有事实。
+    const root = scratch()
+    const { tool, exec } = harness(root, VALID_ADAPTER)
+    await tool.execute({ mode: 'direct_edit', reason: '改一个常量' }, exec)
+    await tool.execute({ mode: 'read_only', reason: '只是看看' }, exec)
+
+    const tasksDir = join(root, '.dsh', 'gac', 'tasks')
+    assert.equal(existsSync(tasksDir), false, 'direct_edit / read_only 不该建任务目录')
   })
 
   it('标出它无法核对的那次声明，而不是暗示自己核对过了', async () => {

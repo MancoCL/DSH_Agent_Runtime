@@ -284,6 +284,16 @@ describe('gacEventsFrom —— 把工具结果翻译成事件', () => {
     assert.deepEqual(gacEventsFrom('gac_project', { value: { project: 'x' } }, contextFor()), [])
   })
 
+  it('direct_edit 只产出模式声明，不产出任务创建 —— E2E-1 的那条断言', () => {
+    // 「无 gac/task-created 事件」此前只在构造上成立（direct_edit 属 NON_TASK_MODES，不建任务），
+    // 没有作为断言测过。现在翻译是纯函数，这条断言就能钉在这里：一次 direct_edit 声明只该
+    // 产出 mode-declared 一条。
+    const events = gacEventsFrom('gac_project', {
+      value: { mode: 'direct_edit', declared_mode: 'direct_edit', escalated: false, risk: 'low' },
+    }, contextFor({ task: TASK }))
+    assert.deepEqual(events.map((entry) => entry.type), ['gac/mode-declared'])
+  })
+
   it('gac_scope 的声明与清除', () => {
     assert.deepEqual(
       gacEventsFrom('gac_scope', { value: { scope: ['src/'], task_id: 'R', node_id: 'T1' } }, contextFor()),
