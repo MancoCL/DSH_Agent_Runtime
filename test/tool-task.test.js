@@ -1691,6 +1691,24 @@ describe('只读角色收权 —— 派遣时收、回报时放', () => {
     assert.equal(syncs.at(-1).includeShell, true)
   })
 
+  it('执行者抛错 → 按失败登记，而不是让整次 advance 变成一条裸 Error', async () => {
+    // 活体验收实测过这一幕：子会话的产出契约被宿主拒绝，执行者里抛出的异常一路穿到工具层，
+    // `advance` 只回一条 Error，节点停在 pending、没有 dispatch_id、也没有失败记录。执行者抛错
+    // 就是执行失败——要能被登记、能被读出来。
+    const h = dispatchHarness({
+      runtimeExecutors: [{
+        name: 'builder',
+        supports: () => true,
+        run: async () => { throw new Error('契约被宿主拒绝') },
+      }],
+    })
+    await createStandard(h)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    assert.match(value.message, /抛错/u)
+    assert.match(value.message, /契约被宿主拒绝/u)
+    assert.equal(h.store.load('REQ-1').nodes.get('T1').status, 'failed', '节点应当被登记为失败')
+  })
+
   it('写节点在飞时不收权 —— 判据是声明的写范围，不是能力名', async () => {
     const { guard, syncs } = recordingGuard()
     const h = dispatchHarness({ roleGuard: guard, runtimeExecutors: [STAYS_IN_PROGRESS, COMPLETES] })

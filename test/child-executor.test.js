@@ -89,6 +89,20 @@ function runInput(overrides = {}) {
   }
 }
 
+describe('产出契约必须是标准 JSON Schema', () => {
+  it('required 在对象层，不在属性内部 —— 写成工具创作 DSL 那种会被宿主直接拒', () => {
+    // 实测原文：`unsupported JSON schema: schema.properties.status.required is not supported on
+    // type "string"`。工具产出契约里 `{ type: 'string', required: true }` 是 DSL 约定、`defineTool`
+    // 接受；而 `outputSchema` 走的是宿主的标准 JSON Schema 校验。两者混用会让派遣在**子会话创建
+    // 之前**就被拒掉，节点停在 pending。
+    const schema = CHILD_OUTPUT_SCHEMA
+    assert.deepEqual([...schema.required].sort(), ['status', 'summary'])
+    for (const [name, property] of Object.entries(schema.properties)) {
+      assert.equal(Object.hasOwn(property, 'required'), false, `${name} 的属性里不该有 required`)
+    }
+  })
+})
+
 describe('判定谁该由子会话承载', () => {
   it('写范围非空 → 是；写范围为空 → 不是', () => {
     // 判据是**声明的写范围**，不是能力名：用能力名会让一个同样要写文件却没叫 implementation 的
