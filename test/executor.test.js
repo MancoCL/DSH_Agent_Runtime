@@ -16,6 +16,7 @@ import {
   createSessionExecutor,
   pickExecutor,
 } from '../lib/executor.js'
+import { INDEPENDENCE_KEYS, QUALITY_KEYS } from '../lib/review.js'
 
 const ROUTE = { provider: 'test-provider', model: 'test-model' }
 
@@ -62,6 +63,16 @@ const WRITE_NODE = {
   required_capabilities: ['implementation'],
   depends_on: [],
   expected_artifacts: ['ChangeSet'],
+}
+
+/** 一个复核型节点：不写文件，但要求回答六问与五个维度。 */
+const REVIEW_NODE = {
+  id: 'T4',
+  objective: '独立复核',
+  write_scope: [],
+  required_capabilities: ['review'],
+  depends_on: ['T3'],
+  expected_artifacts: ['ReviewReport'],
 }
 
 /**
@@ -231,6 +242,62 @@ describe('createInProcessExecutor — 只承载不写文件的节点', () => {
 
   it('名字里带上能力与模型，便于辨认是谁在跑', () => {
     assert.match(executor.name, /test-provider/u)
+  })
+
+  it('审查节点的系统提示带上工程质量策略原文', async () => {
+    // 策略素材进的是**系统提示**而不是任务提示：它是判断标准，不是本次任务的约束——塞进任务
+    // 提示会让它看起来像可以被本次任务覆盖的东西。它也是这份资源的唯一消费者：素材搬进来却
+    // 没人读，与没搬是一样的。
+    let captured
+    const capturing = createInProcessExecutor({
+      llmFor: () => ({
+        stream: (options) => {
+          captured = options
+          return goodStream('ok')
+        },
+      }),
+      route: ROUTE,
+    })
+    await capturing.run(runInput(REVIEW_NODE))
+    assert.match(captured.system, /Prefer the simplest implementation/u)
+    assert.match(captured.system, /工程质量策略原文/u)
+  })
+
+  it('非审查节点的系统提示里没有策略原文', async () => {
+    // 每个节点都背上 11 KB 策略，会让真正需要它的那一次淹没在噪声里，也让别的节点的 token
+    // 白花在一条与它无关的标准上。
+    let captured
+    const capturing = createInProcessExecutor({
+      llmFor: () => ({
+        stream: (options) => {
+          captured = options
+          return goodStream('ok')
+        },
+      }),
+      route: ROUTE,
+    })
+    await capturing.run(runInput(REPORT_NODE))
+    assert.doesNotMatch(captured.system, /Prefer the simplest implementation/u)
+  })
+
+  it('审查节点的任务提示列出六问与五个维度', async () => {
+    // 清单从 lib/review.js 的定义生成，只有一份：写在提示词里的第二份会与门禁核对的那份漂移，
+    // 而漂移的那一份正是审查者读到的。
+    let captured
+    const capturing = createInProcessExecutor({
+      llmFor: () => ({
+        stream: (options) => {
+          captured = options
+          return goodStream('ok')
+        },
+      }),
+      route: ROUTE,
+    })
+    await capturing.run(runInput(REVIEW_NODE))
+    const prompt = captured.messages[0].content[0].text
+    for (const key of [...INDEPENDENCE_KEYS, ...QUALITY_KEYS]) {
+      assert.match(prompt, new RegExp(key, 'u'), `提示词里应当有 ${key}`)
+    }
   })
 
   it('名字可以被上层改写为按能力命名', () => {
