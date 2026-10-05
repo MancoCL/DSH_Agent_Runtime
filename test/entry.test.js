@@ -86,16 +86,33 @@ describe('入口点把 DSH 导入推迟到调用时', () => {
 })
 
 describe('零子 Agent —— E2E-1 的第三条断言', () => {
-  it('lib/ 里没有任何子 Agent 调用', async () => {
+  /**
+   * 把注释剥掉，只留代码。
+   *
+   * 这条断言问的是「有没有子 Agent **调用**」，而注释里提一句某个工具的名字（例如说明某个宿主把
+   * Team 那几个工具注册进了 agent 自己的层）并不是调用。早先直接对源码做词面扫描，于是那样一条
+   * 注释会把测试弄红——**红得没有道理**，而一条会因为没道理地红而被删掉的测试，比没有测试更糟。
+   *
+   * @param {string} source
+   * @returns {string}
+   */
+  function stripComments(source) {
+    return source
+      .replace(/\/\*[\s\S]*?\*\//gu, '')
+      .replace(/^\s*\/\/.*$/gmu, '')
+      .replace(/([^:'"])\/\/.*$/gmu, '$1')
+  }
+
+  it('lib/ 的代码里没有任何子 Agent 调用（注释不算）', async () => {
     // E2E-1 要求「零子 Agent 调用」，而这条性质此前只是没人写过而已——没人写过与「不会写」
     // 是两件事。适配计划 §3.2 说得很清楚：需要独立上下文时用 `ctx.llm.stream`（进程内的一次
     // 模型调用），只有需要独立会话、独立工作目录时才轮到子 Agent。因此这里断言的是**这个决定
-    // 被钉住了**：一旦有人引入 `ctx.subagents`，这条测试会红，而那时该先回答「为什么需要独立
-    // 会话」——那是一个架构决定，不该顺手做掉。
+    // 被钉住了**：一旦有人真的调用它，这条测试会红，而那时该先回答「为什么需要独立会话」——
+    // 那是一个架构决定，不该顺手做掉。
     const offenders = []
     for (const file of await readdir(libDir)) {
       if (!file.endsWith('.js')) continue
-      const source = await readFile(join(libDir, file), 'utf8')
+      const source = stripComments(await readFile(join(libDir, file), 'utf8'))
       if (/subagents?\b/u.test(source)) offenders.push(file)
     }
     assert.deepEqual(offenders, [], '引入子 Agent 之前先回答：为什么进程内模型调用不够')

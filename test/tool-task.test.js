@@ -1658,6 +1658,26 @@ describe('只读角色收权 —— 派遣时收、回报时放', () => {
     assert.deepEqual(syncs.at(-1).readOnlyNodes, [])
   })
 
+  it('派遣消息里带上仍在等回报的派遣身份 —— 否则模型拿不到它要回报的东西', async () => {
+    // 活体实测发现的：`dispatch_id` 只在结构化产出里，而模型读的是渲染出来的文本。于是「回报结果
+    // 时必须带上派遣时发给你的 dispatch_id」这句要求，在工具这一侧是空的——子 agent 只能去读
+    // `.dsh/gac/tasks/<id>.json`。一条要求模型回报它看不见的东西的规则，等于制造一次必然失败的回报。
+    const h = dispatchHarness({ runtimeExecutors: [COMPLETES, STAYS_IN_PROGRESS] })
+    await createStandard(h)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    assert.match(value.message, /等待回报的派遣身份/u)
+    assert.match(value.message, /T2=REQ-1-T2-A1/u)
+  })
+
+  it('进程内执行者当场报完时，不把那串已经没用的身份塞进消息', async () => {
+    // 身份已经作废，列出来只是噪声——而噪声会让真正需要看见的那一条被跳过。
+    const h = dispatchHarness()
+    await createStandard(h)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    assert.doesNotMatch(value.message, /等待回报的派遣身份/u)
+  })
+
   it('适配器声明连 shell 一起收回时，那次请求带上 includeShell', async () => {
     const { guard, syncs } = recordingGuard()
     const h = dispatchHarness({
