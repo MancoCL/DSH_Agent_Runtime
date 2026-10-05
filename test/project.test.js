@@ -17,6 +17,7 @@ import { describe, it } from 'node:test'
 
 import {
   EXECUTION_MODES,
+  NON_TASK_MODES,
   ProjectAdapterError,
   RISK_LEVELS,
   isHighRiskPath,
@@ -305,6 +306,19 @@ describe('模式 / 风险表', () => {
 
   it('拒绝未知风险，而不是猜一个', () => {
     assert.throws(() => modeForRisk('severe'), ProjectAdapterError)
+  })
+
+  it('不建任务记录的模式恰好是 read_only 与 direct_edit', () => {
+    // E2E-1 说「删一个配置字段 → DIRECT_EDIT → 无任务、无子 Agent」。这条断言的落点就是这份
+    // 名单：它多一项，某个模式就会悄悄不再建任务记录；它少一项，本该直接做完的小改动会被
+    // 套上一整套流程仪式（适配计划 §33 的「流程放大」）。
+    assert.deepEqual([...NON_TASK_MODES], ['read_only', 'direct_edit'])
+    for (const mode of NON_TASK_MODES) {
+      assert.ok(EXECUTION_MODES.includes(mode), `${mode} 必须是执行模式阶梯里的一级`)
+    }
+    for (const mode of ['standard_task', 'high_risk_task']) {
+      assert.equal(NON_TASK_MODES.includes(mode), false, `${mode} 必须留下任务记录`)
+    }
   })
 })
 

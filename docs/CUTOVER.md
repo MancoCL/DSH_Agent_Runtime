@@ -46,7 +46,7 @@
 
 | ID | 场景 | 实际状态 |
 | --- | --- | --- |
-| E2E-1 | 删一个配置字段 → `DIRECT_EDIT`，无 `gac/task-created` 事件，零子 Agent | **部分验证**。在真实会话里验过 `direct_edit` 命中高风险路径会被升级为 `high_risk_task`（Phase 1）。「无 task-created 事件」在构造上成立（`direct_edit` 属 `NON_TASK_MODES`，不建任务），但**没有作为断言测过**；「零子 Agent」也未断言 |
+| E2E-1 | 删一个配置字段 → `DIRECT_EDIT`，无 `gac/task-created` 事件，零子 Agent | **部分验证，缺的两条断言已补（2026-10-05）**。真实会话里验过 `direct_edit` 命中高风险路径会被升级为 `high_risk_task`（Phase 1）。「无 `task-created` 事件」现在有三处断言：`NON_TASK_MODES` 恰好是 `read_only`/`direct_edit`、声明之后盘上连任务目录都没有、事件翻译对一次 `direct_edit` 只产出 `mode-declared`；「零子 Agent」也钉住了——`lib/` 里不出现 `subagents`，引入时会红。**仍未验的是端到端那一步**：需要在插件开启的真实会话里声明一次 `direct_edit`，而本机默认关闭、开关是否热生效不定（见 §4） |
 | E2E-2 | 普通 bugfix → `STANDARD_TASK` → Builder → Verifier | **已验证**。真实需求 `REQ-EVIDENCE-LIST` 完整走过 standard_task 的四个节点（实现 ∥ 测试 → 独立验证 → 审查 → 收口）。**注意**：方案写的事件名 `node-started`/`node-completed` **不存在**，实际事件是 `gac/node-dispatched`/`gac/node-reported` |
 | E2E-3 | 安全/持久化任务 → `HIGH_RISK_TASK`；Verification Design 与 Implementation **并发发起**；Verification 读实现晚于计划冻结；Review **六问齐备** | **仍未端到端验证，但「六问」这一格已补**。`lib/review.js` 把原模板的六问与五个质量维度逐字迁进来，登记时拒收未回答的报告、收口时拒收方向自反或留下阻塞问题的报告（`gac_task` 的 `review` 动作 + 收口门禁），审查节点的提示词里带上策略原文与清单。**仍未验证的两条**：「Verification Design ∥ Implementation 并发发起」**不是**我建的流程（我的并行情形是「功能代码 ∥ 测试代码」），以及从未真的跑过一次完整的 `high_risk_task` 端到端 |
 | E2E-4 | `write=["mod.c"]` 尝试写 `sub/mod.c` → deny，工具体未执行，`GAC_WRITE_SCOPE_DENIED` | **已验证**（Phase 0，真实会话）：越界写入被拒、shell 被拒，且**被拒的文件在盘上确实不存在**——这是「派遣前拦截」的证明 |
