@@ -24,6 +24,10 @@ node_modules/
 # 只追加的证据日志是运行时状态
 .dsh/gac/evidence/
 
+# 独立复核报告同样是运行时状态；漏掉这一条时它会以未跟踪文件的形式出现，
+# 而一次 `git add -A` 就会把运行时的复核结论当成源码提交进去
+.dsh/gac/reviews/
+
 # 操作系统噪音文件
 Thumbs.db
 .DS_Store
