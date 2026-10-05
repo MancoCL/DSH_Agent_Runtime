@@ -1,5 +1,10 @@
 # GAC Agent Architecture → DSH 适配执行方案
 
+> **这是当初的适配计划，不是当前事实清单。** 实际做完了什么、哪些判据改了、还差什么，看
+> [docs/CUTOVER.md](docs/CUTOVER.md)（逐项状态与诚实清单）与
+> [docs/ADR-0001-子会话执行载体.md](docs/ADR-0001-子会话执行载体.md)（节点执行载体的决策与活体验收）。
+> 本文保留原样，作为「当初打算怎么做、为什么这么打算」的记录。
+
 > 目标运行时：DeepSeek Harness / DSH 0.2.0-rc.2（桌面版 `resources/dsh`）
 > 载体形态：一个 DSH 原生插件包 `dsh-gac-runtime`
 > 核心结论：**大纲的架构方向与 DSH 的扩展面高度吻合，但有三处必须改写，否则会造出 DSH 里已经在跑的重复件。**
