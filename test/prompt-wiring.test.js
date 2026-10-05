@@ -122,6 +122,23 @@ describe('入口把系统提示段落挂上 systemPrompt', () => {
     assert.match(text, /gac_project/u)
   })
 
+  it('会话头带 parentSession 时，同一段落对子会话说的是另一套话（接线真的接到了）', async () => {
+    // 这一层最容易「写了但没接上」：`childFor` 要真的从宿主会话头读出「这是子会话」，段落才会换口径。
+    // 判据取会话头而不是取绑定——只读的子会话按设计不绑作用域，可它同样需要那套话。
+    const { ctx, seen } = createFakeContext({ sessionCwd: projectRoot })
+    await apply(ctx)
+    const section = seen.sections[0]
+
+    const childText = section.text({
+      agent: { session: { id: SESSION_ID, header: { parentSession: 'parent-1', origin: 'subagent' } } },
+    })
+    assert.match(childText, /被派遣的子会话/u)
+    assert.doesNotMatch(childText, /先用 gac_project/u)
+
+    const ownText = section.text({ agent: { session: { id: SESSION_ID, header: {} } } })
+    assert.match(ownText, /先用 gac_project/u, '本会话自己的口径一个字都没变')
+  })
+
   it('没有会话（全局装配）时拿到空串，而不是异常', async () => {
     const { ctx, seen } = createFakeContext({ sessionCwd: projectRoot })
     await apply(ctx)

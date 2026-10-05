@@ -371,6 +371,21 @@ describe('子会话执行者：起会话时绑、结束时放', () => {
     assert.match(outcome.detail, /已绑定写作用域 \[src\/\]/u)
   })
 
+  it('返回文本里带出结论节选 —— 父会话不必去翻证据才知道子会话说了什么', async () => {
+    const { bindings } = governed()
+    const long = '很长的结论。'.repeat(60)
+    const { service } = fakeSubagents(bindings, {
+      result: { structured: { status: 'completed', summary: long }, stopReason: 'completed' },
+    })
+    const executor = createChildExecutor({ subagentsFor: () => service, bindings })
+
+    const outcome = await executor.run(runInput())
+
+    assert.match(outcome.detail, /结论：/u)
+    assert.match(outcome.detail, /（截断）/u, '超长要明说截断了，而不是让读者以为那就是全部')
+    assert.ok(outcome.detail.length < long.length, '节选必须真的短于全文')
+  })
+
   it('执行者抛错时也要释放（finally 不是装饰）', async () => {
     const { bindings } = governed()
     const service = {
