@@ -18,7 +18,8 @@
   },
   "execution": {
     "require_contract": ["high_risk_task"],
-    "provider_routes": {}
+    "provider_routes": {},
+    "native_child_dispatch": true
   },
   "risk": {
     "high_risk_paths": [
