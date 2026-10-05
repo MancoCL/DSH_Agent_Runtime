@@ -30,6 +30,7 @@ GAC plugin      →  执行模式、写作用域、写占用声明、验证、�
 | 3 | `lib/capability-router.js` + `lib/executor.js` —— 派遣会真正调用 | 已完成 |
 | 4 | `lib/verification.js` —— 计划、反例与可追溯性门禁 | 已完成 |
 | 4 | 计划与证据门禁已接进 `gac_task` | 已完成 |
+| 4 | `lib/review.js` + `assets/ENGINEERING_POLICY.md` —— 独立复核：六问与五个质量维度 | 已完成，24 个测试 |
 | 5 | `lib/grilling.js` —— 多轮需求精化 | 已完成 |
 | 5 | `lib/contract.js` —— 接口契约冻结 | 已完成 |
 | 6 | `lib/evidence.js` + `lib/evidence-store.js` —— 由运行时签发的证据 | 已完成 |
@@ -401,6 +402,43 @@ gac_task { action: "plan", task_id: "REQ-1", criteria: ["AC1", "AC2"],
 
 ---
 
+### 独立复核：这次验证本身可不可信
+
+验证计划执行完了，还差一步：谁来回答「这次验证可不可信」。计划那三道门禁守的是**产物齐全**（覆盖、反例、证据），这一层守的是**产物可信**——一个齐全的验证过程仍然可能建立在「只跑了实现者自己写的测试」之上，而那种情况在数据上完全看不出来。
+
+复核报告必须逐条回答**验证独立性六问**与**工程质量五个维度**（词表来自原运行时的 `templates/review.json`，六条 key 逐字保留）：
+
+```text
+六问：builder_tests_only / expectations_from_requirement / falsification_present /
+      uncovered_criteria / verifier_reran_builder_tests_only / plan_modified_by_builder
+维度：reuse / duplication / unnecessary_abstraction / change_scope / dependency
+```
+
+```text
+gac_task { action: "review", task_id: "REQ-1", review_report: {
+  summary: "复核通过：契约、计划、证据三者对得上",
+  evidence: ["ev-12#V1"],                       # 可选；引用的号必须是运行时发过的
+  blocking_issues: [],                          # 非空即不能收口
+  engineering_quality: { reuse: "…", duplication: "无", unnecessary_abstraction: "无",
+                         change_scope: "…", dependency: "无" },
+  verification_independence: { builder_tests_only: false, expectations_from_requirement: true,
+                               falsification_present: true, uncovered_criteria: [],
+                               verifier_reran_builder_tests_only: false,
+                               plan_modified_by_builder: false } } }
+```
+
+三条性质是承重的：
+
+- **未回答不是一个答案。** `null` 与缺键在**登记**时就被拒——放它过去，会让一份没回答的复核看起来像一份答完的复核。这与 `all_criteria_covered` 同一个道理：门禁只能核对申报，所以申报必须存在。
+- **方向反了会被如实记下，并在收口时被拒。** 拒绝的是收口，不是那份记录：一份承认「验证只依赖了实现者自己的测试」的报告是有价值的事实，把它藏起来才是问题。修好之后重新复核会覆盖上一份——复核是对已完成的活儿的一次观察，后来的观察取代先前的观察。计划与契约相反：它们是**开工的输入**，改写会让已经照它们做出来的东西对着一份不存在的约定。
+- **触发条件按产物判，不按风险标签。** 计划里有承载审查能力的节点，或这个模式要求独立复核，收口才需要这份报告；标准任务里没有审查节点时，这一步不会凭空出现。
+
+收口被拒时给出的码是机器可分支的：`GAC_REVIEW_REPORT_MISSING`、`GAC_REVIEW_INDEPENDENCE_UNANSWERED`、`GAC_REVIEW_INDEPENDENCE_FAILED`（含「申报了未被覆盖的 AC」）、`GAC_REVIEW_QUALITY_MISSING`、`GAC_REVIEW_BLOCKING_ISSUES`、`GAC_REVIEW_EVIDENCE_NOT_FROM_RUNTIME`。
+
+**它核对的是申报，不是事实。** 运行时不读实现、也不读测试，判不了那些回答是不是真的；它做到的只有：回答必须存在、方向必须自洽、与同一份记录里的其他申报不能互相矛盾（例如「验收标准全覆盖」与「未覆盖 AC 列表非空」同时出现）。独立性真正的来源是信息路径——两份产物由同一个模型写出来时，六问照样能填绿（适配计划 §7 边界 5）。
+
+审查节点的执行者，系统提示里带的是 `assets/ENGINEERING_POLICY.md` 的**原文**（从原运行时逐字搬来，同一个 SHA-256），任务提示里则是六问与五个维度的清单——清单从 `lib/review.js` 的定义生成，只有一份，免得提示词与门禁核对的那份漂移。
+
 ### 需求精化（访谈 / grilling）
 
 这个回路由固定代码运行；问题由会话提出。「还有哪些决定没有做」是代码做不出的语义判断，所以**问题由会话提供**。但「跑了几轮、每轮覆盖了什么、收敛了没有、用户确认了吗」是事实，这些被记录在这里。模型思考；运行时作证。
@@ -573,7 +611,7 @@ GAC 把自己的事件追加到会话的事件日志里，并为每个类型注�
 ## 开发
 
 ```bash
-npm test          # 777 个测试，不需要 DSH
+npm test          # 816 个测试，不需要 DSH
 ```
 
 这些库模块是纯的、依赖注入的，正是为了让测试套件不需要 harness 就能跑。`test/entry.test.js` 另外断言了 Cordis 导出的形状，并断言没有任何模块在模块作用域里裸 import `@deepseek-ai/*` 包（那会在求值期间抛错，早于任何插件代码来得及报告原因）。
@@ -591,9 +629,11 @@ lib/
   gac-events.js      GAC 会话事件：词汇表、归约器、投影（纯函数）
   evidence.js        运行时签发的证据记录与引用（纯函数）
   evidence-store.js  只追加的 JSONL 日志；证据号由运行时签发
+  engineering-policy.js  把 assets/ENGINEERING_POLICY.md 原文读给审查者
   metrics.js         对证据与任务做归约（纯函数）
   coordinator.js     任务 DAG、就绪判定、状态迁移（纯函数）
   grilling.js        多轮需求精化（纯函数）
+  review.js          独立复核：六问与五个质量维度的门禁（纯函数）
   task-store.js      持久化存储，一份任务一个文件，含计划与加载时重新校验
   tool-task.js       gac_task 工具
   tool-metrics.js    只读的 gac_metrics 工具

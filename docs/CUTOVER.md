@@ -25,7 +25,7 @@
 | --- | --- | --- |
 | `PROTOCOL.md` 流程语义 | → 协调器状态机 | **已完成**（`lib/coordinator.js`） |
 | `PROTOCOL.md` 流程语义 | → `systemPrompt.section` 文本 | **已完成（刻意收窄）**。`lib/prompt-section.js` 注入 `gac:protocol`（order 700）：工程已纳管就发声，段落只讲**状态**（当前模式与理由、当前写范围、证据号出口），不重述模式阶梯与写范围语义——那两处在工具描述里，抄第二份就是两处会各自漂移的副本。未纳管且什么都没声明时整段消失。**实测**（2026-10-04）：本会话的 `system/message` 节点里确实带上了这段文本 |
-| `ENGINEERING_POLICY.md` | 原文保留，作 Reviewer 的 system prompt 素材 | **未做** |
+| `ENGINEERING_POLICY.md` | 原文保留，作 Reviewer 的 system prompt 素材 | **已完成**。逐字复制到 `assets/ENGINEERING_POLICY.md`（与原文件同一个 SHA-256，未改写一个字），由 `lib/engineering-policy.js` 读出，进审查节点的**系统提示**（`lib/executor.js`）；读不到时只少这一段并在提示里说明，不让审查节点跑不起来 |
 | `routing.py` 就绪节点判定 | → 协调器 | **已完成**（`resolveReady`） |
 | `routing.py` 能力路由 | **删掉**（复用 DSH） | **偏离**：新建了 `lib/capability-router.js`。理由是适配器用 `executors` 声明「谁承载哪种能力」，而 DSH 现成的三件物表达不了这件事。这是对 §3.2 的**有意偏离**，不是遗漏——但它确实是偏离 |
 | `routing.py` 并行判定 | → 纯函数 | **已完成**（同批判定 + 写范围相交排除） |
@@ -36,7 +36,7 @@
 | `memory.py` / `MEMORY.md` | scope 分类保留，接薄 memory 层 | **未做** |
 | `hook-entry.py` + Claude Code hooks | **退役** | 本仓库不适用（从未挂载） |
 | `workflow.py` CLI | 退役 | 本仓库不适用 |
-| `templates/*.json` | 保留为插件内 schema | **未做**。本仓库用自己的 schema（验证计划、契约、事件载荷），没有沿用旧模板 |
+| `templates/*.json` | 保留为插件内 schema | **部分完成**。`templates/review.json` 的 `verification_independence` 六条 key 与 `engineering_quality` 五个维度**逐字**迁进 `lib/review.js`（见 §3 E2E-3）；`verification-plan.json` 的语义已在 `lib/verification.js`；其余模板（`requirement` / `invocation` / `memory` / `approval` / `result` / `tasks` / `verification` / `adr`）**未**沿用——本仓库用自己的 schema，其中 `invocation` 与 `memory` 两行本来就标着「部分」与「未做」 |
 | `.claude/workflow/tasks/**` | **只读归档**，不重写 | **本仓库未触碰**（按 §0 的决定） |
 | `tests/`（Python 回归） | 迁移为插件侧测试 | **精神上完成**：671 条 JS 测试覆盖同类断言；但**不是**逐条迁移，schema 门禁断言未按原样搬过来 |
 
@@ -48,7 +48,7 @@
 | --- | --- | --- |
 | E2E-1 | 删一个配置字段 → `DIRECT_EDIT`，无 `gac/task-created` 事件，零子 Agent | **部分验证**。在真实会话里验过 `direct_edit` 命中高风险路径会被升级为 `high_risk_task`（Phase 1）。「无 task-created 事件」在构造上成立（`direct_edit` 属 `NON_TASK_MODES`，不建任务），但**没有作为断言测过**；「零子 Agent」也未断言 |
 | E2E-2 | 普通 bugfix → `STANDARD_TASK` → Builder → Verifier | **已验证**。真实需求 `REQ-EVIDENCE-LIST` 完整走过 standard_task 的四个节点（实现 ∥ 测试 → 独立验证 → 审查 → 收口）。**注意**：方案写的事件名 `node-started`/`node-completed` **不存在**，实际事件是 `gac/node-dispatched`/`gac/node-reported` |
-| E2E-3 | 安全/持久化任务 → `HIGH_RISK_TASK`；Verification Design 与 Implementation **并发发起**；Verification 读实现晚于计划冻结；Review **六问齐备** | **未验证**。从未端到端跑过一次 `high_risk_task`；「Verification Design ∥ Implementation 并发」**不是**我建的流程（我的并行情形是「功能代码 ∥ 测试代码」）；「Review 六问」**不存在**——审查节点是自由格式的报告 |
+| E2E-3 | 安全/持久化任务 → `HIGH_RISK_TASK`；Verification Design 与 Implementation **并发发起**；Verification 读实现晚于计划冻结；Review **六问齐备** | **仍未端到端验证，但「六问」这一格已补**。`lib/review.js` 把原模板的六问与五个质量维度逐字迁进来，登记时拒收未回答的报告、收口时拒收方向自反或留下阻塞问题的报告（`gac_task` 的 `review` 动作 + 收口门禁），审查节点的提示词里带上策略原文与清单。**仍未验证的两条**：「Verification Design ∥ Implementation 并发发起」**不是**我建的流程（我的并行情形是「功能代码 ∥ 测试代码」），以及从未真的跑过一次完整的 `high_risk_task` 端到端 |
 | E2E-4 | `write=["mod.c"]` 尝试写 `sub/mod.c` → deny，工具体未执行，`GAC_WRITE_SCOPE_DENIED` | **已验证**（Phase 0，真实会话）：越界写入被拒、shell 被拒，且**被拒的文件在盘上确实不存在**——这是「派遣前拦截」的证明 |
 | E2E-5 | 两节点共享独占资源 → 第二个节点的派遣被拒，理由含持有者 `dispatch_id` | **未按规格实现**。占用声明被用于**同批判定**（写范围相交的节点不进同一批，于是串行）与 `gac_scope` 的声明冲突；**派遣本身不查占用声明**，因此不存在「拒绝派遣并指出持有者的 dispatch_id」。现有行为（串行而非拒绝）可能更好，但它**不是**被断言的那个行为 |
 | E2E-6 | 验证者试图写产品代码 → 其 `pwsh`/`write` 已被 `tools.restrict` 收回，返回 `UNKNOWN_TOOL` | **未实现**。`ctx.tools.restrict` **从未被调用**。进程内执行者在结构上就没有写入工具（因此只读节点确实写不了），但**会话内执行的验证者没有任何收权** |
@@ -93,7 +93,7 @@
 3. **E2E-5 语义与规格不同。** 串行与拒绝是两种不同的保证，文档必须说清是哪种。
 4. **PTC 被整体拒绝。** 任何依赖 `run_code` 的流程在作用域下无法运行。
 5. ~~**witness 替代品缺失。** 变更证据只有工具调用，没有工作区差异比对。~~ **已补（任务 `REQ-WITNESS`）**：`lib/workspace-witness.js` + 入口订阅，变更集按已声明写作用域归属，越界影响证据可用性但不阻断调用。**仍未证明的**：这一层在本机 profile 下收不到任何事件（生产者未装配，见 §4），所以它的单测覆盖的是契约行为，不是线上行为；它的独立验证（原计划的 W3）也还没有做。
-6. **独立性未证明。** 契约起了作用，但两边出自同一个作者。
+6. **独立性未证明。** 契约起了作用，但两边出自同一个作者。`lib/review.js` 现在把这一点变成了**必须回答的六问**，可它核对的是申报而不是事实：同一个模型写出来的两份产物，六问照样能填绿。要让这条从「填了」变成「成立」，需要的是不同的信息路径（不同 system prompt、不同 messages、不同执行顺序），不是再加一道门禁。
 7. **从未交付过一个不是自己编的需求。** 上面每一条门禁都拦住过我，但拦住的**都是我自己写下的
    缺陷**。这证明的是「门禁能工作」，还没证明「门禁能拦住别人」。
 

@@ -100,7 +100,7 @@ describe('工具形状', () => {
     const store = new TaskStore({ root: scratch() })
     const options = taskToolOptions({ taskStoreFor: () => store, sessionRootFor: () => store.root })
     assert.deepEqual([...options.parameters.action.enum], [
-      'create', 'grill', 'contract', 'plan', 'advance', 'reopen', 'status', 'list', 'complete',
+      'create', 'grill', 'contract', 'plan', 'advance', 'reopen', 'review', 'status', 'list', 'complete',
     ])
     for (const [name, spec] of Object.entries(options.parameters)) {
       assert.equal(Object.hasOwn(spec, 'required'), false, `${name} 不应带 required 键`)
@@ -350,6 +350,38 @@ function dispatchHarness(options = {}) {
  */
 function evidenceRecord(id, overrides = {}) {
   return { schema_version: 1, id, tool: 'pwsh', is_error: false, exit_code: 0, ...overrides }
+}
+
+/**
+ * 一份六问齐备、五个维度都有结论的复核报告草稿。
+ *
+ * 只填 `compileReviewReport` 真正会核对的字段，理由与 `evidenceRecord` 相同：手写一份完整记录
+ * 只会与定义悄悄走样。
+ *
+ * @param {object} [overrides]
+ * @returns {object}
+ */
+function reviewDraft(overrides = {}) {
+  return {
+    summary: '复核通过',
+    blocking_issues: [],
+    engineering_quality: {
+      reuse: '无',
+      duplication: '无',
+      unnecessary_abstraction: '无',
+      change_scope: '无',
+      dependency: '无',
+    },
+    verification_independence: {
+      builder_tests_only: false,
+      expectations_from_requirement: true,
+      falsification_present: true,
+      uncovered_criteria: [],
+      verifier_reran_builder_tests_only: false,
+      plan_modified_by_builder: false,
+    },
+    ...overrides,
+  }
 }
 
 describe('advance 真的调用执行者', () => {
@@ -697,6 +729,13 @@ describe('验证证据门禁 —— 收口要看证据', () => {
     }, h.exec)
     await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
     await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
+    // 高风险流程现在多一步：收口前必须有独立复核报告。放在这个助手里面，是因为本组用例测的是
+    // 验证证据那一关，而不是「有没有复核」——复核自己有单独一组用例。
+    await h.tool.execute({
+      action: 'review',
+      task_id: 'REQ-HR',
+      review_report: reviewDraft(),
+    }, h.exec)
     return h.store.loadPlan('REQ-HR')
   }
 
@@ -1328,6 +1367,212 @@ describe('验证证据门禁 —— 触发条件是「计划在不在」，不�
     }, h.exec)
     assert.equal(value.action, 'complete_refused')
     assert.deepEqual(value.blockers, ['GAC_VERIFICATION_PLAN_MISSING'])
+  })
+})
+
+describe('独立复核门禁 —— 六问齐备才能收口', () => {
+  /**
+   * 一个含审查节点的高风险任务，推到全部节点完成；给了报告就先登记一份。
+   *
+   * 计划里放一个 `review` 节点是有意的：这一关的触发条件之一是「计划里有承载审查能力的节点」，
+   * 而那正是通用规则（不看工程怎么声明）。
+   *
+   * @param {object} h
+   * @param {object|undefined} report
+   * @returns {Promise<object>} 已冻结的验证计划。
+   */
+  async function reachReviewable(h, report) {
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-R',
+      mode: 'high_risk_task',
+      plan: {
+        nodes: [
+          { id: 'T1', objective: '实现', required_capabilities: ['implementation'], write_scope: ['src/'] },
+          { id: 'T2', objective: '验证', depends_on: ['T1'], required_capabilities: ['verification'], write_scope: [] },
+          { id: 'T3', objective: '复核', depends_on: ['T2'], required_capabilities: ['review'], write_scope: [] },
+        ],
+      },
+    }, h.exec)
+    await h.tool.execute({
+      action: 'plan',
+      task_id: 'REQ-R',
+      criteria: ['AC1'],
+      verification_plan: {
+        cases: [
+          { id: 'V1', covers: ['AC1'], type: 'positive', expect: 'x' },
+          { id: 'V2', covers: ['AC1'], type: 'falsification', expect_failure: 'y' },
+        ],
+      },
+    }, h.exec)
+    for (let round = 0; round < 3; round += 1) {
+      await h.tool.execute({ action: 'advance', task_id: 'REQ-R' }, h.exec)
+    }
+    if (report !== undefined) {
+      await h.tool.execute({ action: 'review', task_id: 'REQ-R', review_report: report }, h.exec)
+    }
+    return h.store.loadPlan('REQ-R')
+  }
+
+  /**
+   * 收口时附上的验证证据：与计划对得上，且每条用例各有自己的明细。
+   *
+   * @param {object} plan
+   * @returns {Promise<object>}
+   */
+  async function completeBody(plan) {
+    const { planId } = await import('../lib/verification.js')
+    return {
+      all_criteria_covered: true,
+      verification: {
+        plan_id: planId(plan),
+        executions: [
+          { case_id: 'V1', outcome: 'passed', evidence_ref: 'ev-1#正例' },
+          { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-1#反例' },
+        ],
+      },
+    }
+  }
+
+  /**
+   * 一个能承载审查节点的 harness。
+   *
+   * 适配器必须声明 review 的执行者：能力路由是从工程声明里查的，没声明就派不出去。
+   *
+   * @param {object} [options]
+   * @returns {object}
+   */
+  function reviewHarness(options = {}) {
+    return dispatchHarness({
+      executors: { implementation: ['builder'], verification: ['verifier'], review: ['reviewer'] },
+      evidence: [evidenceRecord('ev-1')],
+      ...options,
+    })
+  }
+
+  it('计划里有审查节点时，没有复核报告就不能收口', async () => {
+    const h = reviewHarness()
+    const plan = await reachReviewable(h, undefined)
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-R',
+      evidence: await completeBody(plan),
+    }, h.exec)
+    assert.equal(value.action, 'complete_refused')
+    assert.deepEqual(value.blockers, ['GAC_REVIEW_REPORT_MISSING'])
+    assert.match(value.message, /T3/u)
+  })
+
+  it('复核自己申报了「只依赖 Builder 的测试」时收口被拒，并指名是哪一问', async () => {
+    // 报的是**已经记录在案的事实**：改口改不掉，能做的是把活儿修好再复核一次。
+    const h = reviewHarness()
+    const plan = await reachReviewable(h, reviewDraft({
+      verification_independence: {
+        ...reviewDraft().verification_independence,
+        builder_tests_only: true,
+      },
+    }))
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-R',
+      evidence: await completeBody(plan),
+    }, h.exec)
+    assert.equal(value.action, 'complete_refused')
+    assert.equal(value.blockers.includes('GAC_REVIEW_INDEPENDENCE_FAILED'), true)
+    assert.match(value.message, /只依赖了 Builder 自己写的测试/u)
+  })
+
+  it('复核申报了未覆盖的验收标准时收口被拒，并列出那些标准', async () => {
+    const h = reviewHarness()
+    const plan = await reachReviewable(h, reviewDraft({
+      verification_independence: {
+        ...reviewDraft().verification_independence,
+        uncovered_criteria: ['AC2'],
+      },
+    }))
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-R',
+      evidence: await completeBody(plan),
+    }, h.exec)
+    assert.equal(value.action, 'complete_refused')
+    assert.match(value.message, /AC2/u)
+  })
+
+  it('六问没答完时，报告根本登记不进去', async () => {
+    // 一份缺答案的复核不该变成一个可被引用的产物——那会让「答了没有」这件事事后无从核对。
+    const h = reviewHarness()
+    await reachReviewable(h, undefined)
+    const partial = reviewDraft()
+    delete partial.verification_independence.falsification_present
+    await assert.rejects(
+      () => h.tool.execute({ action: 'review', task_id: 'REQ-R', review_report: partial }, h.exec),
+      (error) => error.code === 'GAC_REVIEW_INDEPENDENCE_UNANSWERED',
+    )
+    assert.equal(h.store.hasReview('REQ-R'), false)
+  })
+
+  it('六问齐备且方向都对时收口通过', async () => {
+    const h = reviewHarness()
+    const plan = await reachReviewable(h, reviewDraft())
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-R',
+      evidence: await completeBody(plan),
+    }, h.exec)
+    assert.equal(value.action, 'completed')
+    assert.equal(h.store.load('REQ-R').status, 'completed')
+  })
+
+  it('修好之后重新复核会覆盖上一份，收口随之通过', async () => {
+    // 复核是「对已完成的活儿的一次观察」，后来的观察取代先前的观察——因此这里允许覆盖，而计划
+    // 与契约不允许。若在这里拒绝覆盖，唯一的出路是删掉那份说真话的报告，那恰好是门禁要防的。
+    const h = reviewHarness()
+    const plan = await reachReviewable(h, reviewDraft({
+      blocking_issues: ['并行写入没有契约'],
+    }))
+    const refused = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-R',
+      evidence: await completeBody(plan),
+    }, h.exec)
+    assert.equal(refused.action, 'complete_refused')
+    assert.equal(refused.blockers.includes('GAC_REVIEW_BLOCKING_ISSUES'), true)
+
+    await h.tool.execute({ action: 'review', task_id: 'REQ-R', review_report: reviewDraft() }, h.exec)
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-R',
+      evidence: await completeBody(plan),
+    }, h.exec)
+    assert.equal(value.action, 'completed')
+  })
+
+  it('复核引用了运行时没发过的证据号时收口被拒', async () => {
+    const h = reviewHarness()
+    const plan = await reachReviewable(h, reviewDraft({ evidence: ['ev-999#AC1'] }))
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-R',
+      evidence: await completeBody(plan),
+    }, h.exec)
+    assert.equal(value.action, 'complete_refused')
+    assert.equal(value.blockers.includes('GAC_REVIEW_EVIDENCE_NOT_FROM_RUNTIME'), true)
+    assert.match(value.message, /ev-999/u)
+  })
+
+  it('标准任务没有审查节点时，这一关不凭空扩大', async () => {
+    // 门禁守的是它所守护的那件东西：没有审查节点的标准任务不该多出一步仪式。
+    const h = dispatchHarness({ evidence: [evidenceRecord('ev-1')] })
+    await createStandard(h)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-1',
+      evidence: { all_criteria_covered: true },
+    }, h.exec)
+    assert.equal(value.action, 'completed')
   })
 })
 
