@@ -90,17 +90,19 @@ plugin_manager { action: install_bundle, target: "<this directory>" }
 
   **不要**用 `root: ["."]`。watch root 是相对 `baseDir` 解析的，而 `baseDir` 是 profile 目录（`dsh-hmr/lib/index.js:319`），所以 `"."` 监视的是 profile，永远不会是插件——插件是从它外面链接进来的。这条曾经是本文件给出的建议，而它是错的：它看起来像是配置好了，实际什么都没改。
 
-- **改它之前先把插件关掉。** watch root 放宽之后，每一笔对 `lib/*.js` 的写入都会热重载进宿主进程——也就是模型正在其中工作的那个进程。半成品代码于是直接生效：一道拒绝一切的写作用域门禁，或一个在装配期间抛错的提示 provider，会把本来用来修它的那些工具拿走。安全循环如下，2026-10-04 实测：
+- **本插件默认不启用；只在需要实测时打开。** 本仓库开发的就是它，而 watch root 放宽之后，每一笔对 `lib/*.js` 的写入都会热重载进宿主进程——也就是模型正在其中工作的那个进程。半成品代码于是直接生效：一道拒绝一切的写作用域门禁，或一个在装配期间抛错的提示 provider，会把本来用来修它的那些工具拿走。所以开关只有一处，用脚本：
 
-  ```yaml
-  # ~/.dsh/profiles/<profile>/cordis.patch.yml
-  - id: gac-runtime
-    disabled: true      # 插件实时卸载；报告里会记下 plugin-unloaded
+  ```bash
+  npm run plugin:status   # 现在开着没有（唯一可信的状态来源）
+  npm run plugin:on       # 打开：只为了跑一次真实会话（E2E 验收）
+  npm run plugin:off      # 测完关回去——本项目的默认状态
   ```
 
-  编辑 `lib/*.js`，跑测试套件，然后再把 `disabled: false` 设回去。本文件以前声称重新启用只会重跑 `apply`、继续执行启动时载入的代码，因此重启是让改动生效的唯一途径。**在 watch root 放宽之后**，那是错的：被监视的文件一变，HMR 就替换模块缓存，所以重新启用会导入新模块。实测而非推理：在一次禁用 → 编辑 → 重新启用的循环之后，加载报告带上了新代码自己的字段（`prompt-section-registered`），没有重启。
+  开关就是 profile patch 里 `- id: gac-runtime` 的 `disabled:` 一行；脚本只动这一行，其余字节原样保留（`scripts/plugin-switch.js`，纯变换有单测，`test/plugin-switch.test.js`）。打开会立刻生效（HMR 重载，无需重启），加载报告里出现 `plugin-loaded`；关闭出现 `plugin-unloaded`。
 
-  安全循环的代价：插件声明过的模式与作用域都在内存里，卸载即丢失（任务记录在盘上，不丢）。所以在插件自己的门禁代码正被编辑的这段时间里，没有任何任务能被插件*管辖*——见 [docs/CUTOVER.md](docs/CUTOVER.md) §6。
+  三条纪律：**开着的时候不要改 `lib/*.js`**；**打开之后记得关回去**；**别凭记忆判断状态**，用 `plugin:status`。本文件以前声称重新启用只会重跑 `apply`、继续执行启动时载入的代码，因此重启是让改动生效的唯一途径。**在 watch root 放宽之后**，那是错的：被监视的文件一变，HMR 就替换模块缓存，所以重新启用会导入新模块。实测而非推理：在一次禁用 → 编辑 → 重新启用的循环之后，加载报告带上了新代码自己的字段（`prompt-section-registered`），没有重启。
+
+  默认关闭的代价是明确的：插件声明过的模式与作用域都在内存里，卸载即丢失（任务记录在盘上，不丢）。所以插件关着的时候，没有任何任务能被插件*管辖*——门禁、提示段落与 `gac_*` 工具都不在。**那是默认状态，不是故障**；见 [docs/CUTOVER.md](docs/CUTOVER.md) §6。
 
 - 因为它是链接，本插件保留自己的 `node_modules`，无法裸 import `@deepseek-ai/*`。`lib/resolve-dsh.js` 转而从 profile 目录解析它们。
 
@@ -110,6 +112,7 @@ plugin_manager { action: install_bundle, target: "<this directory>" }
 
 - `dsh-gac-runtime` 已作为指向本目录的链接装进 `core-020` profile。
 - `~/.dsh/profiles/core-020/cordis.patch.yml` 带着上面的 `hmr` 覆盖项。该文件旁边躺着一份带时间戳的备份。
+- 同一个文件里 `- id: gac-runtime` 是 `disabled: true`——这是本项目的**默认状态**，不是待修的故障。要实测时用 `npm run plugin:on`，测完 `npm run plugin:off`。
 
 仍然需要重启的：对 `package.json`、`cordis.patch.yml` 的改动，或任何会改变已注册插件或工具集合的改动。
 
