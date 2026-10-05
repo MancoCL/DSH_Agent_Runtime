@@ -23,6 +23,7 @@ import {
   describeChildSeam,
   needsChildSession,
   parentDelegationDepth,
+  roleToolFilterFor,
 } from '../lib/child-executor.js'
 
 /** 一个够用的节点。 */
@@ -88,6 +89,86 @@ function runInput(overrides = {}) {
     ...overrides,
   }
 }
+
+describe('角色工具面', () => {
+  const INHERITABLE = ['read', 'glob', 'grep', 'pwsh', 'write', 'edit', 'subagent', 'subagent_fork', 'gac_task', 'gac_scope', 'gac_evidence']
+
+  it('要写文件的节点保留写入工具，只去掉委派与父会话协调类', () => {
+    const filter = roleToolFilterFor(node(), INHERITABLE)
+    assert.deepEqual([...filter.deny].sort(), ['gac_evidence', 'gac_scope', 'gac_task', 'subagent', 'subagent_fork'])
+    assert.equal(filter.deny.includes('write'), false, 'Builder 必须能写文件')
+    assert.equal(filter.deny.includes('pwsh'), false, 'Builder 要能跑命令')
+  })
+
+  it('写范围为空的节点连写入工具一并去掉 —— 这才是「清单里根本没有 write」', () => {
+    const filter = roleToolFilterFor(node({ write_scope: [] }), INHERITABLE)
+    assert.ok(filter.deny.includes('write'))
+    assert.ok(filter.deny.includes('edit'))
+    // 但 shell 留着：验证者要靠它逐条执行计划用例，那一层另有守卫兜底。
+    assert.equal(filter.deny.includes('pwsh'), false)
+  })
+
+  it('只点名列在可收集合里的名字 —— 点错一个名字会让整次子会话创建失败', () => {
+    // `SubagentStartRequest.toolFilter` 被直接交给创建窗口里的 `childCtx.tools.restrict()`，
+    // 它对不认识的名字抛错（实测原文：`names unknown global tools "spawn_teammate", …`）。
+    const filter = roleToolFilterFor(node({ write_scope: [] }), ['read', 'write', 'gac_task'])
+    assert.deepEqual([...filter.deny].sort(), ['gac_task', 'write'])
+  })
+
+  it('读不出可收集合时不设工具面（调用方要把这件事记进结果）', () => {
+    assert.equal(roleToolFilterFor(node(), undefined), undefined)
+    assert.equal(roleToolFilterFor(node({ write_scope: [] }), undefined), undefined)
+    // 可收集合里没有该点名的东西 → 也返回 undefined，而不是塞一个空的 deny（空过滤器会被宿主拒绝）。
+    assert.equal(roleToolFilterFor(node(), ['read', 'pwsh']), undefined)
+  })
+
+  it('派遣请求里带上工具面，并且它进的是子会话的创建窗口', async () => {
+    const { service, starts } = fakeSubagents()
+    const executor = createChildExecutor({
+      subagentsFor: () => service,
+      namesFor: () => INHERITABLE,
+    })
+    await executor.run(runInput())
+    assert.ok(Array.isArray(starts[0].request.toolFilter.deny))
+    assert.equal(starts[0].request.toolFilter.deny.includes('write'), false)
+    assert.ok(starts[0].request.toolFilter.deny.includes('gac_task'))
+  })
+
+  it('工具面被宿主拒绝时退到无过滤重试，并把「这一层没生效」写进结果', async () => {
+    // 静默降级是最坏的形态：读的人会以为模型面里已经没有写入工具，而其实只剩守卫。
+    const starts = []
+    let calls = 0
+    const service = {
+      list: () => ['spawn'],
+      getProvider: () => ({ capabilities: { agentOptions: true, outputSchema: true, depthLimit: true } }),
+      start: async (_provider, request) => {
+        calls += 1
+        if (calls === 1) throw new Error('tools.restrict() names unknown global tools "spawn_teammate"')
+        starts.push(request)
+        return {
+          id: 'child-session-2',
+          result: Promise.resolve({ structured: { status: 'completed', summary: '做完了' }, stopReason: 'completed' }),
+          dispose: async () => {},
+        }
+      },
+    }
+    const executor = createChildExecutor({ subagentsFor: () => service, namesFor: () => INHERITABLE })
+    const outcome = await executor.run(runInput())
+    assert.equal(outcome.status, 'completed')
+    assert.equal(Object.hasOwn(starts[0], 'toolFilter'), false, '重试时不该再带工具面')
+    assert.match(outcome.detail, /角色工具面未生效/u)
+  })
+
+  it('既不是「未生效」也不是「名字不认识」的抛错，照样按失败上报（不吞）', async () => {
+    const service = {
+      list: () => ['spawn'],
+      getProvider: () => ({ capabilities: { agentOptions: true, outputSchema: true, depthLimit: true } }),
+      start: async () => { throw new Error('宿主内部错误') },
+    }
+    const executor = createChildExecutor({ subagentsFor: () => service, namesFor: () => INHERITABLE })
+    await assert.rejects(() => executor.run(runInput()), /宿主内部错误/u)
+  })
+})
 
 describe('委派深度上限是相对的', () => {
   it('上限 = 调用方深度 + 1：根会话（0）得到 1，深度 1 的调用方得到 2', () => {
@@ -157,10 +238,12 @@ describe('判定谁该由子会话承载', () => {
     assert.equal(needsChildSession(undefined), false)
   })
 
-  it('supports 只认要写文件的节点', () => {
+  it('承载所有节点：写文件的与只读的都跑独立会话，差别体现在工具面上', () => {
+    // 阶段 2 起 Verifier / Reviewer 也跑独立会话——「独立验证」的实质是独立 session identity、独立
+    // 上下文、独立工具面，而不是把同一个会话换个 prompt。角色差别由 `roleToolFilterFor` 表达。
     const executor = createChildExecutor({ subagentsFor: () => fakeSubagents().service })
     assert.equal(executor.supports(node()), true)
-    assert.equal(executor.supports(node({ write_scope: [] })), false)
+    assert.equal(executor.supports(node({ write_scope: [] })), true)
   })
 })
 
