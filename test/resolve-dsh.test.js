@@ -8,6 +8,9 @@
  */
 
 import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, it } from 'node:test'
 
 import {
@@ -67,6 +70,39 @@ describe('candidateAnchors', () => {
 })
 
 describe('resolveWithDiagnostics', () => {
+  it('报出成功的那一个锚点，而不只是「解析成功」', () => {
+    // 早先只返回解析结果与**失败**的尝试列表，于是调用方无从知道是哪个锚点起了作用，诊断脚本
+    // 因此把成功的那一个当成「未走到」打印出来——诊断里最要紧的一条信息正好指错了地方。
+    const root = mkdtempSync(join(tmpdir(), 'gac-resolve-'))
+    try {
+      mkdirSync(join(root, 'node_modules', 'fake-pkg'), { recursive: true })
+      writeFileSync(join(root, 'node_modules', 'fake-pkg', 'package.json'), '{"name":"fake-pkg","main":"index.js"}')
+      writeFileSync(join(root, 'node_modules', 'fake-pkg', 'index.js'), 'export const ok = true\n')
+      const anchor = join(root, 'package.json')
+      writeFileSync(anchor, '{}')
+
+      const { resolved, anchor: succeededAt, attempts } = resolveWithDiagnostics('fake-pkg', [
+        join(root, 'definitely-missing.json'),
+        anchor,
+      ])
+      assert.match(resolved, /fake-pkg/u)
+      assert.equal(succeededAt, anchor, '必须报出真正起作用的那个锚点')
+      // 成功的锚点不该同时出现在失败列表里——两处都报会让人以为它既成功又失败。
+      assert.deepEqual(attempts.map((entry) => entry.anchor), [join(root, 'definitely-missing.json')])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('失败时没有 anchor，免得调用方把它当成「在哪儿成功过」', () => {
+    const { resolved, anchor } = resolveWithDiagnostics(
+      '@deepseek-ai/definitely-not-a-real-package',
+      [process.execPath],
+    )
+    assert.equal(resolved, undefined)
+    assert.equal(anchor, undefined)
+  })
+
   it('从一个真实锚点解析出一个真实的包', () => {
     const found = candidateAnchors().find((anchor) => {
       const { resolved } = resolveWithDiagnostics('@deepseek-ai/dsh-tools', [anchor])
