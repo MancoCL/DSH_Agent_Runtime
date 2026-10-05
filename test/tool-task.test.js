@@ -316,6 +316,9 @@ function dispatchHarness(options = {}) {
       implementation: ['builder'],
       verification: ['verifier'],
     },
+    // 适配器上额外的字段（例如 execution 那一节）：合并进来而不是让每个用例各造一份适配器，
+    // 是为了让「工具读到适配器的哪个字段」这件事只有一处。
+    ...(options.adapterExtras ?? {}),
   }
   /** 造一个会记录调用并报完成的执行者。 */
   const make = (name, summary) => ({
@@ -334,6 +337,7 @@ function dispatchHarness(options = {}) {
     adapterFor: () => adapters,
     executorsFor: () => executors,
     evidenceFor: () => options.evidence ?? [],
+    ...(options.roleGuard === undefined ? {} : { roleGuard: options.roleGuard }),
   })
   return { tool, store, exec: { agent: { session: { id: 'session-1' } } }, calls }
 }
@@ -1573,6 +1577,113 @@ describe('独立复核门禁 —— 六问齐备才能收口', () => {
       evidence: { all_criteria_covered: true },
     }, h.exec)
     assert.equal(value.action, 'completed')
+  })
+})
+
+describe('只读角色收权 —— 派遣时收、回报时放', () => {
+  /** 一个「派给会话、停在 in_progress」的执行者：只读节点的常态。 */
+  const STAYS_IN_PROGRESS = {
+    name: 'verifier',
+    supports: () => true,
+    run: async () => ({ status: 'in_progress', summary: '等待会话执行' }),
+  }
+
+  /** 一个立刻报完成的执行者，用来让实现节点走完。 */
+  const COMPLETES = {
+    name: 'builder',
+    supports: () => true,
+    run: async () => ({ status: 'completed', summary: '实现完成' }),
+  }
+
+  /**
+   * 一个记下每次收权请求的假收权器。
+   *
+   * @returns {{guard: object, syncs: object[]}}
+   */
+  function recordingGuard() {
+    const syncs = []
+    return { guard: { sync: (input) => { syncs.push(input) } }, syncs }
+  }
+
+  it('派遣停在会话里的只读节点之后，按空的写范围收权', async () => {
+    const { guard, syncs } = recordingGuard()
+    const h = dispatchHarness({ roleGuard: guard, runtimeExecutors: [COMPLETES, STAYS_IN_PROGRESS] })
+    await createStandard(h)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    // 第一波只有 T1（实现）；T2 依赖它，所以此刻没有只读节点在飞。
+    assert.deepEqual(syncs.at(-1).readOnlyNodes, [])
+
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    const last = syncs.at(-1)
+    assert.deepEqual(last.readOnlyNodes, ['T2'], '验证节点声明了空写范围，因此要收权')
+    assert.equal(last.taskId, 'REQ-1')
+    assert.equal(last.sessionId, 'session-1')
+    assert.equal(last.includeShell, false, 'shell 默认不收：验证者要靠它跑用例')
+  })
+
+  it('回报之后收权解除 —— 不能把会话永久关在写入之外', async () => {
+    const { guard, syncs } = recordingGuard()
+    const h = dispatchHarness({ roleGuard: guard, runtimeExecutors: [COMPLETES, STAYS_IN_PROGRESS] })
+    await createStandard(h)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    assert.deepEqual(syncs.at(-1).readOnlyNodes, ['T2'])
+
+    await h.tool.execute({
+      action: 'advance',
+      task_id: 'REQ-1',
+      report: { node_id: 'T2', dispatch_id: 'REQ-1-T2-A1', status: 'completed' },
+    }, h.exec)
+    assert.deepEqual(syncs.at(-1).readOnlyNodes, [], '节点报完了，写入面就该回来')
+  })
+
+  it('收口时也重算一次，而不是把收权留在那儿', async () => {
+    const { guard, syncs } = recordingGuard()
+    const h = dispatchHarness({ roleGuard: guard, runtimeExecutors: [COMPLETES, STAYS_IN_PROGRESS] })
+    await createStandard(h)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    await h.tool.execute({
+      action: 'advance',
+      task_id: 'REQ-1',
+      report: { node_id: 'T2', dispatch_id: 'REQ-1-T2-A1', status: 'completed' },
+    }, h.exec)
+    const before = syncs.length
+    await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-1',
+      evidence: { all_criteria_covered: true },
+    }, h.exec)
+    assert.ok(syncs.length > before, '收口也要重算')
+    assert.deepEqual(syncs.at(-1).readOnlyNodes, [])
+  })
+
+  it('适配器声明连 shell 一起收回时，那次请求带上 includeShell', async () => {
+    const { guard, syncs } = recordingGuard()
+    const h = dispatchHarness({
+      roleGuard: guard,
+      runtimeExecutors: [COMPLETES, STAYS_IN_PROGRESS],
+      adapterExtras: { execution: { revoke_shell_for_read_only_roles: true } },
+    })
+    await createStandard(h)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    assert.equal(syncs.at(-1).includeShell, true)
+  })
+
+  it('写节点在飞时不收权 —— 判据是声明的写范围，不是能力名', async () => {
+    const { guard, syncs } = recordingGuard()
+    const h = dispatchHarness({ roleGuard: guard, runtimeExecutors: [STAYS_IN_PROGRESS, COMPLETES] })
+    await createStandard(h)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    // T1 声明了 src/，它停在会话里也不收权：它正是那个该写文件的人。
+    assert.deepEqual(syncs.at(-1).readOnlyNodes, [])
+  })
+
+  it('没有收权器时什么都不发生，也不抛错', async () => {
+    const h = dispatchHarness()
+    await createStandard(h)
+    await assert.doesNotReject(() => h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec))
   })
 })
 
