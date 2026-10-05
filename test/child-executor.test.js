@@ -16,13 +16,13 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import {
-  CHILD_MAX_DEPTH,
   CHILD_OUTPUT_SCHEMA,
   buildChildPersona,
   buildChildPrompt,
   createChildExecutor,
   describeChildSeam,
   needsChildSession,
+  parentDelegationDepth,
 } from '../lib/child-executor.js'
 
 /** 一个够用的节点。 */
@@ -83,11 +83,55 @@ function runInput(overrides = {}) {
     task,
     root: 'D:/proj',
     dispatchId: 'REQ-1-T1-A1',
-    agent: { id: 'agent-1', session: { id: 'parent-session' } },
+    agent: { id: 'agent-1', session: { id: 'parent-session', header: { delegationDepth: 0 } } },
     signal: new AbortController().signal,
     ...overrides,
   }
 }
+
+describe('委派深度上限是相对的', () => {
+  it('上限 = 调用方深度 + 1：根会话（0）得到 1，深度 1 的调用方得到 2', () => {
+    // 写死 1 会让「调用方自己就是子会话」的场景整个用不了——活体验收实测过：
+    // 宿主回 `subagent depth 2 exceeds maxDepth 1`，而那正是由深度 1 的会话发起的派遣。
+    assert.equal(parentDelegationDepth({ session: { header: { delegationDepth: 0 } } }), 0)
+    assert.equal(parentDelegationDepth({ session: { header: { delegationDepth: 2 } } }), 2)
+  })
+
+  it('会话头与 AgentOptions 取**更深**的那个：被恢复的子会话不能从零重算', () => {
+    assert.equal(
+      parentDelegationDepth({
+        session: { header: { delegationDepth: 1 } },
+        options: { subagentDepth: 3 },
+      }),
+      3,
+    )
+  })
+
+  it('读不出来时返回 undefined，不猜一个数字', () => {
+    assert.equal(parentDelegationDepth(undefined), undefined)
+    assert.equal(parentDelegationDepth({}), undefined)
+    assert.equal(parentDelegationDepth({ session: { header: {} } }), undefined)
+    // 非法值同样不采信。
+    assert.equal(parentDelegationDepth({ options: { subagentDepth: -1 } }), undefined)
+    assert.equal(parentDelegationDepth({ options: { subagentDepth: 1.5 } }), undefined)
+  })
+
+  it('请求里带上按调用方算出的 maxDepth；读不到深度时干脆不带这个字段', async () => {
+    const { service, starts } = fakeSubagents()
+    const executor = createChildExecutor({ subagentsFor: () => service })
+
+    await executor.run(runInput())
+    assert.equal(starts[0].request.maxDepth, 1, '根会话（深度 0）应当得到 1')
+
+    await executor.run(runInput({
+      agent: { session: { id: 'mid', header: { delegationDepth: 1 } } },
+    }))
+    assert.equal(starts[1].request.maxDepth, 2, '深度 1 的调用方应当得到 2')
+
+    await executor.run(runInput({ agent: { id: 'unknown' } }))
+    assert.equal(Object.hasOwn(starts[2].request, 'maxDepth'), false, '读不到深度就不带这个字段')
+  })
+})
 
 describe('产出契约必须是标准 JSON Schema', () => {
   it('required 在对象层，不在属性内部 —— 写成工具创作 DSL 那种会被宿主直接拒', () => {
@@ -174,7 +218,7 @@ describe('真的起一个子会话', () => {
     assert.equal(call.provider, 'spawn')
     assert.equal(call.request.label, 'REQ-1/T1')
     assert.equal(call.request.parent.session.id, 'parent-session')
-    assert.equal(call.request.maxDepth, CHILD_MAX_DEPTH)
+    assert.equal(call.request.maxDepth, 1, '调用方深度为 0，因此只允许再开一层')
     assert.deepEqual(call.request.outputSchema, CHILD_OUTPUT_SCHEMA)
     assert.equal(call.request.prompt.length, 1)
     assert.equal(call.request.prompt[0].type, 'text')
