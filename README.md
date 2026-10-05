@@ -458,6 +458,8 @@ gac_task { action: "review", task_id: "REQ-1", review_report: {
 
 实测到的拦截**总是守卫**，而**不是** `UNKNOWN_TOOL`。两个内核事实把这件事的解释收窄到一种：其一，`tools/pre-execute` 瀑布排在 dispatch 之前（`dsh-tools` 的 `prepareExecution` 是「`createExecution` → 瀑布 → 才 `resolveExecution`」），所以调用一定先撞上守卫；其二，**模型面的工具清单每次装配都会重算**（`dsh-system-prompt` 的 `assemble(context)` 就地调用每个 provider），而 `dsh-tools` 注册的那个 provider 是 `wireSchemas(context.scope)`、读的是限制感知的 `view(scope).visible`。既然收权**之后紧接着的那一步**模型仍然拿到了 `write`，唯一自洽的读法就是：**收权落到的那个作用域，与装配工具清单用的那个作用域不是同一个**。收权因此只对「它自己那个作用域」生效；模型面那一份清单照旧把工具提供出去，拦住调用的是守卫。判据字面要求的形态（`UNKNOWN_TOOL`）**还没被观察到**；装配作用域到底是哪一个（疑似会话）也还没查明——两条都记在 [docs/CUTOVER.md](docs/CUTOVER.md) §3 E2E-6 与 §6 第 2 条。
 
+**守卫是 fail-closed 的：判据是类别，不是名单。** 一次隔离验证里，对**根本不存在的**工具名发起的调用同样被逐字拒绝——`roleRevokedToolNames` 属于「失败即拒」的分类器，凡不属于 read / shell / runtime 的名字一律收回，名单里有没有它并不重要。这比按名单严，但它有一个读法上的后果：**「守卫拒绝了某次调用」不能用来证明那个名字在收权名单上**，只能证明它不在被放行的那几类里；同样，一个只读角色「可用的工具清单里没有 `write`」也不能单独证明是收权把它摘掉的——要断言收权本身生效，只能看报告里的 `mode` 与 `revoked`，那是独立的一层数据。最近一次同类验证的读数：`write` 与 `edit` 两个调用都被 `GAC_READ_ONLY_ROLE_DENIED` 逐字拒绝、探针文件从未落地、会话本身没被锁死；而同一次的报告是 `mode: "guard-only"`、`revoked: []`、`role-revocation-unverified` ——**拦住写入的是守卫那一层，这一点不要读成「收权成功」**。
+
 **别只看收权那一层。** 第 1 轮活体验证里，收权与兜底各自都「看着没问题」，实际两次本该被拦的写入全部成功：`createGacCore` 没拿到 `roleGuard`，兜底那一层根本不存在，而收权因为名单里混了 7 个作用域内注册的工具（宿主的 Team 工具）直接抛错→降级。**收权自己复查**这件事因此是必需项，不是保险：只有 `mode: restricted` 才表示「名字确实从视野里没了」；`mode: guard-only` + `revoked: []` + `role-revocation-unverified` 才是「没真收掉，只剩守卫」的诚实读数。
 
 四条设计取舍，每条都有理由：

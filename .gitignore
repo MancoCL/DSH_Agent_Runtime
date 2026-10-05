@@ -28,6 +28,10 @@ node_modules/
 # 而一次 `git add -A` 就会把运行时的复核结论当成源码提交进去
 .dsh/gac/reviews/
 
+# GAC 审计事件（只追加）。写在这里而不是写进会话日志——见 README 那一节与 ADR §13：
+# 会话日志的事件词表是宿主构建期生成的，外部插件写进去会让整份日志被拒读。
+.dsh/gac/events/
+
 # 操作系统噪音文件
 Thumbs.db
 .DS_Store
