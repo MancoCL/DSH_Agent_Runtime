@@ -86,6 +86,26 @@ describe('execution 一节 —— 运行时真正读取的字段必须能通过�
     }
   })
 
+  it('原生子会话派遣的开关：默认 false，声明 true 才通过', () => {
+    // 默认必须关：打开它会改变「谁在写文件」，这件事要先在真实会话里验过再默认开
+    // （docs/ADR-0001-子会话执行载体.md §8.4）。
+    assert.equal(adapter().execution.native_child_dispatch, false)
+    assert.equal(
+      adapter({ execution: { native_child_dispatch: true } }).execution.native_child_dispatch,
+      true,
+    )
+  })
+
+  it('原生子会话开关不是布尔量时同样被拒', () => {
+    for (const value of ['true', 1, {}, []]) {
+      assert.throws(
+        () => adapter({ execution: { native_child_dispatch: value } }),
+        (error) => error instanceof ProjectAdapterError && /native_child_dispatch/u.test(error.message),
+        `应当拒绝 ${JSON.stringify(value)}`,
+      )
+    }
+  })
+
   it('未声明时给出去掉猜测的默认值', () => {
     // 校验器不认识的字段，运行时也不该去读。反过来同样成立：运行时读的字段，校验器必须
     // 放行——否则适配器里写了会被整体拒绝，不写则永远读到 undefined，而读到的空值看起来
