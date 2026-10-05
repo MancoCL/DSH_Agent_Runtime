@@ -2,7 +2,7 @@
   "name": "dsh-gac-runtime",
   "version": "0.1.0",
   "private": true,
-  "description": "GAC (Governed Agent Collaboration) runtime for DeepSeek Harness: risk-tiered execution modes, strict write scope, write claims, independent verification.",
+  "description": "DeepSeek Harness 的 GAC（Governed Agent Collaboration）运行时：按风险分级的执行模式、严格的写作用域、写占用与独立验证。",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

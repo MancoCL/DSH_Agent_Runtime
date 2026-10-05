@@ -30,40 +30,40 @@ import { TASK_TOOL_NAME, createTaskTool } from '../lib/tool-task.js'
 const toolsPackage = await importDshPackage('@deepseek-ai/dsh-tools')
 const canRun = typeof toolsPackage?.defineTool === 'function'
 
-describe('the scope tool survives the runtime authoring helper', { skip: !canRun }, () => {
-  it('defineTool accepts our options without throwing', () => {
+describe('作用域工具能过运行时那套编写辅助函数', { skip: !canRun }, () => {
+  it('defineTool 接受我们的选项且不抛错', () => {
     const core = createGacCore()
     assert.doesNotThrow(() => createScopeTool({ core, defineTool: toolsPackage.defineTool }))
   })
 
-  it('produces a definition with the members the registry requires', () => {
+  it('产出的定义带有注册表所要求的成员', () => {
     const core = createGacCore()
     const tool = createScopeTool({ core, defineTool: toolsPackage.defineTool })
     assert.equal(tool.name, SCOPE_TOOL_NAME)
     assert.equal(typeof tool.description, 'string')
     assert.equal(typeof tool.parameters, 'object')
     assert.equal(typeof tool.execute, 'function')
-    assert.ok(tool.output, 'a tool must declare an output definition')
+    assert.ok(tool.output, '工具必须声明 output 定义')
     assert.equal(typeof tool.output.render, 'function')
   })
 
-  it('compiles the parameter DSL into the JSON Schema the model is shown', () => {
+  it('把参数 DSL 编译成给模型看的 JSON Schema', () => {
     const core = createGacCore()
     const tool = createScopeTool({ core, defineTool: toolsPackage.defineTool })
     // 编译出来的 schema 必须是真正的 JSON Schema，而不是我们的编写规范。
     assert.equal(tool.parameters.type, 'object')
-    assert.ok(tool.parameters.properties?.scope, 'scope must survive compilation')
-    assert.ok(tool.parameters.properties?.task_id, 'task_id must survive compilation')
+    assert.ok(tool.parameters.properties?.scope, 'scope 必须存活于编译之后')
+    assert.ok(tool.parameters.properties?.task_id, 'task_id 必须存活于编译之后')
     // 没有任何必填项时，运行时会完全省略 `required`，这正是标准 JSON Schema 的
     // 做法；空数组同样合法，所以两种都接受，而不是把一个实现细节钉死。
     const required = tool.parameters.required
     assert.ok(
       required === undefined || (Array.isArray(required) && required.length === 0),
-      `no parameter should be mandatory, got ${JSON.stringify(required)}`,
+      `不该有任何参数是必填的，实际为 ${JSON.stringify(required)}`,
     )
   })
 
-  it('does not mark optional parameters with required: false', () => {
+  it('不会把可选参数标成 required: false', () => {
     const core = createGacCore()
     const tool = createScopeTool({ core, defineTool: toolsPackage.defineTool })
     // 运行时的创作 DSL 接受 `required: true` 或该键缺失，并以 UNSUPPORTED_SCHEMA
@@ -73,7 +73,7 @@ describe('the scope tool survives the runtime authoring helper', { skip: !canRun
       assert.equal(
         Object.hasOwn(spec, 'required'),
         false,
-        `${name} must omit the required key entirely, not set it false`,
+        `${name} 必须完全省略 required 键，而不是把它写成 false`,
       )
     }
   })
@@ -348,7 +348,7 @@ describe('每个动作返回的字段都必须在 output schema 里声明', { sk
 })
 
 describe('defineTool 拒绝创作错误：让它在这里响，而不是在加载时静默', { skip: !canRun }, () => {
-  it('an authoring mistake fails loudly here rather than silently at load', () => {
+  it('创作错误在这里大声报错，而不是在加载时静默', () => {
     const core = createGacCore()
     const broken = scopeToolOptions({ core })
     broken.parameters.scope.required = false
@@ -368,8 +368,8 @@ describe('defineTool 拒绝创作错误：让它在这里响，而不是在加�
   })
 })
 
-describe('the scope tool survives the runtime authoring helper', { skip: !canRun }, () => {
-  it('keeps every optional parameter optional, since all four overload one tool', () => {
+describe('作用域工具能过运行时那套编写辅助函数', { skip: !canRun }, () => {
+  it('让每一个可选参数都保持可选，因为四个重载共用同一个工具', () => {
     const core = createGacCore()
     const tool = createScopeTool({ core, defineTool: toolsPackage.defineTool })
     // 把其中任何一个声明为必填都会破坏 inspect 与 clear，它们只发送其中一部分
@@ -377,7 +377,7 @@ describe('the scope tool survives the runtime authoring helper', { skip: !canRun
     const required = tool.parameters.required
     assert.ok(
       required === undefined || required.length === 0,
-      `expected no required parameters, got ${JSON.stringify(required)}`,
+      `不该有必填参数，实际为 ${JSON.stringify(required)}`,
     )
     assert.deepEqual(
       Object.keys(tool.parameters.properties).sort(),
@@ -385,7 +385,7 @@ describe('the scope tool survives the runtime authoring helper', { skip: !canRun
     )
   })
 
-  it('the executed tool still behaves after compilation', async () => {
+  it('编译之后，执行这个工具时它的行为依旧', async () => {
     const core = createGacCore()
     const tool = createScopeTool({ core, defineTool: toolsPackage.defineTool })
     const exec = { agent: { session: { id: 'session-x' } } }
@@ -395,15 +395,15 @@ describe('the scope tool survives the runtime authoring helper', { skip: !canRun
   })
 })
 
-describe('scopeToolOptions without the runtime', () => {
-  it('declares all four parameters and no required ones', () => {
+describe('不依赖运行时的 scopeToolOptions', () => {
+  it('声明全部四个参数，且没有一个是必填的', () => {
     const options = scopeToolOptions({ core: createGacCore() })
     assert.deepEqual(
       Object.keys(options.parameters).sort(),
       ['clear', 'node_id', 'scope', 'task_id'],
     )
     for (const [name, spec] of Object.entries(options.parameters)) {
-      assert.notEqual(spec.required, true, `${name} must stay optional`)
+      assert.notEqual(spec.required, true, `${name} 必须保持可选`)
     }
   })
 })

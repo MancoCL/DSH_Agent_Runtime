@@ -46,8 +46,8 @@ function adapter(overrides = {}) {
   })
 }
 
-describe('validateProjectAdapter — accepts a well-formed adapter', () => {
-  it('freezes the result so later mutation cannot change policy', () => {
+describe('validateProjectAdapter —— 接受形式正确的适配器', () => {
+  it('冻结结果，使后续改动无法改变策略', () => {
     const parsed = adapter()
     assert.equal(Object.isFrozen(parsed), true)
     assert.equal(Object.isFrozen(parsed.risk.high_risk_paths), true)
@@ -56,7 +56,7 @@ describe('validateProjectAdapter — accepts a well-formed adapter', () => {
     }, TypeError)
   })
 
-  it('defaults memory scope to the outline §13 allow-list', () => {
+  it('memory 作用域默认为大纲 §13 的白名单', () => {
     const parsed = adapter()
     assert.deepEqual([...parsed.memory.allow], ['current_project', 'global_reusable'])
     assert.deepEqual([...parsed.memory.deny_as_project_fact], ['foreign_project', 'unknown'])
@@ -85,14 +85,14 @@ describe('execution 一节 —— 运行时真正读取的字段必须能通过�
   it('拒绝空的 provider 或 model', () => {
     assert.throws(
       () => adapter({ execution: { provider_routes: { verifier: { model: '' } } } }),
-      /non-empty string/u,
+      /必须是非空字符串/u,
     )
   })
 
   it('拒绝非对象的 provider_routes', () => {
     assert.throws(
       () => adapter({ execution: { provider_routes: ['verifier'] } }),
-      /must be an object/u,
+      /必须是把执行者名字映射到路由的对象/u,
     )
   })
 
@@ -107,52 +107,52 @@ describe('execution 一节 —— 运行时真正读取的字段必须能通过�
   it('拒绝 require_contract 里的未知执行模式', () => {
     assert.throws(
       () => adapter({ execution: { require_contract: ['no_such_mode'] } }),
-      /execution modes/u,
+      /执行模式列表/u,
     )
   })
 
   it('拒绝 execution 里的未知键', () => {
     assert.throws(
       () => adapter({ execution: { require_contracted: [] } }),
-      /unknown "execution" key/u,
+      /未知的 "execution" 键/u,
     )
   })
 })
 
-describe('validateProjectAdapter — refuses malformed input', () => {
+describe('validateProjectAdapter —— 拒绝畸形输入', () => {
   const cases = [
-    ['a non-object top level', []],
-    ['a missing project id', { project: {} }],
-    ['an unknown top-level key', { project: { id: 'p' }, typo_section: {} }],
-    ['a capability not declared before use', {
+    ['非对象的顶层', []],
+    ['缺少 project.id', { project: {} }],
+    ['未知的顶层键', { project: { id: 'p' }, typo_section: {} }],
+    ['使用前未声明能力', {
       project: { id: 'p' },
       capabilities: ['implementation'],
       executors: { review: ['r'] },
     }],
-    ['a non-array high_risk_paths', {
+    ['非数组的 high_risk_paths', {
       project: { id: 'p' },
       risk: { high_risk_paths: 'src/' },
     }],
-    ['an out-of-vocabulary risk level', {
+    ['词表外的风险级别', {
       project: { id: 'p' },
       risk: { high_risk_paths: [], default_level: 'catastrophic' },
     }],
-    ['an out-of-vocabulary memory scope', {
+    ['词表外的 memory 作用域', {
       project: { id: 'p' },
       memory: { allow: ['somewhere_else'] },
     }],
   ]
 
   for (const [label, raw] of cases) {
-    it(`refuses ${label}`, () => {
+    it(`拒绝 ${label}`, () => {
       assert.throws(() => validateProjectAdapter(raw), ProjectAdapterError)
     })
   }
 
-  it('carries a stable code so callers need not parse the message', () => {
+  it('带一个稳定的错误码，调用方无需解析文案', () => {
     try {
       validateProjectAdapter({ project: {} })
-      assert.fail('expected a throw')
+      assert.fail('应当抛错')
     } catch (error) {
       assert.equal(error.code, 'GAC_PROJECT_ADAPTER_INVALID')
     }
@@ -160,14 +160,14 @@ describe('validateProjectAdapter — refuses malformed input', () => {
 })
 
 describe('loadProjectAdapterFromText', () => {
-  it('reports malformed JSON as an adapter error, not a SyntaxError', () => {
+  it('把畸形 JSON 报成适配器错误，而不是 SyntaxError', () => {
     assert.throws(
       () => loadProjectAdapterFromText('{ not json', 'project.json'),
-      (error) => error instanceof ProjectAdapterError && /not valid JSON/u.test(error.message),
+      (error) => error instanceof ProjectAdapterError && /不是合法 JSON/u.test(error.message),
     )
   })
 
-  it('names the source path in the error, so a bad file is findable', () => {
+  it('在错误里点名来源路径，坏文件因此可被找到', () => {
     assert.throws(
       () => loadProjectAdapterFromText('null', 'C:/proj/.dsh/gac/project.json'),
       /C:\/proj\/\.dsh\/gac\/project\.json/u,
@@ -178,32 +178,32 @@ describe('loadProjectAdapterFromText', () => {
 describe('isHighRiskPath', () => {
   const paths = ['src/boot/**', 'src/auth/**']
 
-  it('matches a declared high-risk subtree', () => {
+  it('匹配已声明的高风险子树', () => {
     assert.equal(isHighRiskPath('src/auth/login.c', paths), true)
   })
 
-  it('matches the high-risk directory itself', () => {
+  it('匹配高风险目录本身', () => {
     assert.equal(isHighRiskPath('src/boot', paths), true)
   })
 
-  it('is case-insensitive on the same footing as the write gate', () => {
+  it('对大小写不敏感，且与写作用域闸门同一口径', () => {
     assert.equal(isHighRiskPath('SRC/AUTH/LOGIN.C', paths), true)
   })
 
-  it('does not match unrelated code, even with a similar prefix', () => {
+  it('即便前缀相似，也不匹配无关代码', () => {
     assert.equal(isHighRiskPath('src/authz/helper.c', paths), false)
   })
 
-  it('is false when the project declares no high-risk paths', () => {
+  it('工程未声明高风险路径时为 false', () => {
     assert.equal(isHighRiskPath('src/boot/main.c', []), false)
   })
 })
 
-describe('resolveExecutionMode — the escalation gate', () => {
-  it('keeps a low-risk declaration as-is', () => {
+describe('resolveExecutionMode —— 升级闸门', () => {
+  it('低风险声明原样保留', () => {
     const verdict = resolveExecutionMode({
       declared_mode: 'direct_edit',
-      reason: 'remove one config field',
+      reason: '删掉一个配置字段',
       target_paths: ['config/app.json'],
       adapter: adapter(),
     })
@@ -212,10 +212,10 @@ describe('resolveExecutionMode — the escalation gate', () => {
     assert.equal(verdict.risk, 'low')
   })
 
-  it('escalates direct_edit to high_risk_task when a target is a high-risk path', () => {
+  it('目标落在高风险路径时，把 direct_edit 升级为 high_risk_task', () => {
     const verdict = resolveExecutionMode({
       declared_mode: 'direct_edit',
-      reason: 'adjust one constant',
+      reason: '调整一个常量',
       target_paths: ['src/auth/token.c'],
       adapter: adapter(),
     })
@@ -226,22 +226,22 @@ describe('resolveExecutionMode — the escalation gate', () => {
     assert.match(verdict.reason, /src\/auth\/token\.c/u)
   })
 
-  it('escalates by semantic impact, not by file count', () => {
+  it('按语义影响升级，而不是按文件数', () => {
     // 只有一个文件，仍是高风险。大纲明确指出文件数量从来不是判据（单个认证策略文件也
     // 可以是高风险）。
     const verdict = resolveExecutionMode({
       declared_mode: 'standard_task',
-      reason: 'single-file auth change',
+      reason: '单文件认证改动',
       target_paths: ['src/boot/main.c'],
       adapter: adapter(),
     })
     assert.equal(verdict.mode, 'high_risk_task')
   })
 
-  it('records irreversibility without inventing an escalation', () => {
+  it('记下不可逆性，但不凭空造出一次升级', () => {
     const verdict = resolveExecutionMode({
       declared_mode: 'standard_task',
-      reason: 'write a migration',
+      reason: '编写一次迁移',
       target_paths: ['src/db/schema.sql'],
       irreversible: true,
       adapter: adapter(),
@@ -250,10 +250,10 @@ describe('resolveExecutionMode — the escalation gate', () => {
     assert.match(verdict.reason, /IRREVERSIBLE/u)
   })
 
-  it('records ambiguity without inventing an escalation', () => {
+  it('记下歧义，但不凭空造出一次升级', () => {
     const verdict = resolveExecutionMode({
       declared_mode: 'direct_edit',
-      reason: 'tweak a value',
+      reason: '调整一处取值',
       target_paths: ['config/app.json'],
       ambiguous: true,
       adapter: adapter(),
@@ -261,17 +261,17 @@ describe('resolveExecutionMode — the escalation gate', () => {
     assert.match(verdict.reason, /AMBIGUOUS/u)
   })
 
-  it('leaves an already-high-risk declaration unescalated', () => {
+  it('已是高风险的声明不再升级', () => {
     const verdict = resolveExecutionMode({
       declared_mode: 'high_risk_task',
-      reason: 'auth rework',
+      reason: '重做认证逻辑',
       target_paths: ['src/auth/token.c'],
       adapter: adapter(),
     })
     assert.equal(verdict.escalated, false)
   })
 
-  it('rejects an out-of-vocabulary mode instead of defaulting to something', () => {
+  it('拒绝词表外的模式，而不是退回到某个默认值', () => {
     assert.throws(
       () => resolveExecutionMode({
         declared_mode: 'quick_fix',
@@ -282,7 +282,7 @@ describe('resolveExecutionMode — the escalation gate', () => {
     )
   })
 
-  it('refuses to run without an adapter, rather than assuming low risk', () => {
+  it('没有适配器时拒绝运行，而不是假定低风险', () => {
     assert.throws(
       () => resolveExecutionMode({ declared_mode: 'direct_edit', target_paths: [] }),
       ProjectAdapterError,
@@ -290,20 +290,20 @@ describe('resolveExecutionMode — the escalation gate', () => {
   })
 })
 
-describe('mode / risk tables', () => {
-  it('maps each risk to exactly one mode and back again', () => {
+describe('模式 / 风险表', () => {
+  it('每档风险映射到唯一一个模式，且能映射回来', () => {
     for (const risk of ['low', 'medium', 'high']) {
       assert.equal(modeToRisk(modeForRisk(risk)), risk)
     }
   })
 
-  it('orders modes from cheapest process to most ceremonious', () => {
+  it('模式按流程成本从低到高排序', () => {
     assert.equal(modeRank('read_only'), 0)
     assert.ok(modeRank('direct_edit') < modeRank('standard_task'))
     assert.ok(modeRank('standard_task') < modeRank('high_risk_task'))
   })
 
-  it('rejects an unknown risk instead of guessing', () => {
+  it('拒绝未知风险，而不是猜一个', () => {
     assert.throws(() => modeForRisk('severe'), ProjectAdapterError)
   })
 })
@@ -326,7 +326,7 @@ describe('每一个对外宣告的模式都必须真的能声明', () => {
     for (const mode of EXECUTION_MODES) {
       const resolved = resolveExecutionMode({
         declared_mode: mode,
-        reason: 'test',
+        reason: '测试',
         adapter: governed(),
       })
       assert.equal(resolved.mode, mode, `${mode} 应当可用`)
@@ -365,8 +365,8 @@ describe('每一个对外宣告的模式都必须真的能声明', () => {
   })
 })
 
-describe('no project facts leak into the universal runtime', () => {
-  it('the library sources name no capability or project from any adapter', async () => {
+describe('没有工程事实泄漏进通用运行时', () => {
+  it('库源码不提及任何适配器里的能力或工程名', async () => {
     // 属于*工程*、而从不属于运行时的词。如果其中任何一个出现在 lib/ 里，就说明某个
     // 工程事实被硬编码了，跨工程复用的目标（大纲 §1、§2.4）也就被破坏了。
     const forbidden = [
@@ -378,7 +378,7 @@ describe('no project facts leak into the universal runtime', () => {
       'firmware',
     ]
     const files = (await readdir(libDir)).filter((name) => name.endsWith('.js'))
-    assert.ok(files.length > 0, 'expected library sources to exist')
+    assert.ok(files.length > 0, 'lib 源码应当存在')
 
     for (const file of files) {
       const text = (await readFile(join(libDir, file), 'utf8')).toLowerCase()
@@ -387,13 +387,13 @@ describe('no project facts leak into the universal runtime', () => {
         assert.equal(
           source.includes(word),
           false,
-          `${file} mentions project-specific "${word}" outside a comment`,
+          `${file} 在注释之外提到了工程专属词 "${word}"`,
         )
       }
     }
   })
 
-  it('the execution-mode vocabulary is closed', () => {
+  it('执行模式词表是封闭的', () => {
     assert.deepEqual([...EXECUTION_MODES], [
       'read_only',
       'direct_edit',

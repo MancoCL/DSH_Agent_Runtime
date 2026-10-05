@@ -17,25 +17,25 @@ const SPECIFIER = '@deepseek-ai/dsh-tools'
 
 console.log('cwd            :', process.cwd())
 console.log('execPath       :', process.execPath)
-console.log('DSH_HOME       :', process.env.DSH_HOME ?? '(unset)')
-console.log('USERPROFILE    :', process.env.USERPROFILE ?? '(unset)')
+console.log('DSH_HOME       :', process.env.DSH_HOME ?? '（未设置）')
+console.log('USERPROFILE    :', process.env.USERPROFILE ?? '（未设置）')
 console.log('')
 
 const { anchors, notes } = anchorReport()
-console.log('how the anchor list was derived:')
+console.log('锚点列表是如何推导出来的：')
 for (const note of notes) console.log(`  - ${note}`)
 console.log('')
-console.log(`anchors, in order (${anchors.length}):`)
+console.log(`锚点，按顺序（${anchors.length}）：`)
 
 const { attempts, resolved } = resolveWithDiagnostics(SPECIFIER, anchors)
 for (const { anchor, reason } of attempts) {
-  console.log(`  ${reason === 'anchor does not exist' ? 'MISSING' : 'tried  '} ${anchor} [${reason}]`)
+  console.log(`  ${reason === '锚点不存在' ? 'MISSING' : 'tried  '} ${anchor} [${reason}]`)
 }
 // 成功那个锚点之后的锚点从未被走到。
 if (resolved !== undefined) {
   const reached = new Set(attempts.map((a) => a.anchor))
   for (const anchor of anchors.filter((a) => !reached.has(a))) {
-    console.log(`  (not reached) ${anchor}`)
+    console.log(`  （未走到）${anchor}`)
   }
 }
 

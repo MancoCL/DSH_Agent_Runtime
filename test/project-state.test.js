@@ -60,8 +60,8 @@ function stateAt(root) {
   return new ProjectState({ resolveRoot: () => root })
 }
 
-describe('adapter loading', () => {
-  it('loads and validates a well-formed adapter', () => {
+describe('适配器加载', () => {
+  it('加载并校验形式正确的适配器', () => {
     const root = scratchProject(VALID)
     const loaded = stateAt(root).loadAdapter(root)
     assert.equal(loaded.status, 'loaded')
@@ -69,32 +69,32 @@ describe('adapter loading', () => {
     // 上报的路径一律使用 `/`，与写作用域匹配器规范化后所采用的约定一致，无论宿主分隔符
     // 是什么。
     assert.ok(loaded.path.endsWith('.dsh/gac/project.json'))
-    assert.equal(loaded.path.includes('\\'), false, `path must be /-separated: ${loaded.path}`)
+    assert.equal(loaded.path.includes('\\'), false, `路径必须用 / 分隔: ${loaded.path}`)
   })
 
-  it('reports a missing adapter as absent, not as an error', () => {
+  it('把缺失的适配器报成 absent，而不是错误', () => {
     // 工程不必被纳管。把它当作失败处理，会让该插件在所有尚未配置它的地方都无法使用。
     const root = scratchProject(undefined)
     const loaded = stateAt(root).loadAdapter(root)
     assert.equal(loaded.status, 'absent')
-    assert.match(loaded.note, /ungoverned/u)
+    assert.match(loaded.note, /不受治理/u)
   })
 
-  it('reports malformed JSON without throwing', () => {
+  it('不抛错地报出畸形 JSON', () => {
     const root = scratchProject('{ not json')
     const loaded = stateAt(root).loadAdapter(root)
     assert.equal(loaded.status, 'invalid')
-    assert.match(loaded.note, /not valid JSON/u)
+    assert.match(loaded.note, /不是合法 JSON/u)
   })
 
-  it('reports a schema violation with the validator’s reason', () => {
+  it('报出 schema 违规，并带上校验器给的原因', () => {
     const root = scratchProject(JSON.stringify({ project: {} }))
     const loaded = stateAt(root).loadAdapter(root)
     assert.equal(loaded.status, 'invalid')
     assert.match(loaded.note, /project\.id/u)
   })
 
-  it('names the adapter path in its result, so a bad file is findable', () => {
+  it('在结果里点名适配器路径，坏文件因此可被找到', () => {
     const root = scratchProject(VALID)
     const loaded = stateAt(root).loadAdapter(root)
     // 适配器就在它被要求的位置，且以可读的方式上报。
@@ -103,8 +103,8 @@ describe('adapter loading', () => {
   })
 })
 
-describe('caching contract', () => {
-  it('caches a successful load rather than re-reading the file', () => {
+describe('缓存契约', () => {
+  it('缓存成功的一次加载，而不是重新读文件', () => {
     const root = scratchProject(VALID)
     const state = stateAt(root)
     state.loadAdapter(root)
@@ -116,16 +116,16 @@ describe('caching contract', () => {
     assert.equal(state.loadAdapter(root).adapter.project.id, 'proj')
   })
 
-  it('caches absence, because re-probing every call is I/O for nothing', () => {
+  it('缓存「不存在」，因为每次调用都重新探测等于白做 I/O', () => {
     const root = scratchProject(undefined)
     const state = stateAt(root)
     assert.equal(state.loadAdapter(root).status, 'absent')
     mkdirSync(joinPath(root, '.dsh', 'gac'), { recursive: true })
     writeFileSync(joinPath(root, '.dsh', 'gac', 'project.json'), VALID, 'utf8')
-    assert.equal(state.loadAdapter(root).status, 'absent', 'absence is cached until forgotten')
+    assert.equal(state.loadAdapter(root).status, 'absent', '「不存在」会被缓存，直到被遗忘')
   })
 
-  it('does NOT cache an invalid adapter, so a fix needs no restart', () => {
+  it('「不」缓存无效适配器，于是修好它不需要重启', () => {
     // 最重要的一个：用户编写 project.json 时会先写错一次，然后修好它，并期望修改立即
     // 生效。
     const root = scratchProject('{ broken')
@@ -135,7 +135,7 @@ describe('caching contract', () => {
     assert.equal(state.loadAdapter(root).status, 'loaded')
   })
 
-  it('forget() makes the next read reflect the disk', () => {
+  it('forget() 让下一次读取反映磁盘上的内容', () => {
     const root = scratchProject(undefined)
     const state = stateAt(root)
     state.loadAdapter(root)
@@ -146,14 +146,14 @@ describe('caching contract', () => {
   })
 })
 
-describe('mode resolution', () => {
-  it('records a low-risk declaration unchanged', () => {
+describe('模式解析', () => {
+  it('原样记录低风险声明', () => {
     const root = scratchProject(VALID)
     const decision = stateAt(root).declareMode({
       session_id: 's1',
       root,
       declared_mode: 'direct_edit',
-      reason: 'one config value',
+      reason: '改一个配置项',
       target_paths: ['README.md'],
     })
     assert.equal(decision.mode, 'direct_edit')
@@ -162,13 +162,13 @@ describe('mode resolution', () => {
     assert.equal(decision.project_id, 'proj')
   })
 
-  it('escalates when a target falls in a declared high-risk path', () => {
+  it('目标落在已声明的高风险路径里时升级', () => {
     const root = scratchProject(VALID)
     const decision = stateAt(root).declareMode({
       session_id: 's1',
       root,
       declared_mode: 'direct_edit',
-      reason: 'tweak one comparison',
+      reason: '调整一处比较',
       target_paths: ['src/auth/token.c'],
     })
     assert.equal(decision.mode, 'high_risk_task')
@@ -177,21 +177,21 @@ describe('mode resolution', () => {
     assert.match(decision.reason, /src\/auth\/token\.c/u)
   })
 
-  it('marks a declaration unchecked when the project has no adapter', () => {
+  it('工程没有适配器时把声明标为未核对', () => {
     // 诚实的表述：声明了模式，但没有任何东西能确认它。
     const root = scratchProject(undefined)
     const decision = stateAt(root).declareMode({
       session_id: 's1',
       root,
       declared_mode: 'standard_task',
-      reason: 'a normal bugfix',
+      reason: '一次普通缺陷修复',
     })
     assert.equal(decision.mode, 'standard_task')
     assert.equal(decision.unchecked, true)
     assert.equal(decision.project_id, null)
   })
 
-  it('rejects an unknown mode rather than defaulting to something', () => {
+  it('拒绝未知模式，而不是退回到某个默认值', () => {
     const root = scratchProject(VALID)
     assert.throws(
       () => stateAt(root).declareMode({ session_id: 's1', root, declared_mode: 'quick_fix' }),
@@ -199,7 +199,7 @@ describe('mode resolution', () => {
     )
   })
 
-  it('keeps each session’s mode separate', () => {
+  it('各会话的模式互不干扰', () => {
     const root = scratchProject(VALID)
     const state = stateAt(root)
     state.declareMode({ session_id: 'a', root, declared_mode: 'direct_edit' })
@@ -208,7 +208,7 @@ describe('mode resolution', () => {
     assert.equal(state.modeFor('b').mode, 'high_risk_task')
   })
 
-  it('replaces a session’s mode rather than accumulating', () => {
+  it('替换会话的模式，而不是累加', () => {
     const root = scratchProject(VALID)
     const state = stateAt(root)
     state.declareMode({ session_id: 'a', root, declared_mode: 'high_risk_task' })
@@ -216,7 +216,7 @@ describe('mode resolution', () => {
     assert.equal(state.modeFor('a').mode, 'direct_edit')
   })
 
-  it('clears a session’s mode', () => {
+  it('清除会话的模式', () => {
     const root = scratchProject(VALID)
     const state = stateAt(root)
     state.declareMode({ session_id: 'a', root, declared_mode: 'direct_edit' })
@@ -225,16 +225,16 @@ describe('mode resolution', () => {
   })
 })
 
-describe('inspection', () => {
-  it('reports ungoverned and says why when there is no project root', () => {
+describe('检视', () => {
+  it('没有工程根目录时报未受治理并说明原因', () => {
     const state = new ProjectState({ resolveRoot: () => undefined })
     const view = state.inspect('s1', undefined)
     assert.equal(view.governed, false)
-    assert.match(view.note, /no resolvable project root/u)
+    assert.match(view.note, /没有可解析的工程根目录/u)
     assert.equal(view.mode, null)
   })
 
-  it('surfaces the adapter, its high-risk paths and its capabilities', () => {
+  it('出示适配器、它的高风险路径与它声明的能力', () => {
     const root = scratchProject(VALID)
     const view = stateAt(root).inspect('s1', root)
     assert.equal(view.governed, true)
@@ -243,7 +243,7 @@ describe('inspection', () => {
     assert.deepEqual([...view.adapter.capabilities], ['implementation', 'verification'])
   })
 
-  it('carries the session’s declared mode alongside the adapter', () => {
+  it('把会话声明的模式与适配器一并带出', () => {
     const root = scratchProject(VALID)
     const state = stateAt(root)
     state.declareMode({ session_id: 's1', root, declared_mode: 'standard_task' })

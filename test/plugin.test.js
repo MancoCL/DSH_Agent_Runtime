@@ -59,18 +59,18 @@ function governed(writeScope, options = {}) {
   return core
 }
 
-describe('ungoverned sessions are left alone', () => {
-  it('allows a write when no scope was ever declared', () => {
+describe('无人管辖的会话不受干预', () => {
+  it('从未声明过作用域时放行写入', () => {
     const core = createGacCore()
     assert.deepEqual(core.preExecute(exec('write', { file_path: 'anywhere.c' })), { kind: 'allow' })
   })
 
-  it('allows a shell call when no scope was declared', () => {
+  it('未声明作用域时放行 shell 调用', () => {
     const core = createGacCore()
     assert.equal(core.preExecute(exec('pwsh', { command: 'rm -rf /' })).kind, 'allow')
   })
 
-  it('allows a call from a different session', () => {
+  it('放行来自另一个会话的调用', () => {
     const core = governed(['src/a.c'])
     assert.equal(
       core.preExecute(exec('write', { file_path: 'elsewhere.c' }, 'session-2')).kind,
@@ -78,24 +78,24 @@ describe('ungoverned sessions are left alone', () => {
     )
   })
 
-  it('allows a call it cannot attribute to a session', () => {
+  it('放行无法归属到某个会话的调用', () => {
     const core = governed(['src/a.c'])
     assert.equal(core.preExecute({ name: 'write', arguments: { file_path: 'x.c' } }).kind, 'allow')
   })
 })
 
-describe('in-scope writes pass', () => {
-  it('allows an exact declared file', () => {
+describe('范围内的写入放行', () => {
+  it('放行已声明的精确文件', () => {
     const core = governed(['src/a.c'])
     assert.equal(core.preExecute(exec('write', { file_path: 'src/a.c' })).kind, 'allow')
   })
 
-  it('allows a file inside a declared directory', () => {
+  it('放行已声明目录内的文件', () => {
     const core = governed(['src/'])
     assert.equal(core.preExecute(exec('edit', { file_path: 'src/deep/b.c' })).kind, 'allow')
   })
 
-  it('allows an absolute path that resolves inside the scope', () => {
+  it('放行解析后落在作用域内的绝对路径', () => {
     const core = governed(['src/a.c'])
     assert.equal(
       core.preExecute(exec('write', { file_path: `${ROOT}/src/a.c` })).kind,
@@ -103,46 +103,46 @@ describe('in-scope writes pass', () => {
     )
   })
 
-  it('allows a read tool regardless of scope', () => {
+  it('不论作用域如何都放行读工具', () => {
     const core = governed(['src/a.c'])
     assert.equal(core.preExecute(exec('read', { file_path: 'docs/readme.md' })).kind, 'allow')
   })
 })
 
-describe('the E2E-4 case: authority.write = ["mod.c"], agent tries sub/mod.c', () => {
-  it('denies before execution', () => {
+describe('E2E-4 用例：authority.write = ["mod.c"]，agent 试图写 sub/mod.c', () => {
+  it('在执行之前拒绝', () => {
     const core = governed(['mod.c'])
     const verdict = core.preExecute(exec('write', { file_path: 'sub/mod.c' }))
     assert.equal(verdict.kind, 'deny')
   })
 
-  it('carries the structured code so the caller need not parse prose', () => {
+  it('携带结构化错误码，调用方无需解析散文', () => {
     const core = governed(['mod.c'])
     const verdict = core.preExecute(exec('write', { file_path: 'sub/mod.c' }))
     assert.equal(verdict.info.code, GAC_CODES.WRITE_SCOPE_DENIED)
     assert.equal(verdict.info.name, 'GacScopeDenied')
   })
 
-  it('names the declared scope in the reason so the model can correct itself', () => {
+  it('在原因里指名已声明的作用域，让模型能自我纠正', () => {
     const core = governed(['mod.c'])
     const verdict = core.preExecute(exec('write', { file_path: 'sub/mod.c' }))
     assert.match(verdict.reason, /mod\.c/u)
     assert.match(verdict.reason, /sub\/mod\.c/u)
   })
 
-  it('still allows ./mod.c', () => {
+  it('仍允许 ./mod.c', () => {
     const core = governed(['mod.c'])
     assert.equal(core.preExecute(exec('write', { file_path: './mod.c' })).kind, 'allow')
   })
 
-  it('denies a case-variant escape', () => {
+  it('拒绝大小写变体绕过', () => {
     const core = governed(['mod.c'])
     assert.equal(core.preExecute(exec('write', { file_path: 'SRC/MOD.C' })).kind, 'deny')
   })
 })
 
-describe('denial is per-path, not per-call', () => {
-  it('denies when only one of several declared paths is out of scope', () => {
+describe('拒绝是按路径，而不是按调用', () => {
+  it('若干个已声明路径中只要有一个越界就拒绝', () => {
     const core = governed(['src/'])
     const verdict = core.preExecute(
       exec('write', { file_path: 'src/ok.c', path: 'other/bad.c' }),
@@ -152,27 +152,27 @@ describe('denial is per-path, not per-call', () => {
   })
 })
 
-describe('shell executors are denied while a scope is active', () => {
+describe('作用域生效期间拒绝 shell 执行器', () => {
   for (const tool of ['pwsh', 'bash']) {
-    it(`denies "${tool}" and says why`, () => {
+    it(`拒绝 "${tool}" 并说明原因`, () => {
       const core = governed(['src/'])
       const verdict = core.preExecute(exec(tool, { command: 'echo x > src/a.c' }))
       assert.equal(verdict.kind, 'deny')
       assert.equal(verdict.info.code, GAC_CODES.SHELL_DENIED_UNDER_SCOPE)
-      assert.match(verdict.reason, /redirection|generator/u)
+      assert.match(verdict.reason, /重定向或生成目标/u)
     })
   }
 })
 
-describe('unknown tools fail closed while a scope is active', () => {
-  it('denies a tool the runtime cannot classify', () => {
+describe('作用域生效期间未知工具失败即拒绝', () => {
+  it('拒绝运行时无法分类的工具', () => {
     const core = governed(['src/'])
     const verdict = core.preExecute(exec('fs_patch_everything', { file_path: 'src/a.c' }))
     assert.equal(verdict.kind, 'deny')
     assert.equal(verdict.info.code, GAC_CODES.UNGUARDABLE_WRITE_DENIED)
   })
 
-  it('denies a known write tool that carried no readable path argument', () => {
+  it('拒绝没有携带可读路径参数的已知写工具', () => {
     const core = governed(['src/'])
     const verdict = core.preExecute(exec('write', { filePath: 'src/a.c' }))
     assert.equal(verdict.kind, 'deny')
@@ -180,8 +180,8 @@ describe('unknown tools fail closed while a scope is active', () => {
   })
 })
 
-describe('scope lifecycle', () => {
-  it('re-declaring replaces the scope instead of widening it', () => {
+describe('作用域生命周期', () => {
+  it('重新声明是替换作用域，而不是把它放宽', () => {
     const core = governed(['src/'])
     core.declareScope({
       session_id: SESSION,
@@ -194,13 +194,13 @@ describe('scope lifecycle', () => {
     assert.equal(core.preExecute(exec('write', { file_path: 'docs/a.md' })).kind, 'allow')
   })
 
-  it('clearing a scope returns the session to ungoverned', () => {
+  it('清除作用域让会话回到无人管辖状态', () => {
     const core = governed(['src/'])
     assert.equal(core.clearScope(SESSION), true)
     assert.equal(core.preExecute(exec('write', { file_path: 'outside.c' })).kind, 'allow')
   })
 
-  it('reports governance state for diagnostics', () => {
+  it('为诊断上报管辖状态', () => {
     const core = governed(['src/'])
     const view = core.inspect(SESSION)
     assert.equal(view.governed, true)
@@ -208,7 +208,7 @@ describe('scope lifecycle', () => {
     assert.equal(core.inspect('session-9').governed, false)
   })
 
-  it('refuses a malformed declaration rather than storing a broken scope', () => {
+  it('拒绝格式错误的声明，而不是存下一个坏掉的作用域', () => {
     const core = createGacCore()
     assert.throws(
       () => core.declareScope({ session_id: '', task_id: 't', node_id: 'n', write_scope: [] }),
@@ -220,27 +220,27 @@ describe('scope lifecycle', () => {
     )
   })
 
-  it('an empty declared scope permits nothing', () => {
+  it('已声明的空作用域什么都不放行', () => {
     const core = governed([])
     assert.equal(core.preExecute(exec('write', { file_path: 'anything.c' })).kind, 'deny')
   })
 })
 
-describe('the scope tool must stay callable while a scope is active', () => {
+describe('作用域生效期间作用域工具必须保持可调用', () => {
   // 一个真实缺陷，是在实时会话中运行该门禁、而不是在本套件中发现的：`gac_scope` 不在
   // 已知表里，因此一旦声明了作用域，守卫就会拒绝它。这把作用域变成了陷阱——它无法被
   // 查看、重新声明或释放。
-  it('allows gac_scope, so the current scope can always be inspected', () => {
+  it('放行 gac_scope，使当前作用域总能被查看', () => {
     const core = governed(['src/a.c'])
     assert.equal(core.preExecute(exec('gac_scope', {})).kind, 'allow')
   })
 
-  it('allows gac_scope clear, so a scope can always be released', () => {
+  it('放行 gac_scope clear，使作用域总能被释放', () => {
     const core = governed(['src/a.c'])
     assert.equal(core.preExecute(exec('gac_scope', { clear: true })).kind, 'allow')
   })
 
-  it('allows re-declaring, so a task can advance to its next node', () => {
+  it('放行重新声明，使任务能推进到下一个节点', () => {
     const core = governed(['src/a.c'])
     assert.equal(
       core.preExecute(exec('gac_scope', { task_id: 'REQ-1', node_id: 'T2', scope: ['docs/'] })).kind,
@@ -248,7 +248,7 @@ describe('the scope tool must stay callable while a scope is active', () => {
     )
   })
 
-  it('an empty scope still permits the scope tool — the trap case', () => {
+  it('空作用域仍放行作用域工具 —— 陷阱情形', () => {
     // 空作用域下每一次写入都会被拒绝。如果作用域工具也被拒绝，那就再也没有任何东西能
     // 撤销它了。
     const core = governed([])
@@ -269,13 +269,13 @@ describe('运行时自己的工具不能被它自己执行的作用域挡住', (
   ]
 
   for (const [name, args] of callable) {
-    it(`allows ${name}`, () => {
+    it(`放行 ${name}`, () => {
       const core = governed(['src/a.c'])
       assert.equal(core.preExecute(exec(name, args)).kind, 'allow')
     })
   }
 
-  it('an empty scope still permits them — the worst shape of the same trap', () => {
+  it('空作用域仍放行它们 —— 同一个陷阱最糟糕的形态', () => {
     const core = governed([])
     assert.equal(
       core.preExecute(exec('gac_task', { action: 'advance', task_id: 'REQ-1' })).kind,
@@ -283,14 +283,14 @@ describe('运行时自己的工具不能被它自己执行的作用域挡住', (
     )
   })
 
-  it('product files are still refused: what is allowed is bookkeeping, not the write surface', () => {
+  it('产品文件仍被拒绝：放行的是记账，而不是写入面', () => {
     const core = governed(['src/a.c'])
     assert.equal(core.preExecute(exec('write', { file_path: 'outside.c' })).kind, 'deny')
   })
 })
 
-describe('the nomination of the guard itself', () => {
-  it('every denial states a reason a model can act on', () => {
+describe('守卫自身的说明', () => {
+  it('每一次拒绝都给出模型可以据以行动的原因', () => {
     const core = governed(['src/'])
     const verdicts = [
       core.preExecute(exec('write', { file_path: 'bad.c' })),
@@ -299,7 +299,7 @@ describe('the nomination of the guard itself', () => {
     ]
     for (const verdict of verdicts) {
       assert.equal(verdict.kind, 'deny')
-      assert.ok(verdict.reason.length > 40, 'reason should explain the refusal, not just name it')
+      assert.ok(verdict.reason.length > 40, '拒绝原因应当讲清为什么，而不只是点个名')
     }
   })
 })

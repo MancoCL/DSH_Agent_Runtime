@@ -56,21 +56,21 @@ function harness() {
   }
 }
 
-describe('gac_scope tool shape', () => {
-  it('is named for the model to find', () => {
+describe('gac_scope 工具形状', () => {
+  it('名字便于模型找到它', () => {
     assert.equal(SCOPE_TOOL_NAME, 'gac_scope')
     assert.equal(harness().tool.name, 'gac_scope')
   })
 
-  it('states the enforcement consequence, so the model can plan within it', () => {
+  it('陈述强制执行的后果，好让模型能在这条边界之内做计划', () => {
     const { tool } = harness()
     // 模型看不懂的守卫会变成重试循环，所以描述里必须点明究竟是什么被拒绝了。
-    assert.match(tool.description, /refused before/iu)
-    assert.match(tool.description, /shell/iu)
-    assert.match(tool.description, /case-insensitive/iu)
+    assert.match(tool.description, /被拒绝/u)
+    assert.match(tool.description, /shell/u)
+    assert.match(tool.description, /不区分大小写/u)
   })
 
-  it('declares every parameter it reads', () => {
+  it('声明了它读取的每一个参数', () => {
     const { tool } = harness()
     assert.deepEqual(
       Object.keys(tool.parameters).sort(),
@@ -79,8 +79,8 @@ describe('gac_scope tool shape', () => {
   })
 })
 
-describe('declaring a scope', () => {
-  it('returns a summary naming the permitted paths', async () => {
+describe('声明作用域', () => {
+  it('返回一份点名了允许路径的摘要', async () => {
     const { tool, callExec } = harness()
     const value = await tool.execute({ task_id: 'REQ-1', scope: ['src/a.c'] }, callExec)
     assert.equal(value.governed, true)
@@ -88,26 +88,26 @@ describe('declaring a scope', () => {
     assert.match(value.summary, /src\/a\.c/u)
   })
 
-  it('warns explicitly when the scope is empty, rather than looking benign', async () => {
+  it('在作用域为空时明确警告，而不是显得无害', async () => {
     const { tool, callExec } = harness()
     const value = await tool.execute({ task_id: 'REQ-1', scope: [] }, callExec)
-    assert.match(value.summary, /EMPTY/u)
-    assert.match(value.summary, /every write is now refused/iu)
+    assert.match(value.summary, /空/u)
+    assert.match(value.summary, /任何写入都会被拒绝/u)
   })
 
-  it('defaults node_id to the task id', async () => {
+  it('把 node_id 默认为任务标识', async () => {
     const { tool, callExec } = harness()
     const value = await tool.execute({ task_id: 'REQ-1', scope: ['src/'] }, callExec)
     assert.equal(value.node_id, 'REQ-1')
   })
 
-  it('accepts an explicit node id', async () => {
+  it('接受显式给出的节点标识', async () => {
     const { tool, callExec } = harness()
     const value = await tool.execute({ task_id: 'REQ-1', node_id: 'T3', scope: ['src/'] }, callExec)
     assert.equal(value.node_id, 'T3')
   })
 
-  it('requires a task id when declaring', async () => {
+  it('声明时必须提供任务标识', async () => {
     const { tool, callExec } = harness()
     await assert.rejects(
       () => tool.execute({ scope: ['src/'] }, callExec),
@@ -115,22 +115,22 @@ describe('declaring a scope', () => {
     )
   })
 
-  it('requires an owning session', async () => {
+  it('要求一个拥有它的会话', async () => {
     const { tool } = harness()
-    await assert.rejects(() => tool.execute({ task_id: 'REQ-1', scope: [] }, {}), /session/u)
+    await assert.rejects(() => tool.execute({ task_id: 'REQ-1', scope: [] }, {}), /智能体会话/u)
   })
 })
 
-describe('inspecting a scope', () => {
-  it('reports ungoverned before anything is declared', async () => {
+describe('检视作用域', () => {
+  it('在什么都还没声明时报告处于无管辖状态', async () => {
     const { tool, callExec } = harness()
     const value = await tool.execute({}, callExec)
     assert.equal(value.governed, false)
     assert.deepEqual(value.scope, [])
-    assert.match(value.summary, /no write is being checked/iu)
+    assert.match(value.summary, /不检查任何写入/u)
   })
 
-  it('reports the live declaration after declaring', async () => {
+  it('在声明之后报告当前生效的声明', async () => {
     const { tool, callExec } = harness()
     await tool.execute({ task_id: 'REQ-9', node_id: 'T2', scope: ['docs/'] }, callExec)
     const value = await tool.execute({}, callExec)
@@ -141,27 +141,27 @@ describe('inspecting a scope', () => {
   })
 })
 
-describe('releasing a scope', () => {
-  it('returns the session to ungoverned', async () => {
+describe('释放作用域', () => {
+  it('让会话回到无管辖状态', async () => {
     const { tool, core, callExec, exec } = harness()
     await tool.execute({ task_id: 'REQ-1', scope: ['src/'] }, callExec)
     assert.equal(core.preExecute(exec('write', { file_path: 'outside.c' })).kind, 'deny')
 
     const value = await tool.execute({ clear: true }, callExec)
     assert.equal(value.governed, false)
-    assert.match(value.summary, /released/u)
+    assert.match(value.summary, /写作用域已释放/u)
     assert.equal(core.preExecute(exec('write', { file_path: 'outside.c' })).kind, 'allow')
   })
 
-  it('says so plainly when there was nothing to release', async () => {
+  it('在本来就没有东西可释放时直说', async () => {
     const { tool, callExec } = harness()
     const value = await tool.execute({ clear: true }, callExec)
-    assert.match(value.summary, /No write scope was declared/u)
+    assert.match(value.summary, /没有声明过写作用域/u)
   })
 })
 
-describe('the tool and the guard agree on one scope', () => {
-  it('permits exactly what the tool declared and refuses the rest', async () => {
+describe('工具与守卫对同一个作用域达成一致', () => {
+  it('恰好允许工具所声明的，其余一律拒绝', async () => {
     const { tool, core, callExec, exec } = harness()
     await tool.execute({ task_id: 'REQ-1', scope: ['mod.c'] }, callExec)
 
@@ -171,7 +171,7 @@ describe('the tool and the guard agree on one scope', () => {
     assert.equal(core.preExecute(exec('write', { file_path: 'src/mod.c' })).kind, 'deny')
   })
 
-  it('widens and narrows with re-declaration, never by accumulating', async () => {
+  it('随重新声明而变宽或变窄，绝不靠累积', async () => {
     const { tool, core, callExec, exec } = harness()
     await tool.execute({ task_id: 'REQ-1', node_id: 'T1', scope: ['src/'] }, callExec)
     await tool.execute({ task_id: 'REQ-1', node_id: 'T2', scope: ['docs/'] }, callExec)
@@ -181,7 +181,7 @@ describe('the tool and the guard agree on one scope', () => {
   })
 })
 
-describe('declaring takes a write claim', () => {
+describe('声明会取得一份写占用声明', () => {
   /**
    * 一个其占用记录在两个会话之间共享的工具，用来模拟占用机制存在的目的——
    * 防止那种冲突。
@@ -207,15 +207,15 @@ describe('declaring takes a write claim', () => {
     }
   }
 
-  it('records a claim when a scope is declared', async () => {
+  it('在声明作用域时记录一份占用', async () => {
     const h = claimHarness()
     const value = await h.tool.execute({ task_id: 'REQ-1', scope: ['src/'] }, h.execFor('s-1'))
     assert.equal(value.governed, true)
-    assert.ok(value.claim, 'the declaration should report the claim it took')
+    assert.ok(value.claim, '声明应当报出它取得的占用')
     assert.equal(h.store.get('s-1')?.task_id, 'REQ-1')
   })
 
-  it('refuses a declaration that collides with another session, naming the holder', async () => {
+  it('拒绝与另一个会话相撞的声明，并点名持有者', async () => {
     const h = claimHarness()
     await h.tool.execute({ task_id: 'REQ-1', scope: ['src/'] }, h.execFor('s-1'))
     await assert.rejects(
@@ -229,27 +229,27 @@ describe('declaring takes a write claim', () => {
     )
   })
 
-  it('leaves the loser ungoverned rather than half-declared', async () => {
+  it('让落败的一方保持无管辖状态，而不是半声明状态', async () => {
     // 先记录作用域、再检查占用，会让一个会话被它并不拥有的作用域所管辖——
     // 一个守卫在执行该会话从未获得授权的路径。
     const h = claimHarness()
     await h.tool.execute({ task_id: 'REQ-1', scope: ['src/'] }, h.execFor('s-1'))
     await assert.rejects(
       () => h.tool.execute({ task_id: 'REQ-2', scope: ['src/deep/'] }, h.execFor('s-2')),
-      /refused/u,
+      /被拒绝/u,
     )
-    assert.equal(h.core.inspect('s-2').governed, false, 'a refused declaration must not govern')
-    assert.equal(h.store.get('s-2'), undefined, 'a refused declaration must not leave a claim')
+    assert.equal(h.core.inspect('s-2').governed, false, '被拒绝的声明不得产生管辖')
+    assert.equal(h.store.get('s-2'), undefined, '被拒绝的声明不得留下占用')
   })
 
-  it('lets a second session take a disjoint scope', async () => {
+  it('让第二个会话取得一份互不相交的作用域', async () => {
     const h = claimHarness()
     await h.tool.execute({ task_id: 'REQ-1', scope: ['src/'] }, h.execFor('s-1'))
     const value = await h.tool.execute({ task_id: 'REQ-2', scope: ['test/'] }, h.execFor('s-2'))
     assert.equal(value.governed, true)
   })
 
-  it('does not let a session collide with its own earlier claim', async () => {
+  it('不让一个会话与自己先前的占用相撞', async () => {
     const h = claimHarness()
     await h.tool.execute({ task_id: 'REQ-1', node_id: 'T1', scope: ['src/'] }, h.execFor('s-1'))
     // 重新声明是一个任务推进到下一个节点的方式。
@@ -258,16 +258,16 @@ describe('declaring takes a write claim', () => {
     assert.equal(value.node_id, 'T2')
   })
 
-  it('withdraws the claim on clear', async () => {
+  it('在 clear 时撤回占用', async () => {
     const h = claimHarness()
     await h.tool.execute({ task_id: 'REQ-1', scope: ['src/'] }, h.execFor('s-1'))
     assert.equal(h.store.get('s-1') !== undefined, true)
     const value = await h.tool.execute({ clear: true }, h.execFor('s-1'))
-    assert.match(value.summary, /claim withdrawn/u)
+    assert.match(value.summary, /写占用声明也已撤回/u)
     assert.equal(h.store.get('s-1'), undefined)
   })
 
-  it('releases the paths so another session may then take them', async () => {
+  it('释放这些路径，好让另一个会话随后可以取得它们', async () => {
     const h = claimHarness()
     await h.tool.execute({ task_id: 'REQ-1', scope: ['src/'] }, h.execFor('s-1'))
     await h.tool.execute({ clear: true }, h.execFor('s-1'))
@@ -275,7 +275,7 @@ describe('declaring takes a write claim', () => {
     assert.equal(value.governed, true)
   })
 
-  it('says plainly when no claim could be taken, instead of implying protection', async () => {
+  it('在无法取得任何占用时直说，而不是暗示已有保护', async () => {
     // 没有可解析的根目录就没有占用声明存储。摘要不能让模型在无法排除其他会话时
     // 以为已经被排除了。
     const core = createGacCore()
@@ -285,6 +285,6 @@ describe('declaring takes a write claim', () => {
       { agent: { session: { id: 's-1' } } },
     )
     assert.equal(value.claim, undefined)
-    assert.match(value.summary, /NOT prevented/u)
+    assert.match(value.summary, /不会\*\*被阻止/u)
   })
 })

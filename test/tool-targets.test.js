@@ -32,7 +32,7 @@ describe('分类表把每一类工具都摆在明处', () => {
   ]
 
   for (const [name, kind] of cases) {
-    it(`classifies ${name} as ${kind}`, () => {
+    it(`把 ${name} 归类为 ${kind}`, () => {
       assert.equal(classifyCall(name, {}).kind, kind)
     })
   }
