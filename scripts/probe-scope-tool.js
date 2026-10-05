@@ -14,7 +14,7 @@ import { createScopeTool } from '../lib/tool-scope.js'
 
 const tools = await importDshPackage('@deepseek-ai/dsh-tools')
 if (tools === undefined) {
-  console.log('FAIL: could not import @deepseek-ai/dsh-tools')
+  console.log('FAIL: 无法导入 @deepseek-ai/dsh-tools')
   process.exit(1)
 }
 
@@ -41,4 +41,4 @@ for (const [label, args] of cases) {
 }
 
 console.log('')
-console.log('OK: the tool builds, compiles and executes.')
+console.log('OK: 该工具能构建、编译并执行。')

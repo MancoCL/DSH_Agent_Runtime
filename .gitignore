@@ -1,33 +1,33 @@
-# Dependencies and logs
+# 依赖与日志
 node_modules/
 *.log
 
-# ACL recovery artefacts from the one-shot sandbox repair (not part of the plugin)
+# 一次性沙箱修复留下的 ACL 恢复产物（不属于插件）
 .acl-recovery/
 
-# Per-project adapters are project data, not plugin source
+# 每工程的适配器是工程数据，不是插件源码
 .dsh/gac/local/
 
-# Runtime write-claims are transient coordination state
+# 运行时的写占用是临时协调状态
 .dsh/gac/claims/
 
-# Task records are runtime state, not plugin source
+# 任务记录是运行时状态，不是插件源码
 .dsh/gac/tasks/
 
-# Frozen verification plans are runtime state too
+# 已冻结的验证计划同样是运行时状态
 .dsh/gac/plans/
 
-# Interview records and frozen interface contracts are runtime state
+# 访谈记录与已冻结的接口契约是运行时状态
 .dsh/gac/grilling/
 .dsh/gac/contracts/
 
-# The append-only evidence log is runtime state
+# 只追加的证据日志是运行时状态
 .dsh/gac/evidence/
 
-# OS noise
+# 操作系统噪音文件
 Thumbs.db
 .DS_Store
 
-# scratch commit-message files (one per task, never committed)
+# 提交信息临时文件（每任务一个，永不提交）
 .commitmsg
 .commitmsg-*

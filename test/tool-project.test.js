@@ -60,46 +60,46 @@ function scratch() {
   return root
 }
 
-describe('tool shape', () => {
-  it('is named for the model to find', () => {
+describe('工具形状', () => {
+  it('名字便于模型找到它', () => {
     assert.equal(PROJECT_TOOL_NAME, 'gac_project')
     assert.equal(harness(scratch(), VALID_ADAPTER).tool.name, 'gac_project')
   })
 
-  it('offers exactly the four execution modes, so the ladder is closed', () => {
+  it('恰好提供四种执行模式，因此这架阶梯是闭合的', () => {
     const options = projectToolOptions({ state: new ProjectState() })
     assert.deepEqual([...options.parameters.mode.enum], [...EXECUTION_MODES])
   })
 
-  it('states the consequence of each mode, not just its name', () => {
+  it('陈述每一级的后果，而不只是它的名字', () => {
     const { tool } = harness(scratch(), VALID_ADAPTER)
     // 「standard_task」单独一个词说明不了什么；「由独立验证者检查结果」才是模型
     // 能据以推理的东西。
-    assert.match(tool.description, /no task record is created/iu)
-    assert.match(tool.description, /independent verifier/iu)
-    assert.match(tool.description, /verification plan/iu)
-    assert.match(tool.description, /LOWEST sufficient mode/iu)
+    assert.match(tool.description, /不创建任务记录/u)
+    assert.match(tool.description, /独立验证者/u)
+    assert.match(tool.description, /验证计划/u)
+    assert.match(tool.description, /最低\*\*的够用模式/u)
   })
 
-  it('tells the model not to pre-empt the escalation gate', () => {
+  it('告诉模型不要去抢先规避升级门禁', () => {
     const { tool } = harness(scratch(), VALID_ADAPTER)
-    assert.match(tool.description, /do not try to pre-empt/iu)
+    assert.match(tool.description, /不要试图抢先规避/u)
   })
 
-  it('declares every parameter it reads, none of them required', () => {
+  it('声明了它读取的每一个参数，且没有一个是必填的', () => {
     const options = projectToolOptions({ state: new ProjectState() })
     assert.deepEqual(
       Object.keys(options.parameters).sort(),
       ['ambiguous', 'irreversible', 'mode', 'reason', 'target_paths'],
     )
     for (const [name, spec] of Object.entries(options.parameters)) {
-      assert.equal(Object.hasOwn(spec, 'required'), false, `${name} must omit the required key`)
+      assert.equal(Object.hasOwn(spec, 'required'), false, `${name} 必须省略 required 键`)
     }
   })
 })
 
-describe('inspection', () => {
-  it('surfaces the adapter, its high-risk paths and its capabilities', async () => {
+describe('检视', () => {
+  it('呈现适配器、它的高风险路径与它的能力', async () => {
     const { tool, exec } = harness(scratch(), VALID_ADAPTER)
     const value = await tool.execute({}, exec)
     assert.equal(value.governed, true)
@@ -109,85 +109,85 @@ describe('inspection', () => {
     assert.match(value.summary, /Proj/u)
   })
 
-  it('says plainly that an adapter-less project is ungoverned', async () => {
+  it('直白说明没有适配器的工程处于无管辖状态', async () => {
     const { tool, exec } = harness(scratch(), undefined)
     const value = await tool.execute({}, exec)
     assert.equal(value.governed, false)
     assert.equal(value.adapter_status, 'absent')
-    assert.match(value.summary, /ungoverned/u)
+    assert.match(value.summary, /无管辖状态/u)
   })
 
-  it('reports an invalid adapter rather than pretending there is none', async () => {
+  it('把无效适配器报成无效，而不是假装根本没有适配器', async () => {
     const { tool, exec } = harness(scratch(), '{ broken')
     const value = await tool.execute({}, exec)
     assert.equal(value.adapter_status, 'invalid')
-    assert.match(value.summary, /not valid JSON/u)
+    assert.match(value.summary, /不是合法 JSON/u)
   })
 
-  it('reports the current mode when one is declared', async () => {
+  it('在声明了模式时报告当前模式', async () => {
     const root = scratch()
     const { tool, exec } = harness(root, VALID_ADAPTER)
-    await tool.execute({ mode: 'standard_task', reason: 'ordinary bugfix' }, exec)
+    await tool.execute({ mode: 'standard_task', reason: '普通缺陷修复' }, exec)
     const value = await tool.execute({}, exec)
     assert.equal(value.mode, 'standard_task')
-    assert.match(value.summary, /Current mode: standard_task/u)
+    assert.match(value.summary, /当前模式：standard_task/u)
   })
 })
 
-describe('declaring a mode', () => {
-  it('records a declaration and explains what it commits to', async () => {
+describe('声明模式', () => {
+  it('记录一次声明，并说明它承诺了什么', async () => {
     const { tool, exec } = harness(scratch(), VALID_ADAPTER)
     const value = await tool.execute({
       mode: 'standard_task',
-      reason: 'ordinary bugfix',
+      reason: '普通缺陷修复',
       target_paths: ['src/feature.c'],
     }, exec)
     assert.equal(value.mode, 'standard_task')
     assert.equal(value.escalated, false)
-    assert.match(value.summary, /independent verifier/iu)
+    assert.match(value.summary, /独立验证者/u)
   })
 
-  it('escalates a high-risk target and says so', async () => {
+  it('把高风险目标升级，并把这件事说出来', async () => {
     const { tool, exec } = harness(scratch(), VALID_ADAPTER)
     const value = await tool.execute({
       mode: 'direct_edit',
-      reason: 'tweak one comparison',
+      reason: '调整一处比较',
       target_paths: ['src/auth/token.c'],
     }, exec)
     assert.equal(value.mode, 'high_risk_task')
     assert.equal(value.escalated, true)
     assert.equal(value.escalated_from, 'direct_edit')
-    assert.match(value.summary, /Escalated from direct_edit/u)
-    assert.match(value.summary, /verification plan/iu)
+    assert.match(value.summary, /已从 direct_edit 升级为 high_risk_task/u)
+    assert.match(value.summary, /验证计划/u)
   })
 
-  it('says a direct_edit creates no task record', async () => {
+  it('说明 direct_edit 不创建任务记录', async () => {
     const { tool, exec } = harness(scratch(), VALID_ADAPTER)
     const value = await tool.execute({
       mode: 'direct_edit',
-      reason: 'one constant',
+      reason: '改一个常量',
       target_paths: ['config/app.json'],
     }, exec)
-    assert.match(value.summary, /No task record is created/u)
+    assert.match(value.summary, /这一级别不创建任务记录/u)
   })
 
-  it('flags a declaration it could not check, rather than implying it did', async () => {
+  it('标出它无法核对的那次声明，而不是暗示自己核对过了', async () => {
     const { tool, exec } = harness(scratch(), undefined)
-    const value = await tool.execute({ mode: 'standard_task', reason: 'bugfix' }, exec)
-    assert.match(value.summary, /NOT cross-checked/u)
+    const value = await tool.execute({ mode: 'standard_task', reason: '缺陷修复' }, exec)
+    assert.match(value.summary, /没有\*\*与高风险路径做交叉检查/u)
   })
 
-  it('refuses to declare a mode with no resolvable project root', async () => {
+  it('在没有可解析工程根目录时拒绝声明模式', async () => {
     const root = scratch()
     const h = harness(root, VALID_ADAPTER)
     h.setRoot(undefined)
     await assert.rejects(
       () => h.tool.execute({ mode: 'direct_edit' }, h.exec),
-      /no resolvable project root/u,
+      /无法声明模式/u,
     )
   })
 
-  it('inspects a rootless session with a sentence, not a TypeError', async () => {
+  it('用一句话检视没有根目录的会话，而不是抛 TypeError', async () => {
     // 更早的版本在检视时解引用了缺席的适配器，于是把异常抛给模型，而不是把情况
     // 说清楚。
     const root = scratch()
@@ -197,10 +197,10 @@ describe('declaring a mode', () => {
     assert.equal(value.governed, false)
     assert.equal(value.adapter_status, 'unresolvable')
     assert.deepEqual(value.high_risk_paths, [])
-    assert.match(value.summary, /no resolvable project root/u)
+    assert.match(value.summary, /没有可解析出的工程根目录/u)
   })
 
-  it('rejects an unknown mode', async () => {
+  it('拒绝未知的模式', async () => {
     const { tool, exec } = harness(scratch(), VALID_ADAPTER)
     await assert.rejects(
       () => tool.execute({ mode: 'quick_fix' }, exec),
@@ -208,12 +208,12 @@ describe('declaring a mode', () => {
     )
   })
 
-  it('requires an owning session', async () => {
+  it('要求一个拥有它的会话', async () => {
     const { tool } = harness(scratch(), VALID_ADAPTER)
-    await assert.rejects(() => tool.execute({}, {}), /session/u)
+    await assert.rejects(() => tool.execute({}, {}), /智能体会话/u)
   })
 
-  it('treats an empty mode as inspection, not as a declaration', async () => {
+  it('把空的模式当作检视，而不是当作声明', async () => {
     const { tool, exec } = harness(scratch(), VALID_ADAPTER)
     const value = await tool.execute({ mode: '' }, exec)
     assert.equal(value.mode, undefined)
@@ -221,12 +221,12 @@ describe('declaring a mode', () => {
   })
 })
 
-describe('escalation is recorded for auditing', () => {
-  it('keeps the declared mode alongside the resolved one', async () => {
+describe('升级会被记录下来以备审计', () => {
+  it('把声明的模式与最终解析出的模式并列保留', async () => {
     const { tool, state, exec } = harness(scratch(), VALID_ADAPTER)
     await tool.execute({
       mode: 'direct_edit',
-      reason: 'one comparison',
+      reason: '改一处比较',
       target_paths: ['src/auth/token.c'],
     }, exec)
     const recorded = state.modeFor('session-1')

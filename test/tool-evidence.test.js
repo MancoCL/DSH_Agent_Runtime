@@ -44,7 +44,7 @@ function record(id, overrides = {}) {
     output_digest: 'd',
     output_bytes: 10,
     output_truncated: false,
-    output_preview: 'all tests passed',
+    output_preview: '全部测试通过',
     ...overrides,
   }
 }
@@ -96,7 +96,7 @@ describe('V4/V5 —— AC2：每条含号、工具、参数前缀、产出前缀
     assert.equal(projected.id, 'ev-1')
     assert.equal(projected.tool, 'pwsh')
     assert.equal(projected.arguments_preview, '{"command":"npm test"}')
-    assert.equal(projected.output_preview, 'all tests passed')
+    assert.equal(projected.output_preview, '全部测试通过')
   })
 
   it('V5 反例：投影丢掉参数或产出前缀时，本断言会失败', () => {
@@ -346,7 +346,7 @@ describe('render —— 模型实际读到什么', () => {
     const value = await tool.execute({}, { agent: { session: { id: 's1' } } })
     const text = tool.output.render({}, value).map((block) => block.text).join('\n')
     assert.match(text, /npm test/u, '应当能看到命令原文')
-    assert.match(text, /all tests passed/u, '应当能看到产出')
+    assert.match(text, /全部测试通过/u, '应当能看到产出')
   })
 
   it('不可用的证据在渲染里被标出来，并给出原因', async () => {

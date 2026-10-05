@@ -38,21 +38,21 @@ const modules = await discoverModules()
 
 describe('lib/ 里确实有模块可被发现', () => {
   it('发现到不止一个模块', () => {
-    assert.ok(modules.length > 1, `expected modules in ${libDir}, found ${modules.length}`)
+    assert.ok(modules.length > 1, `期望 ${libDir} 里有模块，实际只找到 ${modules.length} 个`)
   })
 })
 
-describe('every library module parses and imports', () => {
+describe('lib/ 里每个模块都能解析并导入', () => {
   for (const file of modules) {
-    it(`imports lib/${file}`, async () => {
+    it(`导入 lib/${file}`, async () => {
       const loaded = await import(`../lib/${file}`)
       assert.equal(typeof loaded, 'object')
     })
   }
 })
 
-describe('the entry point satisfies the Cordis plugin contract', () => {
-  it('exports name, inject and apply', async () => {
+describe('入口点满足 Cordis 插件契约', () => {
+  it('导出 name、inject 与 apply', async () => {
     const entry = await import('../lib/index.js')
     assert.equal(typeof entry.name, 'string')
     assert.ok(entry.name.length > 0)
@@ -60,14 +60,14 @@ describe('the entry point satisfies the Cordis plugin contract', () => {
     assert.equal(typeof entry.apply, 'function')
   })
 
-  it('declares the services its guard actually reads', async () => {
+  it('声明守卫真正读取的服务', async () => {
     const entry = await import('../lib/index.js')
     // 守卫通过 `sessions` 解析会话的 cwd，并通过 `tools` 进行拦截。声明得更少会让插件
     // 加载进一个它无法履职的组合里。
     assert.deepEqual([...entry.inject].sort(), ['sessions', 'tools'])
   })
 
-  it('apply is awaitable, because it resolves a package before registering', async () => {
+  it('apply 可以被 await，因为它在注册之前先解析包', async () => {
     const entry = await import('../lib/index.js')
     // 正是异步函数让 DSH 包的解析发生在 effect 主体之前——后者是一个生成器，不能含有
     // `await`。
@@ -75,8 +75,8 @@ describe('the entry point satisfies the Cordis plugin contract', () => {
   })
 })
 
-describe('the entry point defers DSH imports to call time', () => {
-  it('has no static import of a bare @deepseek-ai package', async () => {
+describe('入口点把 DSH 导入推迟到调用时', () => {
+  it('没有对裸 @deepseek-ai 包的静态导入', async () => {
     const source = await readFile(join(libDir, 'index.js'), 'utf8')
     // 在模块作用域做裸导入会在加载器求值该模块时抛错，而这发生在 `apply` 能上报可诊断
     // 原因之前。顶层只允许从相对路径导入的值。
@@ -86,12 +86,12 @@ describe('the entry point defers DSH imports to call time', () => {
 })
 
 describe('resolve-dsh', () => {
-  it('degrades to undefined rather than throwing for an unknown package', async () => {
+  it('未知包退化为 undefined，而不是抛错', async () => {
     const { resolveDshPackage } = await import('../lib/resolve-dsh.js')
     assert.equal(resolveDshPackage('@deepseek-ai/definitely-not-a-real-package'), undefined)
   })
 
-  it('finds the DSH runtime on this machine, or reports that it did not', async () => {
+  it('在本机找到 DSH 运行时，或如实报告没找到', async () => {
     const { resolveDshPackage } = await import('../lib/resolve-dsh.js')
     const resolved = resolveDshPackage('@deepseek-ai/dsh-tools')
     // 不把它当作硬性要求来断言：没有安装 DSH 的贡献者仍应能跑单元测试套件。当它确实

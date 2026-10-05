@@ -39,7 +39,7 @@ function mode(overrides = {}) {
     declared_mode: 'standard_task',
     escalated: false,
     risk: 'medium',
-    reason: 'behaviour changes and real testing is needed',
+    reason: '行为有变更，需要真实测试',
     ...overrides,
   }
 }
@@ -73,18 +73,18 @@ describe('段落什么时候出现、什么时候整段消失', () => {
     assert.match(text, /gac_project/u)
     assert.match(text, /gac_scope/u)
     assert.ok(text.includes(ADAPTER_RELATIVE_PATH), '应当指出纳管凭据在哪个文件里')
-    assert.match(text, /No execution mode has been declared/u)
+    assert.match(text, /还没有声明执行模式/u)
   })
 
   it('未纳管却声明了模式时，如实说明没有做过高风险路径核对', () => {
     const text = gacPromptText({ mode: mode() })
-    assert.match(text, /no GAC adapter/u)
-    assert.match(text, /not\s+checked against declared high-risk paths/u)
+    assert.match(text, /没有 GAC 适配器/u)
+    assert.match(text, /没有与已声明的高风险路径做过核对/u)
   })
 
   it('未纳管却只声明了写作用域时，也能说清自己处于什么状态', () => {
     const text = gacPromptText({ scope: scope() })
-    assert.match(text, /no GAC adapter/u)
+    assert.match(text, /没有 GAC 适配器/u)
     assert.match(text, /REQ-DEMO/u)
   })
 })
@@ -93,8 +93,8 @@ describe('段落说出的当前模式', () => {
   it('带上模式、风险与理由', () => {
     const text = gacPromptText({ adapter, mode: mode() })
     assert.match(text, /standard_task/u)
-    assert.match(text, /risk medium/u)
-    assert.match(text, /behaviour changes and real testing/u)
+    assert.match(text, /风险 medium/u)
+    assert.match(text, /行为有变更，需要真实测试/u)
   })
 
   it('升级过的模式会说出它从哪里升上来的', () => {
@@ -102,12 +102,12 @@ describe('段落说出的当前模式', () => {
       adapter,
       mode: mode({ mode: 'high_risk_task', declared_mode: 'direct_edit', escalated: true, escalated_from: 'direct_edit', risk: 'high' }),
     })
-    assert.match(text, /escalated from `direct_edit`/u)
+    assert.match(text, /从 `direct_edit` 升级而来/u)
   })
 
   it('未核对的声明会在段落里被标记出来', () => {
     const text = gacPromptText({ adapter, mode: mode({ unchecked: true }) })
-    assert.match(text, /not cross-checked/u)
+    assert.match(text, /没有做过交叉核对/u)
   })
 
   it('每一级模式都有一句义务，且真会出现在段落里', () => {
@@ -125,8 +125,8 @@ describe('段落说出的当前模式', () => {
 describe('段落说出的当前写作用域', () => {
   it('列出任务、节点与允许写入的路径', () => {
     const text = gacPromptText({ adapter, mode: mode(), scope: scope() })
-    assert.match(text, /task `REQ-DEMO`/u)
-    assert.match(text, /node `build`/u)
+    assert.match(text, /任务 `REQ-DEMO`/u)
+    assert.match(text, /节点 `build`/u)
     assert.match(text, /lib\//u)
     assert.match(text, /test\/prompt-section\.test\.js/u)
   })
@@ -140,17 +140,17 @@ describe('段落说出的当前写作用域', () => {
     ]) {
       assert.ok(text.includes(code), `段落里缺少拒绝码 ${code}`)
     }
-    assert.match(text, /not an obstacle to route around/u)
+    assert.match(text, /不是要绕开的障碍/u)
   })
 
   it('空作用域说的是「什么都不许写」，而不是留白', () => {
     const text = gacPromptText({ adapter, mode: mode(), scope: scope({ write_scope: [] }) })
-    assert.match(text, /\[nothing\]/u)
+    assert.match(text, /\[无\]/u)
   })
 
   it('声明了任务级模式却没有作用域时，说明还没有任何写入在被检查', () => {
     const text = gacPromptText({ adapter, mode: mode() })
-    assert.match(text, /No write scope is active/u)
+    assert.match(text, /没有写作用域生效/u)
   })
 
   it('作用域里的路径只取字符串，别的类型被忽略而不是渲染成 [object Object]', () => {
@@ -178,7 +178,7 @@ describe('段落永不把异常交给装配管线', () => {
   it('状态读取器抛错时返回空串，并把异常交给诊断出口', () => {
     const seen = []
     const section = createPromptSection({
-      adapterFor: () => { throw new Error('adapter reader exploded') },
+      adapterFor: () => { throw new Error('适配器读取器抛错') },
       modeFor: () => mode(),
       scopeFor: () => undefined,
       onError: (error) => seen.push(error),
@@ -186,20 +186,20 @@ describe('段落永不把异常交给装配管线', () => {
     const text = section.text({ agent: { session: { id: 'session-1' } } })
     assert.equal(text, '')
     assert.equal(seen.length, 1)
-    assert.match(seen[0].message, /reader exploded/u)
+    assert.match(seen[0].message, /适配器读取器抛错/u)
   })
 
   it('诊断出口自己也抛错时依然是空串', () => {
     const section = createPromptSection({
-      modeFor: () => { throw new Error('boom') },
-      onError: () => { throw new Error('the diagnostic is broken too') },
+      modeFor: () => { throw new Error('炸了') },
+      onError: () => { throw new Error('诊断出口也坏了') },
     })
     assert.equal(section.text({ agent: { session: { id: 'session-1' } } }), '')
   })
 
   it('没有会话（全局装配）时不发声', () => {
     const section = createPromptSection({
-      adapterFor: () => { throw new Error('must not even be consulted') },
+      adapterFor: () => { throw new Error('这个读取器根本不该被调用') },
     })
     for (const context of hostile) {
       const text = section.text(context)

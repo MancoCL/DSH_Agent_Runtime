@@ -61,8 +61,8 @@ function declaration(sessionId, scope, overrides = {}) {
   }
 }
 
-describe('acquiring a claim', () => {
-  it('writes one claim file per session', () => {
+describe('获取占用声明', () => {
+  it('每个会话写一个占用声明文件', () => {
     const root = scratch()
     const { store } = storeAt(root)
     const result = store.acquire(declaration('s-1', ['src/']))
@@ -72,7 +72,7 @@ describe('acquiring a claim', () => {
     assert.equal(files.length, 1)
   })
 
-  it('reports the holder when the scope is already taken', () => {
+  it('作用域已被占用时上报持有者', () => {
     const root = scratch()
     const { store } = storeAt(root)
     store.acquire(declaration('s-1', ['src/'], { task_id: 'REQ-1', node_id: 'T1' }))
@@ -82,7 +82,7 @@ describe('acquiring a claim', () => {
     assert.equal(result.conflict.claimed, 'src/')
   })
 
-  it('lets a second session take a disjoint scope', () => {
+  it('允许第二个会话取走互不相交的作用域', () => {
     const root = scratch()
     const { store } = storeAt(root)
     store.acquire(declaration('s-1', ['src/']))
@@ -90,7 +90,7 @@ describe('acquiring a claim', () => {
     assert.equal(result.acquired, true)
   })
 
-  it('does not let a session collide with its own earlier claim', () => {
+  it('不让一个会话与自己早先的占用声明相撞', () => {
     const root = scratch()
     const { store } = storeAt(root)
     store.acquire(declaration('s-1', ['src/']))
@@ -99,8 +99,8 @@ describe('acquiring a claim', () => {
   })
 })
 
-describe('two independent stores see each other through the filesystem', () => {
-  it('blocks a colliding declaration made by a separate instance', () => {
+describe('两个相互独立的存储通过文件系统看见彼此', () => {
+  it('挡住另一个实例做出的相撞声明', () => {
     // 模拟两个会话，或同一个检出上的两个进程。一份内存中的注册表会通过
     // 单存储测试，却会在这个测试上失败。
     const root = scratch()
@@ -113,7 +113,7 @@ describe('two independent stores see each other through the filesystem', () => {
     assert.equal(blocked.conflict.claim.session_id, 's-1')
   })
 
-  it('sees a release made by the other instance', () => {
+  it('看见另一个实例做出的释放', () => {
     const root = scratch()
     const first = storeAt(root).store
     const second = storeAt(root).store
@@ -125,18 +125,18 @@ describe('two independent stores see each other through the filesystem', () => {
   })
 })
 
-describe('release authorisation', () => {
-  it('refuses to release a claim on behalf of another session', () => {
+describe('释放授权', () => {
+  it('拒绝替另一个会话释放占用声明', () => {
     // 前身运行时把这一点记为真实缺陷：一个指名了别人 dispatch id 的结果，
     // 能在对方的工作仍在飞行中时释放他们的守卫。
     const root = scratch()
     const { store } = storeAt(root)
     store.acquire(declaration('s-1', ['src/']))
     assert.equal(store.release('s-1', 's-2'), false)
-    assert.equal(store.get('s-1') !== undefined, true, 'the claim must survive a forged release')
+    assert.equal(store.get('s-1') !== undefined, true, '伪造的释放不得动到这份占用声明')
   })
 
-  it('releases for the session that holds it', () => {
+  it('为持有它的那个会话释放', () => {
     const root = scratch()
     const { store } = storeAt(root)
     store.acquire(declaration('s-1', ['src/']))
@@ -145,8 +145,8 @@ describe('release authorisation', () => {
   })
 })
 
-describe('orphaned claims', () => {
-  it('does not prune while liveness is unknown', () => {
+describe('孤儿占用声明', () => {
+  it('存活状态未知时不清理', () => {
     // 没有宿主对存活会话的视角时，一条陈旧的占用声明会被保留：阻塞一位写者
     // 是可恢复的，两位写者落在同一个文件上则不是。年龄从不会被当作死亡。
     const root = scratch()
@@ -155,7 +155,7 @@ describe('orphaned claims', () => {
     assert.deepEqual(store.orphans(), [])
   })
 
-  it('reports a claim whose session has departed as an orphan', () => {
+  it('把会话已离场的占用声明上报为孤儿', () => {
     const root = scratch()
     const { store, setLive } = storeAt(root, ['s-1'])
     store.acquire(declaration('s-1', ['src/']))
@@ -164,7 +164,7 @@ describe('orphaned claims', () => {
     assert.equal(store.orphans().length, 1)
   })
 
-  it('prunes an orphan before judging a conflict, so a dead session stops blocking', () => {
+  it('在裁定冲突之前先清理孤儿，让死会话不再阻塞', () => {
     const root = scratch()
     const { store, setLive } = storeAt(root, ['s-1'])
     store.acquire(declaration('s-1', ['src/']))
@@ -173,7 +173,7 @@ describe('orphaned claims', () => {
     assert.equal(result.acquired, true)
   })
 
-  it('never prunes a live session’s claim', () => {
+  it('绝不清理存活会话的占用声明', () => {
     const root = scratch()
     const { store, setLive } = storeAt(root, ['s-1'])
     store.acquire(declaration('s-1', ['src/']))
@@ -182,7 +182,7 @@ describe('orphaned claims', () => {
     assert.equal(store.get('s-1') !== undefined, true)
   })
 
-  it('does not let a known-live session’s claim be pruned by another session acquiring', () => {
+  it('不让已知存活的会话的占用声明被另一个会话的获取清理掉', () => {
     // 那个真正要紧的回归：一个未知或空的存活集合，绝不能读成「现有的持有者
     // 已经死了」。
     const root = scratch()
@@ -190,22 +190,22 @@ describe('orphaned claims', () => {
     store.acquire(declaration('s-1', ['src/']))
     setLive(['s-1'])
     store.acquire(declaration('s-2', ['test/']))
-    assert.equal(store.get('s-1') !== undefined, true, 'the live holder must keep its claim')
+    assert.equal(store.get('s-1') !== undefined, true, '存活持有者的占用声明必须保住')
   })
 
-  it('treats a failing liveness predicate as “keep everything”, not “all dead”', () => {
+  it('把抛错的存活判定函数当作「全部保留」，而不是「全部已死」', () => {
     const root = scratch()
     const store = new ClaimStore({
       root,
-      liveSessions: () => { throw new Error('session store unavailable') },
+      liveSessions: () => { throw new Error('会话存储不可用') },
     })
     store.acquire(declaration('s-1', ['src/']))
     assert.deepEqual(store.orphans(), [])
   })
 })
 
-describe('unreadable claims are reported, not skipped', () => {
-  it('reports a malformed claim file and keeps it on disk', () => {
+describe('读不了的占用声明要上报，而不是跳过', () => {
+  it('上报格式错误的占用声明文件，并把它留在盘上', () => {
     const root = scratch()
     const { store } = storeAt(root)
     store.acquire(declaration('s-1', ['src/']))
@@ -221,7 +221,7 @@ describe('unreadable claims are reported, not skipped', () => {
     assert.equal(existsSync(broken), true)
   })
 
-  it('reports a claim whose filename disagrees with its session_id', () => {
+  it('上报文件名与 session_id 不一致的占用声明', () => {
     const root = scratch()
     const { store } = storeAt(root)
     const directory = join(root, ...CLAIMS_RELATIVE_DIR.split('/'))
@@ -232,10 +232,10 @@ describe('unreadable claims are reported, not skipped', () => {
       write_scope: ['src/'], created_at: 0, heartbeat_at: 0,
     }), 'utf8')
     const view = store.inspect()
-    assert.equal(view.unreadable.some((entry) => /does not match/u.test(entry.reason)), true)
+    assert.equal(view.unreadable.some((entry) => /文件名与 session_id 不一致/u.test(entry.reason)), true)
   })
 
-  it('reports an unreadable claims directory rather than calling it empty', () => {
+  it('把读不了的占用声明目录上报出来，而不是称它为空', () => {
     // 对不存在的目录，`list()` 返回 [] 是正确的 —— 那里还没有任何占用声明。
     // 绝不能发生的是：把一个「存在」却读不了的目录当作空目录，因为那样一位
     // 写者就会在持有者未知的情况下继续动手。
@@ -244,11 +244,11 @@ describe('unreadable claims are reported, not skipped', () => {
     writeFileSync(asFile, 'x', 'utf8')
     const broken = new ClaimStore({ root: asFile, liveSessions: () => [] })
     assert.deepEqual(broken.list(), [])
-    assert.equal(broken.unreadable.length, 1, 'an unreadable directory must be reported')
-    assert.match(broken.inspect().unreadable[0].reason, /ENOTDIR|EEXIST|not a directory/iu)
+    assert.equal(broken.unreadable.length, 1, '读不了的目录必须被上报')
+    assert.match(broken.inspect().unreadable[0].reason, /项目根目录不是目录/u)
   })
 
-  it('treats a genuinely missing claims directory as empty, not as an error', () => {
+  it('把确实不存在的占用声明目录当作空，而不是当作错误', () => {
     const root = scratch()
     const store = new ClaimStore({ root, liveSessions: () => [] })
     assert.deepEqual(store.list(), [])
@@ -256,8 +256,8 @@ describe('unreadable claims are reported, not skipped', () => {
   })
 })
 
-describe('filenames are safe', () => {
-  it('keeps a crafted session id inside the claims directory', () => {
+describe('文件名是安全的', () => {
+  it('把精心构造的会话 id 关在占用声明目录之内', () => {
     // 检查的是占用声明落在存储目录「内部」，而且能按它自己的 id 读回来。
     // 这个测试更早的版本断言不存在一个同级文件，那并不可靠：那个同级路径会
     // 解析进共享的临时目录，可能因为无关的原因早已存在，于是测试的通过或
@@ -269,15 +269,15 @@ describe('filenames are safe', () => {
 
     const directory = join(root, ...CLAIMS_RELATIVE_DIR.split('/'))
     const files = readdirSync(directory)
-    assert.equal(files.length, 1, 'exactly one file, inside the claims directory')
+    assert.equal(files.length, 1, '占用声明目录内必须恰好一个文件')
     // 要紧的是没有任何路径「分隔符」存活下来。一旦分隔符被百分号编码，字面
     // 的 `..` 子串就是无害的，所以断言它不存在，测的会是错误的性质。
-    assert.equal(/[\\/]/u.test(files[0]), false, `filename must not contain a separator: ${files[0]}`)
+    assert.equal(/[\\/]/u.test(files[0]), false, `文件名不得含分隔符: ${files[0]}`)
     // 无损往返：原始 id 在编码之后仍然存活。
     assert.equal(store.get(hostile)?.session_id, hostile)
   })
 
-  it('encodes a separator rather than dropping it', () => {
+  it('对分隔符做编码，而不是丢掉它', () => {
     const root = scratch()
     const { store } = storeAt(root)
     store.acquire(declaration('a/b', ['src/']))
@@ -288,8 +288,8 @@ describe('filenames are safe', () => {
   })
 })
 
-describe('heartbeat', () => {
-  it('refreshes an existing claim', () => {
+describe('心跳', () => {
+  it('刷新一条已存在的占用声明', () => {
     const root = scratch()
     let clock = 1000
     const store = new ClaimStore({ root, liveSessions: () => ['s-1'], now: () => clock })
@@ -299,15 +299,15 @@ describe('heartbeat', () => {
     assert.equal(store.get('s-1').heartbeat_at, 5000)
   })
 
-  it('reports false when there is nothing to refresh', () => {
+  it('没有可刷新的东西时上报 false', () => {
     const root = scratch()
     const { store } = storeAt(root)
     assert.equal(store.heartbeat('s-absent'), false)
   })
 })
 
-describe('store construction', () => {
-  it('requires a project root', () => {
+describe('存储构造', () => {
+  it('要求一个项目根目录', () => {
     assert.throws(() => new ClaimStore({}), TypeError)
     assert.throws(() => new ClaimStore({ root: '' }), TypeError)
   })

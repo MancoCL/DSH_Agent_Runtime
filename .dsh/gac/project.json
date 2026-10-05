@@ -2,7 +2,7 @@
   "schema_version": 1,
   "project": {
     "id": "dsh-gac-runtime",
-    "title": "GAC runtime plugin for DeepSeek Harness"
+    "title": "DeepSeek Harness 的 GAC 运行时插件"
   },
   "capabilities": [
     "implementation",

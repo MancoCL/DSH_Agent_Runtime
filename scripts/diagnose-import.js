@@ -30,7 +30,7 @@ console.log('resolved :', resolved)
 
 try {
   const imported = await import(resolved)
-  console.log('import   : OK, exports =', Object.keys(imported).slice(0, 12).join(', '))
+  console.log('import   : OK，导出 =', Object.keys(imported).slice(0, 12).join(', '))
   console.log('defineTool:', typeof imported.defineTool)
 } catch (error) {
   console.log('import   : FAILED')
@@ -38,7 +38,7 @@ try {
   console.log('  code   :', error?.code)
   console.log('  message:', error?.message)
   console.log('')
-  console.log('retrying via pathToFileURL...')
+  console.log('改用 pathToFileURL 重试……')
   try {
     const imported = await import(pathToFileURL(resolved).href)
     console.log('  pathToFileURL import: OK, defineTool =', typeof imported.defineTool)

@@ -1,109 +1,80 @@
 # dsh-gac-runtime
 
-GAC (Governed Agent Collaboration) runtime for DeepSeek Harness.
+面向 DeepSeek Harness 的 GAC（Governed Agent Collaboration）运行时。
 
-A DSH plugin that adds **risk-tiered execution modes, a strict write scope, write
-claims, and independent verification** on top of the harness kernel. It does not
-reimplement scheduling, sessions, subagents or approval — the harness owns those
-(see [GAC-DSH-ADAPTATION-PLAN.md](GAC-DSH-ADAPTATION-PLAN.md) §1).
+这是一个 DSH 插件，在 harness 内核之上加上**按风险分级的执行模式、严格的写作用域、写占用声明与独立验证**。它不重新实现调度、会话、子代理或审批——那些由 harness 拥有（见 [GAC-DSH-ADAPTATION-PLAN.md](GAC-DSH-ADAPTATION-PLAN.md) §1）。
 
 ```text
-Harness kernel  →  sessions, events, tools, subagents, workflow, approval, sandbox
-GAC plugin      →  execution mode, write scope, write claims, verification, evidence
+Harness kernel  →  会话、事件、工具、子代理、工作流、审批、沙箱
+GAC plugin      →  执行模式、写作用域、写占用声明、验证、证据
 ```
 
 ---
 
-## Status
+## 状态
 
-| Phase | Component | State |
+| 阶段 | 组件 | 状态 |
 | --- | --- | --- |
-| 0 | `lib/write-scope.js` — strict containment | done, 35 tests |
-| 0 | `lib/project.js` — Project Adapter + mode escalation | done, 30 tests |
-| 0 | `lib/tool-targets.js` — what counts as a write | done |
-| 0 | `lib/plugin.js` — the `tools/pre-execute` gate | done, 28 tests |
-| 0.5 | `lib/tool-scope.js` — the `gac_scope` tool | done |
-| 0.5 | `lib/index.js` — DSH shell, installed in the `core-020` profile | **verified in a live session** |
-| 1 | `lib/project-state.js` — Project Adapter loaded from `.dsh/gac/project.json` | done |
-| 1 | `lib/tool-project.js` — `gac_project`: adapter inspection + mode declaration | done |
-| 1 | `lib/prompt-section.js` — the GAC state in the model's own system prompt | done, 24 tests, verified live |
-| 2 | `lib/claims.js` + `lib/claim-store.js` — write claims | done |
-| 3 | `lib/coordinator.js` — DAG, ready nodes, state transitions | done (logic) |
-| 3 | `lib/task-store.js` + `lib/tool-task.js` — durable task records, `gac_task` | done |
-| 3 | `lib/capability-router.js` + `lib/executor.js` — dispatch actually invokes | done |
-| 4 | `lib/verification.js` — plan, falsification, traceability gates | done |
-| 4 | Plan and evidence gates wired into `gac_task` | done |
-| 5 | `lib/grilling.js` — multi-round requirement refinement | done |
-| 5 | `lib/contract.js` — interface contract freeze | done |
-| 6 | `lib/evidence.js` + `lib/evidence-store.js` — runtime-issued evidence | done |
-| 6 | `lib/metrics.js` + `lib/tool-metrics.js` — metrics with a read-only outlet | done |
-| 6 | `lib/tool-evidence.js` — evidence ids discoverable, so they can be cited | done |
-| 5 | `lib/gac-events.js` — GAC events in the session log + message projection | done (visibility, not state authority) |
-| 7 | Legacy cutover — disposition and E2E status recorded | recorded in [docs/CUTOVER.md](docs/CUTOVER.md); nothing outside this repo is touched |
+| 0 | `lib/write-scope.js` —— 严格的包含判定 | 已完成，35 个测试 |
+| 0 | `lib/project.js` —— Project Adapter + 模式升级 | 已完成，30 个测试 |
+| 0 | `lib/tool-targets.js` —— 什么算作一次写入 | 已完成 |
+| 0 | `lib/plugin.js` —— `tools/pre-execute` 门禁 | 已完成，28 个测试 |
+| 0.5 | `lib/tool-scope.js` —— `gac_scope` 工具 | 已完成 |
+| 0.5 | `lib/index.js` —— DSH 外壳，已装进 `core-020` profile | **已在真实会话中验证** |
+| 1 | `lib/project-state.js` —— 从 `.dsh/gac/project.json` 加载 Project Adapter | 已完成 |
+| 1 | `lib/tool-project.js` —— `gac_project`：检查适配器 + 声明模式 | 已完成 |
+| 1 | `lib/prompt-section.js` —— 把 GAC 状态放进模型自己的系统提示 | 已完成，24 个测试，实测通过 |
+| 2 | `lib/claims.js` + `lib/claim-store.js` —— 写占用声明 | 已完成 |
+| 3 | `lib/coordinator.js` —— 任务 DAG、就绪节点、状态迁移 | 已完成（逻辑） |
+| 3 | `lib/task-store.js` + `lib/tool-task.js` —— 持久化任务记录、`gac_task` | 已完成 |
+| 3 | `lib/capability-router.js` + `lib/executor.js` —— 派遣会真正调用 | 已完成 |
+| 4 | `lib/verification.js` —— 计划、反例与可追溯性门禁 | 已完成 |
+| 4 | 计划与证据门禁已接进 `gac_task` | 已完成 |
+| 5 | `lib/grilling.js` —— 多轮需求精化 | 已完成 |
+| 5 | `lib/contract.js` —— 接口契约冻结 | 已完成 |
+| 6 | `lib/evidence.js` + `lib/evidence-store.js` —— 由运行时签发的证据 | 已完成 |
+| 6 | `lib/metrics.js` + `lib/tool-metrics.js` —— 带只读出口的指标 | 已完成 |
+| 6 | `lib/tool-evidence.js` —— 证据号可被发现，因而可以被引用 | 已完成 |
+| 5 | `lib/gac-events.js` —— 会话日志里的 GAC 事件 + 消息投影 | 已完成（可视性，不是状态权威） |
+| 7 | 遗留系统切换 —— 处置与 E2E 状态已记录 | 记录在 [docs/CUTOVER.md](docs/CUTOVER.md) 中；本仓库之外的东西一律未动 |
 
-**Read [docs/CUTOVER.md](docs/CUTOVER.md) before trusting the table above.** It records, per item,
-what is actually verified and what is not — including that only **two of the plan's six E2E
-criteria** have been verified, and that three are not implemented as specified. The table here
-says what has code; that document says what has evidence.
+**在相信上面这张表之前，先读 [docs/CUTOVER.md](docs/CUTOVER.md)。** 它逐项记录了什么是真正验证过的、什么不是——包括大纲的**六条 E2E 判据里只有两条**被验证过，以及有三条没有按规格实现。这里的表说的是哪些东西有代码；那份文档说的是哪些东西有证据。
 
-**Phase 0 is verified, not merely tested.** In a live session with
-`scope: ["docs/scratch.md"]`:
+**阶段 0 是验证过的，不只是测过。** 在一次作用域为 `scope: ["docs/scratch.md"]` 的真实会话里：
 
-| Attempt | Result |
+| 尝试 | 结果 |
 | --- | --- |
-| write `docs/scratch.md` (in scope) | allowed, file created |
-| write `docs/outside.md` (out of scope) | **refused**, `GAC_WRITE_SCOPE_DENIED` |
-| `pwsh` shell write | **refused**, `GAC_SHELL_DENIED_UNDER_SCOPE` |
+| 写 `docs/scratch.md`（在作用域内） | 允许，文件被创建 |
+| 写 `docs/outside.md`（在作用域之外） | **被拒绝**，`GAC_WRITE_SCOPE_DENIED` |
+| `pwsh` shell 写入 | **被拒绝**，`GAC_SHELL_DENIED_UNDER_SCOPE` |
 
-The decisive check is the filesystem, not the message: neither refused path
-existed afterwards. The refusal happens **before** dispatch, which is the
-assumption the rest of this architecture rests on.
+决定性的检查是文件系统，不是那条消息：事后那两个被拒绝的路径都不存在。拒绝发生在派遣**之前**，而这正是这套架构其余部分所依赖的假设。
 
-**Phase 1 is verified in a live session too.** `gac_project` reported the
-project, its five declared high-risk paths and its capability vocabulary; then a
-`direct_edit` targeting `lib/write-scope.js` was escalated to `high_risk_task`
-automatically.
+**阶段 1 也在一次真实会话里验证过。** `gac_project` 报告了这个工程、它声明的五条高风险路径和它的能力词汇表；随后一次针对 `lib/write-scope.js` 的 `direct_edit` 被自动升级为 `high_risk_task`。
 
-The interesting part is what the model did with that. It had declared
-`direct_edit` with a genuine argument (one file, reversible, immediately
-verifiable, no interface or migration change) and did not contrive a way around
-the escalation:
+有意思的是模型拿这件事做了什么。它用一条真实的理由声明了 `direct_edit`（一个文件、可回退、可立即验证、不改接口也不做迁移），并且没有想办法绕开这次升级：
 
-> This is not a mis-declared mode. The path's high-risk property is declared by
-> the project in advance; the declaration step cannot bypass it, and should not
-> try to. `lib/write-scope.js` is permission-scope core — changing it directly
-> affects which writes are refused, so escalating matches the design intent.
+> 这不是一次声明错了的模式。这条路径的高风险属性是工程事先声明的；声明这一步无法绕过它，也不该去尝试绕过。`lib/write-scope.js` 是权限作用域的核心——直接改它会影响哪些写入被拒绝，所以升级与设计意图相符。
 
-That is the behaviour the tool description is written to produce. A model that
-*tried* to guess the gate would sometimes pick heavier process than the work
-needs, which is the ceremony the design exists to avoid.
+这正是那份工具描述所要产出的行为。一个*试图*去猜门禁的模型，有时会选出比工作所需更重的流程，而那正是这套设计要避免的仪式。
 
-**The guard is inert until a session declares a scope.** Every session starts
-ungoverned and the gate allows everything. That is deliberate: a gate that
-enforced a scope nobody declared would be unusable outside GAC work.
+**在一个会话声明作用域之前，守卫是惰性的。** 每个会话一开始都处于无管辖状态，门禁放行一切。这是刻意的：一道强制执行着没人声明过的作用域的门禁，在 GAC 工作之外根本没法用。
 
 ---
 
-## Install
+## 安装
 
-The plugin resolves DSH packages from the profile, so it must be installed into
-a profile rather than imported directly (`lib/resolve-dsh.js` explains why).
+本插件从 profile 解析 DSH 包，所以它必须被安装进一个 profile，而不是被直接 import（原因见 `lib/resolve-dsh.js`）。
 
 ```text
 plugin_manager { action: install_bundle, target: "<this directory>" }
 ```
 
-This adds `dsh-gac-runtime` as a `link:` dependency of the active profile and
-appends it to `dsh.profile.bundles`. Consequences worth knowing:
+这会把 `dsh-gac-runtime` 作为当前活跃 profile 的一个 `link:` 依赖加进去，并把它追加到 `dsh.profile.bundles`。几个值得知道的后果：
 
-- **A restart is required — unless the watch roots are widened.** The harness HMR
-  entry watches *configuration*, not module files (the base bundle sets `root: []`
-  when a launcher supplies a profile context). Out of the box, editing `lib/*.js`
-  therefore does **not** reload the plugin, and only a restart picks up code
-  changes.
+- **需要重启一次——除非把 watch root 放宽。** harness 的 HMR 入口监视的是*配置*，不是模块文件（当启动器提供了 profile 上下文时，基础 bundle 会把 `root: []`）。所以开箱状态下，编辑 `lib/*.js` **不会**重载插件，只有重启才能让代码改动生效。
 
-  To iterate without restarts, widen the HMR watch roots in the *profile* patch
-  (`~/.dsh/profiles/<profile>/cordis.patch.yml`). Use an **absolute path**:
+  为了不必重启就能迭代，在 *profile* 补丁（`~/.dsh/profiles/<profile>/cordis.patch.yml`）里放宽 HMR 的 watch root。要用**绝对路径**：
 
   ```yaml
   - id: hmr
@@ -113,256 +84,182 @@ appends it to `dsh.profile.bundles`. Consequences worth knowing:
         - D:/WorkSpace/99_Others/02_UserProject/Agent_Runtime
   ```
 
-  A profile patch layer has the highest precedence, so it overrides the base
-  bundle's `root: []`. It takes effect on the next restart; afterwards `lib/*.js`
-  edits reload on their own.
+  profile 补丁层的优先级最高，所以它会覆盖基础 bundle 的 `root: []`。它在下次重启时生效；此后 `lib/*.js` 的编辑会自行重载。
 
-  Do **not** use `root: ["."]`. Watch roots resolve against `baseDir`, which is
-  the profile directory (`dsh-hmr/lib/index.js:319`), so `"."` watches the
-  profile and never the plugin — which is linked from outside it. That was this
-  file's original advice and it was wrong: it would have looked configured while
-  changing nothing.
+  **不要**用 `root: ["."]`。watch root 是相对 `baseDir` 解析的，而 `baseDir` 是 profile 目录（`dsh-hmr/lib/index.js:319`），所以 `"."` 监视的是 profile，永远不会是插件——插件是从它外面链接进来的。这条曾经是本文件给出的建议，而它是错的：它看起来像是配置好了，实际什么都没改。
 
-- **Disable the plugin before you edit it.** With the watch root widened, every
-  write to `lib/*.js` hot-reloads into the host process — which is the process the
-  model is working in. Half-finished code therefore goes live: a write-scope gate
-  that denies everything, or a prompt provider that throws during assembly, takes
-  away the very tools that would be used to fix it. The safe loop, measured on
-  2026-10-04:
+- **改它之前先把插件关掉。** watch root 放宽之后，每一笔对 `lib/*.js` 的写入都会热重载进宿主进程——也就是模型正在其中工作的那个进程。半成品代码于是直接生效：一道拒绝一切的写作用域门禁，或一个在装配期间抛错的提示 provider，会把本来用来修它的那些工具拿走。安全循环如下，2026-10-04 实测：
 
   ```yaml
   # ~/.dsh/profiles/<profile>/cordis.patch.yml
   - id: gac-runtime
-    disabled: true      # the plugin unloads live; the report records plugin-unloaded
+    disabled: true      # 插件实时卸载；报告里会记下 plugin-unloaded
   ```
 
-  edit `lib/*.js`, run the suite, then set `disabled: false` again. This file
-  previously claimed that re-enabling only re-runs `apply` and keeps executing the
-  code loaded at startup, so a restart was the only way to pick up changes. That
-  was wrong **once the watch root is widened**: HMR replaces the module cache when
-  a watched file changes, so re-enabling imports the new module. Measured, not
-  reasoned: after a disable → edit → re-enable cycle the load report carried the
-  new code's own field (`prompt-section-registered`), with no restart.
+  编辑 `lib/*.js`，跑测试套件，然后再把 `disabled: false` 设回去。本文件以前声称重新启用只会重跑 `apply`、继续执行启动时载入的代码，因此重启是让改动生效的唯一途径。**在 watch root 放宽之后**，那是错的：被监视的文件一变，HMR 就替换模块缓存，所以重新启用会导入新模块。实测而非推理：在一次禁用 → 编辑 → 重新启用的循环之后，加载报告带上了新代码自己的字段（`prompt-section-registered`），没有重启。
 
-  Cost of the safe loop: the plugin's declared modes and scopes live in memory and
-  are lost when it unloads (task records are on disk and survive). So a task
-  cannot be *governed* by the plugin while the plugin's own gate code is being
-  edited — see [docs/CUTOVER.md](docs/CUTOVER.md) §6.
+  安全循环的代价：插件声明过的模式与作用域都在内存里，卸载即丢失（任务记录在盘上，不丢）。所以在插件自己的门禁代码正被编辑的这段时间里，没有任何任务能被插件*管辖*——见 [docs/CUTOVER.md](docs/CUTOVER.md) §6。
 
-- Because it is a link, the plugin keeps its own `node_modules` and cannot
-  bare-import `@deepseek-ai/*`. `lib/resolve-dsh.js` resolves those from the
-  profile directory instead.
+- 因为它是链接，本插件保留自己的 `node_modules`，无法裸 import `@deepseek-ai/*`。`lib/resolve-dsh.js` 转而从 profile 目录解析它们。
 
-### Current state on this machine
+### 这台机器上的当前状态
 
-Already applied, so future edits to `lib/*.js` reload without a restart:
+下面这些已经应用过了，所以以后对 `lib/*.js` 的编辑无需重启就会重载：
 
-- `dsh-gac-runtime` is installed into the `core-020` profile as a link to this
-  directory.
-- `~/.dsh/profiles/core-020/cordis.patch.yml` carries the `hmr` override above.
-  A timestamped backup of that file sits beside it.
+- `dsh-gac-runtime` 已作为指向本目录的链接装进 `core-020` profile。
+- `~/.dsh/profiles/core-020/cordis.patch.yml` 带着上面的 `hmr` 覆盖项。该文件旁边躺着一份带时间戳的备份。
 
-Still requires a restart: changes to `package.json`, `cordis.patch.yml`, or
-anything that alters the set of registered plugins or tools.
+仍然需要重启的：对 `package.json`、`cordis.patch.yml` 的改动，或任何会改变已注册插件或工具集合的改动。
 
-### Which profile?
+### 哪个 profile？
 
-There are two on this machine: `core-020` (the Web GUI) and `tauri` (the desktop
-shell). `plugin_manager` installs into the **active** profile. Check with
-`plugin_manager { action: list_bundles }` before assuming.
+这台机器上有两个：`core-020`（Web GUI）和 `tauri`（桌面外壳）。`plugin_manager` 安装进的是**活跃** profile。下结论之前先用 `plugin_manager { action: list_bundles }` 查一下。
 
 ---
 
-## Verify it is running
+## 验证它正在运行
 
-The plugin writes a JSONL report beside the DSH home directory
-(`$DSH_HOME/gac-runtime-report.jsonl`, falling back to the user profile). It is a
-file rather than a log line because console output inside a web-served harness
-is not reliably visible.
+插件会在 DSH home 目录旁边写一份 JSONL 报告（`$DSH_HOME/gac-runtime-report.jsonl`，退回用户 profile）。之所以是文件而不是一行日志，是因为在 web 服务的 harness 里，console 输出不可靠可见。
 
 ```jsonc
 {"event":"plugin-loaded","services":{"tools":true,"sessions":true},
  "scope_tool":"registered",
- "enforcement":"active - a declared scope is enforced before dispatch"}
+ "enforcement":"生效中 —— 已声明的写作用域会在派遣前强制执行"}
 {"event":"guard-denied","tool":"write","code":"GAC_WRITE_SCOPE_DENIED", ...}
 {"event":"plugin-unloaded","observed":{"calls":17,"denials":0}}
 ```
 
-The `observed.calls` counter on unload is the proof the interception is live: it
-counts every tool call the gate saw.
+卸载时的 `observed.calls` 计数器就是「拦截确实在活着」的证据：它数的是门禁看到的每一次工具调用。
 
-### When the tool does not appear
+### 工具没有出现时
 
-Read `scope_tool` and `scope_tool_note` in the load report first — the note names
-every resolution anchor tried and why each failed. That diagnostic exists because
-an earlier build reported only "not resolvable", which sent one debugging session
-in the wrong direction twice.
+先读加载报告里的 `scope_tool` 与 `scope_tool_note`——那条 note 会列出试过的每一个解析锚点以及各自失败的原因。这条诊断之所以存在，是因为更早的一个版本只报「无法解析」，把一次调试会话两次引向了错误的方向。
 
 ```bash
-node scripts/diagnose-resolution.js   # how the anchor list is derived, per-anchor reasons
-node scripts/diagnose-import.js       # separates resolution failure from import failure
+node scripts/diagnose-resolution.js   # 锚点列表是如何推导出来的，以及每个锚点各自失败的原因
+node scripts/diagnose-import.js       # 把解析失败与导入失败区分开
 ```
 
-Run `npm test` before restarting: the suite exercises the real `defineTool` when
-DSH is present, and catches authoring mistakes that would otherwise surface only
-as a missing tool after a restart.
+重启之前先跑 `npm test`：当 DSH 存在时，测试套件会驱动真实的 `defineTool`，从而抓住那些否则只会在重启后表现为「工具不见了」的编写错误。
 
 ---
 
-## Use
+## 使用
 
-### What the model is told, and when it is told nothing
+### 模型被告知了什么，以及什么时候什么都不告诉它
 
-A governed project gets one prompt section, `gac:protocol` at order 700
-(`lib/prompt-section.js`). It is **state, not policy**: the mode ladder lives in
-`gac_project`'s description and the scope semantics in `gac_scope`'s, so the
-section does not repeat them — two copies of a rule drift, and the drifting copy
-is the one the model reads. What it adds is what a tool description cannot know:
+一个已纳管的工程会得到一段提示段落：`gac:protocol`，order 700（`lib/prompt-section.js`）。它是**状态，不是策略**：模式阶梯在 `gac_project` 的描述里，作用域语义在 `gac_scope` 的描述里，所以这一段不重述它们——一条规则有两份副本就会漂移，而漂移的那一份正是模型读到的那一份。它补的是工具描述无从知道的东西：
 
 ```text
-GAC runtime: project `dsh-gac-runtime` is governed by .dsh/gac/project.json. No
-execution mode has been declared for this session, so there is no task record and
-no write scope is being enforced. Declare the lowest sufficient mode with
-gac_project before you change anything, and declare the exact paths this task may
-modify with gac_scope before you edit files; both tools' descriptions state what
-each level commits you to. Evidence ids are issued by the runtime: list them with
-gac_evidence before citing one in a task report — an id the runtime never issued
-is refused at close-out.
+GAC 运行时：工程 `dsh-gac-runtime` 受 .dsh/gac/project.json 治理。 本会话还没有
+声明执行模式，因此没有任务记录，也没有任何写作用域在强制执行。在改动任何东西之前，
+先用 gac_project 声明最低的充分模式；在编辑文件之前，用 gac_scope 声明这项任务
+可以修改的确切路径；这两个工具的描述说明了每一级别给你带来的义务。 证据 id 由运行时
+签发：在任务报告里引用某个 id 之前，先用 gac_evidence 列出它们——运行时从未签发过的
+id 会在收口时被拒绝。
 ```
 
-and once things are declared:
+而一旦有了声明：
 
 ```text
-Declared mode for this session: `standard_task` (risk medium) — <reason>. An
-independent verifier is expected to check the result. Write scope active for task
-`REQ-X` node `build`: [lib/, test/]. Writes outside it, shell commands, and tools
-this runtime cannot check are refused before dispatch (GAC_WRITE_SCOPE_DENIED /
-GAC_SHELL_DENIED_UNDER_SCOPE / GAC_UNGUARDABLE_WRITE_DENIED); such a refusal is
-this declaration being enforced, not an obstacle to route around.
+本会话声明的模式：`standard_task`（风险 medium）——<reason>。 预期由一个独立校验者
+检查结果。 任务 `REQ-X` 节点 `build` 的写作用域生效中：[lib/, test/]。落在它之外的
+写入、shell 命令，以及本运行时无法检查的工具，都会在派发之前被拒绝
+（GAC_WRITE_SCOPE_DENIED / GAC_SHELL_DENIED_UNDER_SCOPE /
+GAC_UNGUARDABLE_WRITE_DENIED）；这样的拒绝正是这份声明在被强制执行，而不是要绕开
+的障碍。
 ```
 
-Three properties are load-bearing:
+有三条性质是承重的：
 
-- **It disappears** when the project is ungoverned and nothing is declared. The
-  gate is inert there, and a section that appeared anyway would be claiming an
-  enforcement that is not happening.
-- **Visibility is decided from disk, not from session memory.** "Governed" means
-  `.dsh/gac/project.json` exists, which survives a plugin reload; the declared
-  mode and scope do not. Keying visibility off session state would make the
-  section flicker in and out across reloads.
-- **It cannot throw.** The text provider runs inside prompt assembly, where a
-  throw fails *every model step* — including the step the model would use to fix
-  it. So the provider is wrapped, returns a string for any input, and registers
-  with `interpolate: false`: the text embeds project-supplied values verbatim
-  (paths, reasons), and an open interpolation pass would fail at render time on a
-  `{{` in one of them.
+- **它会消失**，当工程未纳管且什么都没有声明时。那种情况下门禁是惰性的，而一段照样出现的文字会是在主张一项并未发生的强制执行。
+- **可见性由盘上的事实决定，而不是由会话内存决定。** 「已纳管」的意思是 `.dsh/gac/project.json` 存在，这一点能扛过插件重载；而声明过的模式与作用域不能。拿会话状态来判定可见性，会让这一段在每次重载时忽隐忽现。
+- **它不能抛错。** 文本 provider 运行在提示装配内部，那里的抛错会让*每一个模型步进*都失败——包括模型拿来修它的那一步。所以 provider 整个包在 try 里，对任何输入都返回字符串，并且注册时带 `interpolate: false`：这段文本会逐字嵌入工程提供的值（路径、理由），而一次开放的插值处理会在渲染期因为其中某个值里出现 `{{` 而失败。
 
-`test/prompt-wiring.test.js` drives the real `apply()` against a fake context and
-asserts the section is registered with those properties — and that a combination
-without the `systemPrompt` service still installs the write-scope gate, because
-losing a prompt section must never cost an enforcement.
+`test/prompt-wiring.test.js` 用一个假 context 驱动真实的 `apply()`，断言这一段带着上述性质注册——并且断言一个没有 `systemPrompt` 服务的组合仍然会装上写作用域门禁，因为丢一段提示绝不能以丢掉一道强制执行为代价。
 
-The section was verified live, by reading it back out of the session's own log
-(`~/.dsh/sessions/<workspace>/<session>/session.v4.jsonl.zstd`, zstd frames) after
-the plugin reloaded with the new code:
+这一段是实测验证的：在插件带着新代码重载之后，从会话自己的日志里把它读了回来（`~/.dsh/sessions/<workspace>/<session>/session.v4.jsonl.zstd`，zstd 帧）：
 
 ```text
 type: system/message ... "You are an AI agent powered by DeepSeek Harness. ...
-GAC runtime: project `dsh-gac-runtime` is governed by .dsh/gac/project.json. No
-execution mode has been declared for this session, ..."
+GAC 运行时：工程 `dsh-gac-runtime` 受 .dsh/gac/project.json 治理。本会话还没有
+声明执行模式， ..."
 ```
 
-The file is not evidence that the section exists; the **system-role message in the
-model's own history** is.
+那个文件并不构成「这一段存在」的证据；**模型自己历史里的 system 角色消息**才是。
 
-### Declare how much process the work needs
+### 声明这项工作需要多少流程
 
 ```text
-gac_project {}                          # what project am I in, and what does it call risky?
+gac_project {}                          # 我在哪个工程里，它认为什么有风险？
 gac_project { mode: "direct_edit", reason: "one config value", target_paths: ["config/app.json"] }
 ```
 
-Modes, cheapest sufficient process first:
+模式，按最省的够用流程排在前面：
 
-| Mode | Use for | What it commits to |
+| 模式 | 适用于 | 它承诺了什么 |
 | --- | --- | --- |
-| `read_only` | explain, search, read, analyse | no task record |
-| `direct_edit` | one unambiguous, local, reversible change | no task record, no verifier |
-| `standard_task` | ordinary bugfix / feature / local refactor | an independent verifier checks the result |
-| `high_risk_task` | security, auth, persistent state, migrations, public contracts, boot, production | a verification plan derived from the requirement *before* implementation, then an independent review |
+| `read_only` | 讲解、搜索、阅读、分析 | 不创建任务记录 |
+| `direct_edit` | 一处明确、局部、可回退的改动 | 不创建任务记录，也没有验证者 |
+| `standard_task` | 普通的缺陷修复 / 功能开发 / 局部重构 | 由一个独立验证者检查结果 |
+| `high_risk_task` | 安全、认证、持久化状态、迁移、公开契约、启动、生产 | 在实现*之前*从需求推导出一份验证计划，随后跟随一次独立复核 |
 
-**The mode is cross-checked, not trusted.** Declaring a mode whose `target_paths`
-fall in a project-declared high-risk path is escalated to `high_risk_task`
-automatically:
+**模式是被交叉核对的，不是被信任的。** 声明的模式如果其 `target_paths` 落在工程声明的高风险路径中，会被自动升级为 `high_risk_task`：
 
 ```text
 gac_project { mode: "direct_edit", reason: "tweak one comparison",
               target_paths: ["lib/write-scope.js"] }
-→ Escalated from direct_edit to high_risk_task: declared direct_edit, but 1 target
-  path(s) fall in a project-declared high-risk path: lib/write-scope.js.
+→ 已从 direct_edit 升级为 high_risk_task：声明了 direct_edit，但有 1 个目标路径落在
+  工程声明的高风险路径中：lib/write-scope.js。
 ```
 
-Do not try to pre-empt that check; declare honestly and report what you are told.
-A model that guessed at the gate would sometimes pick a heavier process than the
-work needs, which is the ceremony the design exists to avoid.
+不要试图抢先规避这项检查；如实声明，并报告你被告知的内容。一个去猜门禁的模型有时会选出比工作所需更重的流程，而那正是这套设计要避免的仪式。
 
-### Declare which paths the task may write
+### 声明这项任务可以写哪些路径
 
 ```text
 gac_scope { task_id: "REQ-20261004-xyz", scope: ["src/", "docs/api.md"] }
 ```
 
-While a scope is active, four things are refused before dispatch:
+作用域生效期间，有四类东西会在派遣之前被拒绝：
 
-| Attempt | Result | Code |
+| 尝试 | 结果 | 代码 |
 | --- | --- | --- |
-| write outside the declared scope | refused | `GAC_WRITE_SCOPE_DENIED` |
-| a shell command (`pwsh`, `bash`) | refused | `GAC_SHELL_DENIED_UNDER_SCOPE` |
-| a tool the runtime cannot classify | refused | `GAC_UNGUARDABLE_WRITE_DENIED` |
-| a write tool with no readable path argument | refused | `GAC_UNGUARDABLE_WRITE_DENIED` |
+| 写作用域之外的写入 | 被拒绝 | `GAC_WRITE_SCOPE_DENIED` |
+| shell 命令（`pwsh`、`bash`） | 被拒绝 | `GAC_SHELL_DENIED_UNDER_SCOPE` |
+| 本运行时无法归类的工具 | 被拒绝 | `GAC_UNGUARDABLE_WRITE_DENIED` |
+| 没有可读路径参数的写工具 | 被拒绝 | `GAC_UNGUARDABLE_WRITE_DENIED` |
 
 ```text
-gac_scope {}                    # inspect the current scope
-gac_scope { clear: true }       # release it, returning to ungoverned
+gac_scope {}                    # 查看当前作用域
+gac_scope { clear: true }       # 释放它，回到无管辖状态
 ```
 
-### Declaring also claims the paths against other sessions
+### 声明也会把这些路径对其他会话占住
 
-A declaration is the moment a session says "these paths are mine", so that is
-when a cross-session collision is detected. It is not a separate step the model
-has to remember — a protection that must be remembered is one that will
-eventually be skipped.
+声明就是会话说出「这些路径是我的」的那一刻，而那正是能够检测出跨会话冲突的时刻。它不是模型必须记住的一个独立步骤——一份必须被记住的保护，终有一天会被跳过。
 
 ```text
 session A: gac_scope { task_id: "REQ-1", scope: ["src/"] }
-           → governs, and claims src/
+           → 生效中，并认领了 src/
 
 session B: gac_scope { task_id: "REQ-2", scope: ["src/a.c"] }
-           → REFUSED: declared write scope "src/a.c" overlaps "src/" held by
-             task REQ-1 node REQ-1 (session ..., dispatch ...).
+           → 被拒绝：gac_scope: 这次声明被拒绝。已声明的写作用域 "src/a.c" 与任务
+             REQ-1 节点 REQ-1 （会话 ...，派遣 ...）持有的 "src/" 重叠。该路径已归
+             另一个写入者所有，因此这次声明被拒绝，而不是放任两个写入者都去写它。
+             请把作用域收窄到没有其他写者持有的路径，或者等那个任务释放这些路径。
+             你当前的作用域没有改变。
 ```
 
-The refusal names the holder and both paths, so the model can narrow its scope
-instead of retrying. B stays **ungoverned** rather than half-declared — a session
-governed by a scope it does not own would be a guard enforcing paths it was never
-granted.
+拒绝信息会指明持有者与两条路径，这样模型可以收窄自己的作用域，而不是重试。B 保持**无管辖**，而不是被声明了一半——一个被自己并不拥有的作用域管辖的会话，等于一道守卫在执行它从未被授予的路径。
 
-Claims live in `<project>/.dsh/gac/claims/`, one file per session, so they are
-visible to every session and survive a plugin reload. Declaring again replaces
-your own scope; it never merges with it. `clear` withdraws the claim.
+占用声明存放在 `<project>/.dsh/gac/claims/`，一个会话一个文件，因此每个会话都看得见，并且能扛过插件重载。再次声明会替换你自己的作用域；它绝不与之合并。`clear` 撤回这份占用声明。
 
-Scope overlap is compared as **prefix overlap**, not as literal strings, so
-`src/` and `src/deep/a.c` collide as they should. The rule deliberately
-over-reports in one case: `src/*.c` and `src/*.h` share the prefix `src` and are
-treated as conflicting although the sets are disjoint. A false positive costs
-some parallelism; a false negative lets two writers hit one file, which cannot be
-separated afterwards. See the header of `lib/claims.js`.
+作用域重叠是按**前缀重叠**比较的，不是按字面字符串，所以 `src/` 与 `src/deep/a.c` 会如期相撞。这条规则刻意会在一种情形下过度上报：`src/*.c` 与 `src/*.h` 共享前缀 `src`，尽管两个集合不相交，仍被当作冲突。误报只损失一点并行度；漏报则让两个写入者撞在同一个文件上，而那事后无法分离。见 `lib/claims.js` 的文件头。
 
-### Declare what the project considers risky
+### 声明工程认为什么有风险
 
-`.dsh/gac/project.json` at the project root. Unknown top-level keys are
-**rejected**, so a typo in `risk.high_risk_paths` fails loudly instead of
-silently disabling the escalation gate:
+工程根目录下的 `.dsh/gac/project.json`。未知的顶层键会被**拒绝**，所以 `risk.high_risk_paths` 里一个拼错的键会大声失败，而不是静默地让升级门禁失效：
 
 ```json
 {
@@ -374,77 +271,51 @@ silently disabling the escalation gate:
 }
 ```
 
-A project with no adapter is **ungoverned**, not broken: `gac_project` reports
-it as such, and a declared mode is recorded but marked `NOT cross-checked`.
-An **invalid** adapter is not cached, so fixing the file takes effect on the next
-call rather than needing a restart.
+没有适配器的工程是**无管辖**，不是坏了：`gac_project` 会如实这样报告，而声明过的模式会被记录，但标记为 `NOT cross-checked`。**无效**的适配器不会被缓存，所以修好文件在下次调用就生效，不需要重启。
 
-### Scope semantics
+### 作用域语义
 
-`gac_scope` is a **strict list**, and this is the part worth reading carefully:
+`gac_scope` 是一份**严格的清单**，而这是值得仔细读的部分：
 
 ```text
-scope ["mod.c"]     permits  ./mod.c
-                    refuses  src/mod.c, other/mod.c, SRC/MOD.C
-scope ["src/"]      permits  src/a.c, src/deep/a.c
-                    refuses  src2/a.c, src/../other.c
-scope ["src/*.c"]   permits  src/a.c  (and src/deep/a.c — see below)
+scope ["mod.c"]     允许  ./mod.c
+                    拒绝  src/mod.c, other/mod.c, SRC/MOD.C
+scope ["src/"]      允许  src/a.c, src/deep/a.c
+                    拒绝  src2/a.c, src/../other.c
+scope ["src/*.c"]   允许  src/a.c（以及 src/deep/a.c —— 见下文）
 ```
 
-Path comparison normalises separators, resolves `.`/`..`, and **folds case**, so
-`SRC/MOD.C` and `src/mod.c` are the same file. A bare basename is an exact file,
-never an alias for a same-named file elsewhere.
+路径比较会归一化分隔符、解析 `.`/`..`，并**折叠大小写**，所以 `SRC/MOD.C` 与 `src/mod.c` 是同一个文件。裸写的 basename 是一个确切的文件，绝不是别处同名文件的别名。
 
-`*` crosses separators, matching `fnmatch`, so `src/*.c` also covers
-`src/sub/a.c`. This is deliberate and preserved for behavioural compatibility.
-It is the safe direction: a wider scope *permits* more, so it can never silently
-permit a write the project meant to forbid. Do not narrow it without reading the
-module header of `lib/write-scope.js`.
+`*` 会跨过分隔符，与 `fnmatch` 一致，所以 `src/*.c` 也覆盖 `src/sub/a.c`。这是刻意的，并为行为兼容而保留。它指向安全的方向：更宽的作用域*允许*得更多，因此它永远不会静默地允许一次工程本想禁止的写入。不读 `lib/write-scope.js` 的模块头就不要收窄它。
 
 ---
 
-## The coordinator (`lib/coordinator.js`)
+## 协调器（`lib/coordinator.js`）
 
-Pure logic, and the module the rest of the runtime will be driven by. It is
-written and tested ahead of any tool that exposes it, because the rules it
-enforces are the ones worth getting exactly right in isolation.
+纯逻辑，也是这套运行时其余部分将来被其驱动的模块。它先于任何暴露它的工具被写出并测试，因为它所执行的规则正是值得在隔离状态下做到分毫不差的那些。
 
-Three properties are structural rather than conventional:
+有三条性质是结构性的，而不是约定性的：
 
-**An executor never declares completion.** `applyResult` accepts a structured
-result and decides the transition from an explicit table. `completed` and
-`superseded` appear in no table's *source* position, so "a terminal state cannot
-be moved by a late result" is a property of the table itself, not a check
-scattered across branches.
+**执行者从不宣告完成。** `applyResult` 接受一份结构化结果，并依据一张显式迁移表决定迁移。`completed` 与 `superseded` 不出现在任何表的 *source* 位置，所以「终态不能被一份迟到的结果推动」是表结构本身的性质，而不是散落在各分支里的检查。
 
-**Attempts are never reused.** Every dispatch mints a new identity
-(`attempt`, `dispatch_id`). A result whose `dispatch_id` does not match the
-node's active execution is classified `stale` and changes nothing — otherwise a
-late result from a previous attempt would look like the current one and rewrite
-state it has no claim to.
+**尝试从不被复用。** 每次派遣都会铸造一个新的身份（`attempt`、`dispatch_id`）。一份 `dispatch_id` 与节点当前活跃执行对不上的结果会被判为 `stale`，不改变任何东西——否则上一次尝试的迟到结果会看起来像当前这一次，从而改写它无权主张的状态。
 
-**Parallelism is decided by facts, not intent.** A node is *ready* when its
-dependencies are complete; it joins the execution *batch* only if its write scope
-is disjoint from every in-flight and same-batch node AND it shares no exclusive
-resource. Ready-but-not-batched is reported with a reason, so "why is this not
-running" has an answer.
+**并行由事实决定，不由意愿决定。** 一个节点的依赖都完成时它才是*就绪*的；只有当它的写作用域与每一个在飞节点和同批节点都不相交、且不共享独占资源时，它才加入执行*批次*。就绪但未进批的节点会带着原因被报出来，这样「它为什么没在跑」就有答案。
 
 ```text
-compileTask(plan)   → validate: existence, cycles, non-empty capabilities,
-                      declared write scope. Rejects before any file is touched.
+compileTask(plan)   → 校验：节点存在、无环、能力非空、声明了写作用域。
+                      在任何文件被触碰之前就拒绝。
 resolveReady(task)  → { ready, batch, reason }
-dispatch(task, ids) → new attempt + dispatch identity per node
+dispatch(task, ids) → 每个节点铸造一个新的 attempt 与 dispatch 身份
 applyResult(t, r)   → { classification: accepted | stale | rejected }
-reopen(t, id, why)  → a reason is mandatory; terminal states move only explicitly
+reopen(t, id, why)  → 原因必填；终态只被显式地移动
 nextAction(task)    → dispatch | await | blocked | repair | complete_task | done
 ```
 
-Note that `await` is deliberately distinct from `blocked`: waiting on a
-subagent you dispatched is internal, and recording it as an external blockage
-would hide the difference between "the world is preventing progress" and "my own
-work is still running".
+注意 `await` 与 `blocked` 是刻意区分的：等待你自己派出的子代理属于内部行为，把它记成外部阻塞，会掩盖「外部世界在阻碍进展」与「我自己的工作还在跑」之间的区别。
 
-### Driving it: `gac_task`
+### 驱动它：`gac_task`
 
 ```text
 gac_task { action: "create", task_id: "REQ-1", mode: "standard_task",
@@ -455,82 +326,50 @@ gac_task { action: "create", task_id: "REQ-1", mode: "standard_task",
                required_capabilities: ["verification"], write_scope: [] } ] } }
 
 gac_task { action: "advance", task_id: "REQ-1" }
-  → action: dispatch, nodes: ["T1"]      the tool minted dispatch_id REQ-1-T1-A1
+  → action: dispatch, nodes: ["T1"]      工具铸造了 dispatch_id REQ-1-T1-A1
 
 gac_task { action: "advance", task_id: "REQ-1",
            report: { node_id: "T1", dispatch_id: "REQ-1-T1-A1", status: "completed" } }
   → classifications: ["accepted"], action: dispatch, nodes: ["T2"]
 ```
 
-**You cannot declare completion.** A report must carry the `dispatch_id` minted
-when the node was dispatched. A report without it — or with a stale one — is
-classified `stale` and changes nothing, because a late result from a previous
-attempt must not rewrite state it has no claim to. That rule is the whole reason
-the identity exists, so it is enforced at the tool boundary and not merely
-documented.
+**你不能宣告完成。** 一份报告必须带上节点被派遣时铸造的那个 `dispatch_id`。没有它——或者带的是一个过期的——报告会被判为 `stale`，不改变任何东西，因为上一次尝试的迟到结果不该改写它无权主张的状态。这条规则正是那个身份存在的全部理由，所以它在工具边界上被强制执行，而不是仅仅写在文档里。
 
-Task records live in `<project>/.dsh/gac/tasks/`, one file per task, and are
-re-validated on load by the same code that validates a new plan. That is
-deliberate: a hand-edited record would otherwise be able to bypass `compileTask`
-and introduce a cyclic or capability-less DAG. Two consistency rules are checked
-on load — a node `in_progress` must hold a dispatch identity, and a node not
-`in_progress` must not — because either inversion leaves a task that can never
-make progress again.
+任务记录存放在 `<project>/.dsh/gac/tasks/`，一个任务一个文件，并在加载时由校验新计划的那同一份代码重新校验。这是刻意的：否则一份手工编辑过的记录就能绕过 `compileTask`，引入一个有环或没有能力的 DAG。加载时会检查两条一致性规则——处于 `in_progress` 的节点必须持有派遣身份，而不处于 `in_progress` 的节点必须没有——因为任何一种倒置都会留下一个再也无法推进的任务。
 
-Tasks are keyed by **project**, not by session: one requirement's nodes are
-advanced by different executors, and a session-scoped record would be invisible
-to whoever picks up the next node.
+任务按**工程**存放，而不是按会话：同一个需求的多个节点由不同执行者推进，而一份按会话存放的记录对接手下一个节点的人来说是不可见的。
 
-### Dispatch actually invokes
+### 派遣会真正调用
 
-`advance` does not merely record that a node should run — it routes the node by
-its `required_capabilities` and invokes the executor:
+`advance` 不只是登记某个节点该跑了——它会按节点的 `required_capabilities` 路由，并调用执行者：
 
 ```text
-advance → routes T1 (implementation) to builder, T2 (verification) to verifier
-        → invokes, applies the returned status, then re-decides the next action
+advance → 把 T1（implementation）路由到 builder，把 T2（verification）路由到 verifier
+        → 调用、应用返回的状态，然后重新判定下一步行动
 advance → complete_task
 complete { evidence: { all_criteria_covered: true } } → completed
 advance → done
 ```
 
-Four properties make that honest rather than decorative:
+有四条性质让这件事是诚实的，而不是装饰性的：
 
-**Routing prefers the tightest fit.** Among executors covering the required
-capabilities, the one with the *fewest extras* wins, so a generalist does not
-absorb every node — otherwise capability declarations would be decorative and
-verification independence impossible. A node no single executor covers is
-rejected before any file is touched, naming the gap (`拆节点`, split the node —
-do not declare an executor omnipotent).
+**路由偏好最贴合的执行者。** 在覆盖所需能力的执行者当中，*额外能力最少*的那个胜出，这样一个通才就不会把所有节点都吸走——否则能力声明就是装饰性的，而验证的独立性也不可能成立。没有任何单个执行者能覆盖的节点会在任何文件被触碰之前被拒绝，并指明缺口（`拆节点`——不要把一个执行者声明成无所不能）。
 
-**An in-process call cannot write.** It has no write tools, so it serves only
-nodes whose `write_scope` is empty and *declines* the rest. A node that writes
-goes to a session executor, which registers it as `in_progress` rather than
-fabricating a report about files it never touched.
+**进程内调用不能写入。** 它没有写工具，所以只服务 `write_scope` 为空的节点，其余的一概*拒绝*。需要写入的节点交给会话型执行者，它会把它登记为 `in_progress`，而不是伪造一份关于自己从未触碰过的文件的报告。
 
-**`in_progress` is a real answer.** A run still going, or one that could not
-start, is not a pass and not a failure. Neither is invented.
+**`in_progress` 是一个真实的答案。** 一次还在跑的运行，或一次没能启动的运行，既不是通过也不是失败。两者都不被编造出来。
 
-**Closing is gated on evidence.** `complete` is refused unless every node is
-completed and `all_criteria_covered` is true — a refusal leaves the status
-untouched, because half a close-out is harder to unwind than none. Before this
-existed, `complete_task` repeated forever and a task could never close.
+**收口以证据为门禁。** 除非每个节点都已完成且 `all_criteria_covered` 为 true，否则 `complete` 会被拒绝——拒绝不改变状态，因为收了一半比完全没收更难回退。在这条存在之前，`complete_task` 会永远重复，任务永远收不了口。
 
-Provider routes come from the adapter's `execution.provider_routes` (keyed by
-executor name — see [Model routing](#model-routing)), so "the verifier runs on a
-different model" is configuration rather than convention — which is what makes
-independence real instead of nominal.
+Provider 路由来自适配器的 `execution.provider_routes`（按执行者名作键——见[模型路由](#模型路由)），所以「验证者跑在另一个模型上」是配置而不是约定——这正是让独立性变成真的、而不是名义上的原因。
 
 ---
 
-### Independent verification
+### 独立验证
 
-The question this answers is the only one that matters: **the implementation is
-correct — how do we know?** "The tests pass" is not an answer, because the
-implementation and its tests come from one understanding, and a wrong
-understanding turns both green together.
+这里回答的问题是唯一要紧的那个：**实现是对的——我们怎么知道？**「测试通过了」不是答案，因为实现与它的测试出自同一份理解，而一份错误的理解会让两者一起变绿。
 
-A plan must be registered **before** the work it judges:
+计划必须在它所评判的工作**之前**登记：
 
 ```text
 gac_task { action: "plan", task_id: "REQ-1", criteria: ["AC1", "AC2"],
@@ -539,340 +378,209 @@ gac_task { action: "plan", task_id: "REQ-1", criteria: ["AC1", "AC2"],
              { id: "V2", covers: ["AC1"], type: "falsification", expect_failure: "..." } ] } }
 ```
 
-Three rules are enforced, and each names what is missing rather than counting it:
+有三条规则被强制执行，而每一条都会指明缺的是什么，而不是去数数：
 
-**Every criterion needs a positive *and* a falsification case.** A positive case
-proves the correct implementation passes; a falsification case proves a relevant
-wrong one fails. A suite of positives cannot tell "correct" from "assertions too
-weak" — so a falsification case must state `expect_failure`, or it degrades into
-a weaker positive.
+**每条验收标准都需要最少一个正例*和*一个反例。** 正例证明正确的实现能过；反例证明一个相关的错误实现会被抓住。一组正例无法区分「实现正确」与「断言太弱」——所以反例必须写明 `expect_failure`，否则它就退化成了一条更弱的正例。
 
-**Evidence must trace criterion → case → execution.** Each case needs its own
-executed evidence reference; a bare "passed" is someone asking to be believed.
+**证据必须能追溯到验收标准 → 用例 → 执行。** 每条用例都需要各自被执行过的证据引用；一句光秃秃的「通过了」，是在请人相信它。
 
-**Pooled evidence is rejected separately.** One command's output cited as the
-evidence for several cases is formally valid — cases complete, criteria covered,
-evidence present — yet it is one observation. Counting cannot find it; comparing
-the evidence can.
+**取证摊薄会被单独拒绝。** 把一条命令的产出当作若干条用例的证据，在形式上完全合法——用例齐全、标准覆盖、证据在场——可它只是一个观测。数数发现不了它；比对证据才能。
 
-Gates fire where they can still change the outcome:
+门禁在还能改变结果的地方触发：
 
-| Gate | Fires | Why there |
+| 门禁 | 何时触发 | 为什么在那里 |
 | --- | --- | --- |
-| plan required | before dispatching a `verification`/`review` node of a `high_risk_task` | a plan written after implementation derives from the implementation, not the requirement |
-| falsification / coverage | at plan registration | a gap reported now is fixed before any file is touched |
-| evidence | at `complete` | uses a content-addressed `plan_id`, so a report against a superseded plan is caught |
+| 计划必需 | 在派遣 `high_risk_task` 的一个 `verification`/`review` 节点之前 | 在实现之后才写的计划，推导自实现，而不是需求 |
+| 反例 / 覆盖 | 在计划登记时 | 此刻报出来的缺口会在任何文件被触碰之前被补上 |
+| 证据 | 在 `complete` 时 | 使用内容寻址的 `plan_id`，所以一份针对已被取代的计划的报告会被抓住 |
 
-Plans are stored separately from task records and refuse to be overwritten: their
-lifecycles differ — a frozen plan never changes while task state changes every
-round — and mixing them would make "has this plan been altered?" hard to answer.
+计划与任务记录分开存放，并且拒绝被覆盖：两者的生命周期不同——冻结的计划从不改变，而任务状态每一轮都在变——混在一起会让「这份计划被改过吗？」变得难以回答。
 
-Only the *verification* nodes are held back when the plan is missing; the rest of
-the batch still dispatches. Holding the whole batch would collapse "plan, then
-implement" into three serial steps and discard the parallelism that is the point.
+计划缺失时只拦下*验证*节点，批次里其余节点照常派遣。把整批拦下会把「先出计划，再实现」压成三步串行，丢掉本该有的并行。
 
 ---
 
-### Requirement refinement (grilling)
+### 需求精化（访谈 / grilling）
 
-The loop is run by fixed code; the questions are asked by the session. "Which
-decisions are still unmade" is a semantic judgement that code cannot make, so
-**the session supplies the questions**. But "how many rounds happened, what did
-each cover, has it converged, did the user confirm" are facts, and those are
-recorded here. The model thinks; the runtime attests.
+这个回路由固定代码运行；问题由会话提出。「还有哪些决定没有做」是代码做不出的语义判断，所以**问题由会话提供**。但「跑了几轮、每轮覆盖了什么、收敛了没有、用户确认了吗」是事实，这些被记录在这里。模型思考；运行时作证。
 
 ```text
-gac_task { action: "grill", grill_action: "status" }                        # what has been asked
+gac_task { action: "grill", grill_action: "status" }                        # 已经问过什么
 gac_task { action: "grill", grill_action: "record",  round: { questions: [...] } }
-gac_task { action: "grill", grill_action: "converge" }                      # you think you are done
+gac_task { action: "grill", grill_action: "converge" }                      # 你认为已经问尽
 gac_task { action: "grill", grill_action: "confirm", confirmation: "<用户的原话>" }
 ```
 
-**The loop does not end on the model's self-assessment.** A model with a wrong
-understanding will confidently believe it has asked everything, so the loop ends
-only when the *user* says it is enough. Recording `converge` does not end
-anything — it states an opinion. `confirm` requires the user's actual words.
+**这个回路不以模型的自我评估结束。** 一份理解有误的模型会自信地认为自己已经问全了，所以回路只在*用户*说够了的时候结束。记录 `converge` 不结束任何东西——它只是陈述一个看法。`confirm` 需要用户的原话。
 
-**A round must contain both a question and an answer.** An answer of "不知道" is
-a real finding and is recorded and reported as unresolved; a *missing* answer is
-different from "the user doesn't know", and conflating them loses the distinction
-between a decision that is still open and one nobody asked about.
+**一轮里必须同时有问题和答案。** 答案为「不知道」是一条真实的发现，会被记录并报为未消解；答案*缺失*与「用户不知道」是两件事，把两者混为一谈，就丢掉了「决定仍然悬着」与「根本没人问过」之间的区别。
 
-**Round count has no ceiling semantics.** A requirement that genuinely needs five
-rounds must get five. The limit is a runaway guard, not a statement that "this
-many should be enough".
+**轮数没有上限语义。** 一个真的需要五轮的需求就该得到五轮。上限是一个防止失控的守卫，而不是在说「这么多应该就够了」。
 
-### Interface contract (freeze before parallel work)
+### 接口契约（并行开工之前冻结）
 
-This is what makes "write the implementation and the tests in parallel" more than
-a slogan. A test author writing tests does not know what the implementation looks
-like. If the two sides invent interfaces independently, the tests fail because the
-*interfaces* disagree — a structural failure, not a defect, and one that yields no
-information about correctness. Freezing a minimal contract first means both
-branches depend only on it: tests derive from **contract + acceptance criteria**
-(without reading the implementation), code from **contract + design** (without
-reading the tests). Two separated information paths — which is also what makes
-verification independence real rather than nominal.
+这就是让「并行写实现和测试」不只是一句口号的东西。写测试的人在写测试时并不知道实现长什么样。如果两边各自发明接口，测试就会因为*接口*对不上而失败——那是结构性失败，不是缺陷，而且它不会产出任何关于正确性的信息。先冻结一份最小契约，意味着两条分支都只依赖它：测试推导自**契约 + 验收标准**（不读实现），代码推导自**契约 + 设计**（不读测试）。两条彼此分开的信息路径——这也正是让验证的独立性变成真的、而不是名义上的原因。
 
-**`behavior` is required, not just `signature`.** With only a signature, "what does
-it return" is still a guess, and the guessed expectation is exactly where the two
-sides diverge. The behaviour note need not be exhaustive, only sufficient for
-someone else to write an assertion from.
+**`behavior` 是必需的，而不只是 `signature`。** 只有签名时，「它返回什么」仍要靠猜，而猜出来的期望正是两边对不上的地方。行为说明不必穷尽，只需要够别人据此写出一条断言。
 
-**The freeze is a gate before dispatch, and it is declared by the project.** The
-adapter states it, so small changes need no ceremony:
+**冻结是派遣前的一道门禁，而且由工程来声明。** 适配器声明它，所以小的改动不需要仪式：
 
 ```json
 "execution": { "require_contract": ["high_risk_task"] }
 ```
 
-Only *writing* nodes are held back; nodes that just return a report are not. And
-like the verification plan, the contract is content-addressed and refuses to be
-overwritten — a change after both branches are working against it is precisely the
-divergence the freeze exists to prevent.
+只有*写文件的*节点会被拦下；只回传报告的节点不会。而且和验证计划一样，契约是内容寻址的，拒绝被覆盖——在两条分支都已经按它开工之后再改，恰恰就是这道冻结所要防止的那种不一致。
 
-### Model routing
+### 模型路由
 
-`execution.provider_routes` is keyed by **executor name** (the names listed in
-`executors`), not by capability:
+`execution.provider_routes` 按**执行者名字**作键（即 `executors` 里列出的那些名字），而不是按能力：
 
 ```json
 "execution": { "provider_routes": { "verifier": { "provider": "p", "model": "m" } } }
 ```
 
-Keyed by name because capability routing returns a *name*, and that name has to
-find the executor it denotes. Keying by capability and naming executors
-`capability:provider/model` meant the lookup never matched and silently fell
-through to "whoever supports it" — the declared route was ignored while
-everything looked fine. It also lets two executors of the *same* capability use
-different models, which is what independence needs.
+之所以按名字作键，是因为能力路由返回的是一个*名字*，而这个名字要能找到它所表示的那个执行者。按能力作键、并把执行者命名为 `capability:provider/model`，意味着查找永远匹配不上，静默地落到「谁支持就谁上」的兜底分支——声明的路由被忽略，而看起来一切正常。按名字作键也让*同一个*能力下的两个执行者使用不同模型成为可表达的，而那正是独立性需要的东西。
 
-### Evidence: issued by the runtime, not written by the agent
+### 证据：由运行时签发，而不是由 Agent 写下
 
-Before this, a verification report's `evidence_ref` was just a string the model wrote.
-Writing `ev-1` and actually running a command were **identical in the data**, so "every
-case has evidence" could be satisfied by inventing it. The plugin now subscribes to
-`tools/result` and records every observation; the **runtime issues the ids**.
+在此之前，验证报告里的 `evidence_ref` 只是模型写下的一个字符串。写下 `ev-1` 与真正跑过一条命令，在数据上**完全一样**，于是「每条用例都有证据」可以靠编造满足。插件现在订阅 `tools/result`，记录每一次观测；**证据号由运行时签发**。
 
 ```text
 ev-3  |  pwsh  |  exit=0  |  is_error=false  |  output digest 67d02982
 ```
 
-An `evidence_ref` is `evidence_id#detail`. Same id with **different** details is
-legitimate — one test-suite run substantiates many cases, each in its own part of the
-output. Same id with the **same** detail is pooled evidence: one observation standing in
-for two claims.
+一条 `evidence_ref` 形如 `evidence_id#detail`。同一个 id 配**不同**明细是合法的——一次测试套件运行支撑多条用例，每条各自落在产出的不同部分。同一个 id 配**相同**明细则是取证摊薄：一个观测顶替两条主张。
 
-Three things are hard facts, not judgements:
+有三件事是硬性事实，不是判断：
 
-| Check | Why |
+| 检查 | 为什么 |
 | --- | --- |
-| the id was never issued | the reference is invented |
-| `is_error` is true | that call did not succeed |
-| `exit_code` is non-zero | **a command that failed proves nothing passed** |
+| 这个 id 从未被签发过 | 该引用是编造的 |
+| `is_error` 为 true | 那次调用没有成功 |
+| `exit_code` 非零 | **一条失败的命令证明不了任何东西通过了** |
 
-Capture is scoped to **engaged** sessions (a write scope declared, or an execution mode
-declared). Recording every read and every directory listing in every session would bury
-the verification evidence that actually needs reviewing.
+采集范围限定在**已介入**的会话（声明了写作用域，或声明了执行模式）。把每个会话里的每一次读取和每一次目录列举都记下来，会把真正需要复核的验证证据埋掉。
 
-**What the frozen result does and does not carry.** `tools/result` yields
-`{ isError, value, content, meta }`, plus `error.info.code` on failure. There is **no
-top-level CWD / stdout / stderr**, and `exitCode` is not top-level either — it lives inside
-`result.value`, whose shape **differs per tool**. So the capture reads `exitCode` /
-`signal` / `timedOut` only when the value really is an object carrying those fields, and
-**omits the field when it cannot be read**: a missing fact is honest, a guessed one is not.
-Output is stored as a digest and a short preview, never in full.
+**冻结下来的结果带有什么、不带有什么。** `tools/result` 产出 `{ isError, value, content, meta }`，失败时外加 `error.info.code`。它**没有顶层的 CWD / stdout / stderr**，`exitCode` 也不是顶层的——它在 `result.value` 里面，而那个值的形状**每个工具都不一样**。所以采集只在那个值确实是携带这些字段的对象时才读 `exitCode` / `signal` / `timedOut`，**读不到就不写这一项**：缺失的事实是诚实的，猜出来的是假的。产出以摘要加一小段预览存放，从不全文存。
 
-### Metrics, and the metrics that cannot be computed
+### 指标，以及算不出来的指标
 
-`gac_metrics` is read-only and exists so the numbers are actually reachable — code that is
-written but never called is the same as code that was never written, and this repo has had
-to fix that mistake more than once.
+`gac_metrics` 是只读的，它存在的意义是让这些数真的能够被拿到——写出来却从未被调用的代码，等于从未写过的代码，而本仓库不得不修正这个错误不止一次。
 
-The one number to watch is **unauthorized write attempts**, which **should always be 0**. A
-non-zero value does not mean the gate failed (the gate stopped it) — it means the prompt and
-the documentation have a problem: the model is attempting something it should never have
-tried. Treating "we blocked it" as success is how that signal gets ignored forever.
+最该盯的一个数是**越权写入尝试**，它**应当恒为 0**。非零不代表门禁失效（门禁拦住了它）——它代表提示词与文档有问题：模型在试图做一件本就不该尝试的事。把「我们拦住了」当成成功，就是这个信号被永远忽略的方式。
 
-Four metrics from the outline cannot be computed here, and `gac_metrics` lists them with
-reasons rather than omitting them — omitting one makes it look fine:
+大纲里的四个指标在这里算不出来，而 `gac_metrics` 会把它们连同原因一起列出，而不是省略——省掉一个会让人以为它没问题：
 
-| Metric | Why not |
+| 指标 | 为什么算不出来 |
 | --- | --- |
-| Agent Call Amplification | needs a count of *requirements* as denominator; the runtime tracks sessions and tool calls, not requirement boundaries |
-| Token Usage / Context Reuse | needs `tokenMeter` readings; the evidence log holds tool calls, not token accounting |
-| False-positive Escalation | needs the after-the-fact judgement of whether escalation was truly needed — not a runtime fact |
-| Critical Path Duration | needs task-level start/end events |
+| Agent Call Amplification | 需要一个*需求*条数作为分母；运行时跟踪的是会话与工具调用，不是需求边界 |
+| Token Usage / Context Reuse | 需要 `tokenMeter` 的读数；证据日志里装的是工具调用，不是 token 账 |
+| False-positive Escalation | 需要事后判断那次升级是否真的必要——那不是运行时事实 |
+| Critical Path Duration | 需要任务级的开始/结束事件 |
 
-Duplicate Read Ratio *is* computed: same session, same read tool, same argument digest.
+Duplicate Read Ratio 是**算得出来的**：同一会话、同一个读工具、参数摘要相同。
 
-### The gates guard the artifact, not a risk label
+### 门禁守的是产物，不是一个风险标签
 
-Two gates were wrong in the same way, and a real requirement walked end to end found
-both. Each keyed on the **execution mode** while guarding something that has nothing
-to do with risk:
+有两道门禁以同一种方式错了，而一个真实需求端到端走一遍就把两者都逮住了。它们各自按**执行模式**作键，守的却是与风险无关的东西：
 
-| Gate | Was keyed on | The condition that actually matters |
+| 门禁 | 原先的键 | 真正要紧的条件 |
 | --- | --- | --- |
-| interface contract | `high_risk_task` | **≥2 nodes writing files in one batch** — that is when two authors can invent different interfaces |
-| verification evidence | `high_risk_task` | **a frozen verification plan exists** — that is when there is a promise to check against |
+| 接口契约 | `high_risk_task` | **同一批里有 ≥2 个节点在写文件**——那才是两个作者可能发明出不同接口的时候 |
+| 验证证据 | `high_risk_task` | **存在一份冻结的验证计划**——那才是有一个承诺可以拿来核对的时候 |
 
-The consequences were not cosmetic. A `standard_task` with parallel code and test
-nodes dispatched **without a contract** — the exact structural failure the contract
-gate exists to prevent. And a `standard_task` with a 20-case frozen plan closed with
-`all_criteria_covered: true` and **zero evidence cited**, discarding the plan's whole
-value at the finish line while everything looked fine.
+后果不是表面上的。一个带着并行代码节点与测试节点的 `standard_task` **没有契约**就派遣了——正是契约门禁存在所要防止的那种结构性失败。而一个带着 20 条用例的冻结计划的 `standard_task`，在 `all_criteria_covered: true` 且**一条证据都没引用**的情况下收了口，在终点线上把这份计划的全部价值丢掉，而一切看起来都正常。
 
-A gate that keys on a risk label is a gate you can walk around by not declaring the
-label. Both now key on the artifact they guard, and both say which trigger fired —
-"your batch has parallel writers" and "your adapter declares this mode" mean different
-things to whoever has to act.
+按风险标签作键的门禁，是一个你可以靠不声明那个标签就绕过去的门禁。现在两者都按自己守的产物作键，并且都会说出触发的是哪一个——「你的批次里有并行的写入者」与「你的适配器声明了这个模式」，对不得不采取行动的人来说是两件不同的事。
 
-### Discovery is part of the loop
+### 发现也是回路的一部分
 
-`gac_evidence` exists because the evidence gate was **unusable in practice**: it demands
-references to runtime-issued ids, and nothing let a model learn what ids existed. A rule
-that requires citing real evidence, with no way to find real evidence, is a rule that
-gets satisfied by inventing ids.
+`gac_evidence` 之所以存在，是因为证据门禁**在实际使用中不可用**：它要求引用运行时签发过的号，而在此之前没有任何东西能让模型知道有哪些号。一条要求引用真证据、却没有办法找到真证据的规则，是一条会被编造出来的号满足的规则。
 
-Two things about it were learned the hard way:
+关于它有两点是吃了苦头才学到的：
 
-**`render` is part of the interface, not a presentation detail.** The first version
-returned correct data and rendered only a summary line — so the model saw "there are 8
-evidence records" and not one id. The data was right and the tool was useless. What the
-model *reads* is as much a part of the contract as what the function returns, and the
-frozen contract for this task omitted it — which is exactly why the defect survived all
-the way to verification.
+**`render` 是接口的一部分，不是展示细节。** 第一个版本返回的数据是对的，却只渲染了一行汇总——于是模型看到「共有 8 条证据记录」，一个号也没看到。数据是对的，工具却毫无用处。模型*读到*的东西，与函数返回的东西一样，都是契约的一部分，而这项任务冻结的契约把它漏掉了——这正是那个缺陷一路活到验证阶段的原因。
 
-**Capture must not depend on in-memory state.** Evidence capture was scoped to sessions
-that had declared a scope or mode — both in-memory. A plugin reload silently dropped
-them, and capture simply stopped: two test runs recorded nothing while everything
-appeared normal. It now keys on whether the *project* is governed (an adapter on disk),
-which survives reloads.
+**采集不能依赖内存状态。** 证据采集原先限定在声明过作用域或模式的会话里——两者都在内存中。一次插件重载把它们悄悄丢掉，采集就此停止：两轮测试一条也没记下，而一切看起来都正常。它现在按*工程*是否纳管（盘上有适配器）作键，而那能扛过重载。
 
-### GAC events in the session log
+### 会话日志里的 GAC 事件
 
-GAC appends its own events to the session's event log, and registers a projection for each
-type so they surface in the conversation. Verified live: one `gac/mode-declared` at seq 5283
-in this repo's session log, with the intended payload.
+GAC 把自己的事件追加到会话的事件日志里，并为每个类型注册一个投影，让它们出现在对话中。实测验证过：本仓库的会话日志里，seq 5283 处有一条 `gac/mode-declared`，载荷与预期一致。
 
-**The outline's §4.6 claim does not hold, and this is worth stating plainly.** The plan says
-`Current State = reduce(Session Events)`, replacing mutable state plus a history JSON. For
-*task* state that is not achievable:
+**大纲 §4.6 的说法不成立，而这值得直说。** 计划里写着 `Current State = reduce(Session Events)`，用它取代可变状态加一份历史 JSON。对*任务*状态而言这是做不到的：
 
-| Fact | Consequence |
+| 事实 | 后果 |
 | --- | --- |
-| sessions are session-scoped; `ctx.sessions` is explicitly an **in-memory** store whose persistence is a separate plugin | an event log describes one session |
-| tasks are **project-scoped** — one requirement's nodes are advanced by different executors in different sessions | a task's history is spread across session logs |
-| there is no project-level event stream and no project→session index | nothing can gather them |
+| 会话按会话划分；`ctx.sessions` 明确是一个**内存**存储，其持久化是另一个插件 | 一份事件日志只描述一个会话 |
+| 任务按**工程**划分——同一个需求的节点由不同会话里的不同执行者推进 | 一个任务的历史散落在多份会话日志里 |
+| 不存在工程级的事件流，也不存在 工程→会话 的索引 | 没有任何东西能把它们聚起来 |
 
-So the file-based task store remains the **authority**, and events add *visibility and
-audit*: what happened in this session, replayable and projected. Both are needed because
-they answer different questions — "where is this task" spans sessions; "what did this
-session do" only the log can answer.
+所以基于文件的任务存储仍然是**权威**，而事件补的是*可视性与审计*：这个会话里发生了什么，可重放、可投影。两者都需要，因为它们回答的是不同的问题——「这个任务在哪儿」跨会话；「这个会话做了什么」只有日志能回答。
 
-**The message source vocabulary has no slot for the runtime.** `MessageSourceMap` offers
-`user` / `model` / `tool` / `system-prompt`. A projection's message must claim one of them,
-so a GAC event is necessarily attributed to someone else. It is projected as `user` with a
-`[GAC]` prefix so it is visibly not the user speaking — but that is a **misattribution, not
-an equivalent**: a reader of the history would take those words for the user's.
+**消息来源词汇表里没有运行时的位置。** `MessageSourceMap` 提供 `user` / `model` / `tool` / `system-prompt`。一条投影消息必须认领其中之一，所以一条 GAC 事件必然被归到别人头上。它以 `user` 身份、带 `[GAC]` 前缀被投影出来，因而看得出来不是用户本人在说话——但那是一次**错误归属，不是一个等价物**：读历史的人会把这些话当成用户说的。
 
-**Projected messages are not validated.** `deriveEventMessage` returns a projection's
-message verbatim — no shape check. `MessageBase` requires `id` and `source`, so a projection
-that omits them puts a malformed message into the conversation without any error. The `id`
-must also be **stable across derivations**, or consumers indexing by id cannot recognise the
-same message twice; it is derived from the event seq.
+**投影消息不被校验。** `deriveEventMessage` 逐字返回一条投影的消息——没有任何形状检查。`MessageBase` 要求 `id` 与 `source`，所以一个漏掉它们的投影会把一条畸形消息放进对话，而不报任何错。`id` 还必须**在多次派生之间保持稳定**，否则按 id 建索引的消费方无法两次认出同一条消息；它是从事件 seq 派生出来的。
 
-**Reading a session log from a script is not straightforward.** The log is **concatenated
-zstd frames**, one per write (3095 frames in a 4 MB file here), and Node's
-`zstdDecompressSync` / `createZstdDecompress` both stop after the **first** frame — returning
-just the header. Auditing a log requires decoding frame-by-frame from each magic offset.
+**从脚本里读会话日志并不简单。** 日志是**拼接起来的 zstd 帧**，每次写入一帧（这里的一个 4 MB 文件里有 3095 帧），而 Node 的 `zstdDecompressSync` / `createZstdDecompress` 都在**第一帧**之后就停下——只返回头部。审计一份日志需要从每个魔数偏移处逐帧解码。
 
 ---
 
-## Known limits
+## 已知局限
 
-Stated here rather than discovered later (adaptation plan §7):
+写在这里，而不是留到以后才发现（适配计划 §7）：
 
-1. **Shell writes cannot be guarded.** A redirection or generator target inside
-   a command string is not visible to a tool-pipeline guard. Rather than pretend
-   otherwise, the gate refuses shell commands entirely while a scope is active.
-   Patterns that need shell execution must either run outside a scope or be
-   rewired to the structured file tools.
-2. **The gate is per tool call, not per process.** A process started before a
-   scope was declared is not affected by it.
-3. **Scopes are in-memory.** A restart drops every scope; that is the correct
-   failure direction, since a stale scope would enforce an authority nobody
-   holds. Durable scopes arrive with the coordinator, re-derived from the session
-   log. **Claims are durable**, so a crash can leave one behind — it stops
-   blocking as soon as its session is no longer live, because a store with a
-   liveness predicate prunes it before judging the next conflict. With no
-   liveness information at all, claims are kept rather than guessed dead:
-   blocking a writer is recoverable, and two writers on one file is not.
-4. **Unknown tools fail closed while governed.** A tool added by a harness
-   upgrade is refused until it is classified in `lib/tool-targets.js`. This is
-   intentional: a runtime upgrade must not silently widen authority.
+1. **shell 写入无法被守护。** 命令字符串里的重定向或生成器目标，对工具流水线上的守卫是不可见的。与其假装不是这样，门禁在作用域生效期间干脆完全拒绝 shell 命令。需要 shell 执行的模式，要么在作用域之外跑，要么改接到结构化的文件工具上。
+2. **门禁是按工具调用生效的，不是按进程。** 在一个作用域被声明之前就已经启动的进程，不受它影响。
+3. **作用域在内存里。** 重启会丢掉每一个作用域；这是正确的失败方向，因为一个过期的作用域会强制执行一项没人持有的权限。持久化的作用域会随协调器到来，从会话日志重新推导。**占用声明是持久化的**，所以一次崩溃可能把它留下——一旦它的会话不再存活，它就不再阻塞，因为带存活判定的存储会在判定下一次冲突之前先把它清理掉。当完全拿不到存活信息时，占用声明会被保留，而不是被猜成已死：挡住一个写入者是可以恢复的，而两个写入者写同一个文件不是。
+4. **已纳管时，未知工具按失败即拒绝处理。** harness 升级新增的工具会被拒绝，直到它在 `lib/tool-targets.js` 里被归类。这是刻意的：一次运行时升级绝不能静默地放宽权限。
 
-   This rule produced a real defect, kept here as the worked example. GAC's own
-   `gac_scope` was initially unclassified, so once a scope was declared the guard
-   refused the one tool able to release it — the scope became a trap. It is now
-   classified as touching no file. **Any tool whose enforcement path is itself
-   guarded must be provably unable to write**, or it re-creates this deadlock.
+   这条规则产生过一个真实缺陷，留在这里作为实例。GAC 自己的 `gac_scope` 最初没有归类，于是作用域一旦声明，守卫就拒绝了唯一能释放它的工具——作用域变成了陷阱。它现在被归类为不触碰任何文件。**任何其强制路径本身也被守卫的工具，都必须可证明地无法写入**，否则它会重新制造这个死锁。
 
 ---
 
-## Develop
+## 开发
 
 ```bash
-npm test          # 671 tests, no DSH required
+npm test          # 671 个测试，不需要 DSH
 ```
 
-The library modules are pure and dependency-injected precisely so the suite runs
-without a harness. `test/entry.test.js` additionally asserts the Cordis export
-shape and that no module imports a bare `@deepseek-ai/*` package at module scope
-(which would throw during evaluation, before any plugin code could report why).
+这些库模块是纯的、依赖注入的，正是为了让测试套件不需要 harness 就能跑。`test/entry.test.js` 另外断言了 Cordis 导出的形状，并断言没有任何模块在模块作用域里裸 import `@deepseek-ai/*` 包（那会在求值期间抛错，早于任何插件代码来得及报告原因）。
 
 ```text
 lib/
-  index.js           DSH shell: registers the guard and the declaration tools
-  plugin.js          the pre-execute gate (fails closed on every unknown)
-  write-scope.js     strict path containment — the security boundary
-  claims.js          write-claim conflict detection (pure)
-  claim-store.js     durable one-file-per-claim store with orphan pruning
-  capability-router.js  pick an executor by required capabilities (pure)
-  contract.js        interface contract: freeze it before parallel work (pure)
-  executor.js        execution boundary: invoke, or refuse honestly
-  gac-events.js      GAC session events: vocabulary, reducer, projection (pure)
-  evidence.js        runtime-issued evidence records and refs (pure)
-  evidence-store.js  append-only JSONL log; the runtime issues the ids
-  metrics.js         reduction over evidence and tasks (pure)
-  coordinator.js     task DAG, ready resolution, state transitions (pure)
-  grilling.js        multi-round requirement refinement (pure)
-  task-store.js      durable one-file-per-task store, plans, load-time revalidation
-  tool-task.js       the gac_task tool
-  tool-metrics.js    the read-only gac_metrics tool
-  tool-evidence.js   the read-only gac_evidence tool
-  verification.js    verification plan, falsification, traceability gates (pure)
-  project.js         adapter validation + execution-mode escalation (pure)
-  project-state.js   adapter loading, caching, and per-session mode state
-  tool-project.js    the gac_project tool
-  tool-targets.js    which tool calls write which paths
-  tool-scope.js      the gac_scope tool
-  session-scope.js   per-session declared scope registry
-  path-utils.js      absolute-path and root-prefix helpers
-  resolve-dsh.js     resolve @deepseek-ai/* from a linked install
+  index.js           DSH 外壳：注册守卫与声明工具
+  plugin.js          pre-execute 门禁（对每一个未知项都按失败即拒绝）
+  write-scope.js     严格的路径包含判定——安全边界
+  claims.js          写占用声明冲突检测（纯函数）
+  claim-store.js     持久化存储，一份占用一个文件，带孤儿清理
+  capability-router.js  按所需能力挑选执行者（纯函数）
+  contract.js        接口契约：并行开工之前先冻结它（纯函数）
+  executor.js        执行边界：调用，或者诚实地拒绝
+  gac-events.js      GAC 会话事件：词汇表、归约器、投影（纯函数）
+  evidence.js        运行时签发的证据记录与引用（纯函数）
+  evidence-store.js  只追加的 JSONL 日志；证据号由运行时签发
+  metrics.js         对证据与任务做归约（纯函数）
+  coordinator.js     任务 DAG、就绪判定、状态迁移（纯函数）
+  grilling.js        多轮需求精化（纯函数）
+  task-store.js      持久化存储，一份任务一个文件，含计划与加载时重新校验
+  tool-task.js       gac_task 工具
+  tool-metrics.js    只读的 gac_metrics 工具
+  tool-evidence.js   只读的 gac_evidence 工具
+  verification.js    验证计划、反例与可追溯性门禁（纯函数）
+  project.js         适配器校验 + 执行模式升级（纯函数）
+  project-state.js   适配器加载、缓存，以及按会话的模式状态
+  tool-project.js    gac_project 工具
+  tool-targets.js    哪些工具调用会写哪些路径
+  tool-scope.js      gac_scope 工具
+  session-scope.js   按会话的已声明作用域注册表
+  path-utils.js      绝对路径与根前缀辅助函数
+  resolve-dsh.js     从链接安装的形态里解析 @deepseek-ai/*
 ```
 
-Design rules the code follows:
+代码遵循的设计规则：
 
-- **One definition site per security decision.** Containment lives in
-  `write-scope.js` only, and is unit-tested; the DSH bridge calls it rather than
-  re-deriving it. A second implementation would drift.
-- **No project facts in the runtime.** No project name, path or capability word
-  appears in `lib/`; `test/project.test.js` fails if one does.
-- **Failures are explicit.** A denial names the declared scope and carries a
-  stable code; a plugin that cannot register half its behaviour says so in the
-  load report rather than dropping it silently.
+- **每项安全决定只有一个定义处。** 包含判定只住在 `write-scope.js` 里，并且有单元测试；DSH 桥调用它，而不是重新推导一遍。第二份实现会漂移。
+- **运行时里没有工程事实。** `lib/` 里不出现任何工程名、路径或能力词；一旦出现，`test/project.test.js` 会红。
+- **失败是显式的。** 一次拒绝会指明所声明的写作用域并携带一个稳定的码；一个无法注册一半行为的插件会在加载报告里说明这一点，而不是悄悄丢掉它。
 
-See [GAC-DSH-ADAPTATION-PLAN.md](GAC-DSH-ADAPTATION-PLAN.md) for the full design,
-the six real gaps, the boundary conditions, and the phase plan.
+完整设计、六道真实缺口、边界条件与阶段计划见 [GAC-DSH-ADAPTATION-PLAN.md](GAC-DSH-ADAPTATION-PLAN.md)。
