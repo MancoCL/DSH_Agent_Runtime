@@ -17,22 +17,44 @@ import { createRoleGuard } from '../lib/role-guard.js'
 /**
  * 一个假 agent 的工具服务：记下收权请求，并给出可撤销的凭据。
  *
+ * `global` 是**全局注册表**的视野（`schemas()` 不带 scope 时读到的），`visible` 是这个 agent 的
+ * 视野。两者不相等是实测里真实发生的事：宿主把 Team 那几个工具注册进了 agent 自己的层，而全局
+ * 注册表里没有它们，于是整次收权被它们拖垮。
+ *
  * @param {object} [options]
  * @param {readonly string[]} [options.visible]
+ * @param {readonly string[]} [options.global] - 缺省与 visible 相同。
  * @param {boolean} [options.throwOnRestrict]
  * @param {boolean} [options.throwOnSchemas]
+ * @param {readonly string[]} [options.unknownToRestrict] - 这些名字一旦出现在 deny 里就让 restrict
+ *   抛错，模拟宿主「names unknown global tools」的行为。
  * @returns {{tools: object, restrictions: object[], disposed: number[]}}
  */
-function fakeTools({ visible = ['read', 'write', 'edit', 'pwsh', 'run_code', 'gac_task'], throwOnRestrict = false, throwOnSchemas = false } = {}) {
+function fakeTools({
+  visible = ['read', 'write', 'edit', 'pwsh', 'run_code', 'gac_task'],
+  global,
+  throwOnRestrict = false,
+  throwOnSchemas = false,
+  unknownToRestrict = [],
+} = {}) {
   const restrictions = []
   const disposed = []
+  const globalView = global ?? visible
   const tools = {
-    schemas: () => {
+    schemas: (scope) => {
       if (throwOnSchemas) throw new Error('视野读不出来')
-      return visible.map((name) => ({ name }))
+      const names = scope === undefined ? globalView : visible
+      return names.map((name) => ({ name }))
     },
     restrict: (filter) => {
       if (throwOnRestrict) throw new Error('收权接缝拒绝了这个过滤器')
+      const unknown = (filter?.deny ?? []).filter((name) => unknownToRestrict.includes(name))
+      if (unknown.length > 0) {
+        // 与宿主一致的措辞：它对全局注册表不认识的名字直接抛错。
+        throw new Error(
+          `tools.restrict() names unknown global tools ${unknown.map((n) => `"${n}"`).join(', ')}`,
+        )
+      }
       const index = restrictions.length
       restrictions.push(filter)
       return () => disposed.push(index)
@@ -117,6 +139,35 @@ describe('sync —— 按在飞的只读节点收权', () => {
 })
 
 describe('拿不到收权接缝时如实降级', () => {
+  it('作用域内注册、全局注册表不认识的名字不进 deny —— 它们会让整次收权失败（活体实测）', () => {
+    // 实测原文：`tools.restrict() names unknown global tools "spawn_teammate", …, "subagent"`。
+    // 名单里混进一个这样的名字，整次 `restrict` 就抛错、退化成兜底——而兜底本该只是兜底。
+    const { tools, restrictions } = fakeTools({
+      visible: ['read', 'write', 'edit', 'spawn_teammate', 'subagent'],
+      global: ['read', 'write', 'edit'],
+      unknownToRestrict: ['spawn_teammate', 'subagent'],
+    })
+    const { guard } = guardOf({ toolsFor: () => tools })
+    const record = guard.sync({ sessionId: 's1', taskId: 'R', readOnlyNodes: ['T2'], agent: {} })
+    assert.equal(record.mode, 'restricted', '能收的照样收，不该因为有两个收不掉就一个都不收')
+    assert.deepEqual([...record.revoked], ['write', 'edit'])
+    assert.deepEqual(restrictions, [{ deny: ['write', 'edit'] }])
+    // 收不掉的那些必须留下痕迹：它们仍会被守卫拒绝，但「没被收回」这件事本身要可见。
+    assert.deepEqual([...record.shadowed], ['spawn_teammate', 'subagent'])
+  })
+
+  it('收不掉的名字被报进 role-restricted 事件', () => {
+    const { tools } = fakeTools({
+      visible: ['read', 'write', 'spawn_teammate'],
+      global: ['read', 'write'],
+    })
+    const { guard, events } = guardOf({ toolsFor: () => tools })
+    guard.sync({ sessionId: 's1', taskId: 'R', readOnlyNodes: ['T2'], agent: {} })
+    const event = events.find((entry) => entry.event === 'role-restricted')
+    assert.deepEqual(event.revoked, ['write'])
+    assert.deepEqual(event.shadowed, ['spawn_teammate'])
+  })
+
   it('没有工具服务时退到守卫兜底，并记下这件事', () => {
     // 静默失效是最坏的形态：调用方会以为角色已经安全了。
     const { guard, events } = guardOf()
