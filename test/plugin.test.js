@@ -59,6 +59,21 @@ function governed(writeScope, options = {}) {
   return core
 }
 
+/**
+ * 一次 PTC **内层子调用**：与 `exec` 同一形状，另带内核给出的 `parent` 令牌。
+ *
+ * 这个令牌是内核区分「模型直呼」与「传输派发」的唯一标志（`dsh-tools` 的
+ * `ToolExecution.parent` 注释）：内层子调用带着它走到同一个 `tools/pre-execute`。
+ *
+ * @param {string} name
+ * @param {object} args
+ * @param {string} [sessionId]
+ * @returns {object}
+ */
+function nested(name, args, sessionId = SESSION) {
+  return { ...exec(name, args, sessionId), parent: { token: 'ptc-1' } }
+}
+
 describe('无人管辖的会话不受干预', () => {
   it('从未声明过作用域时放行写入', () => {
     const core = createGacCore()
@@ -286,6 +301,53 @@ describe('运行时自己的工具不能被它自己执行的作用域挡住', (
   it('产品文件仍被拒绝：放行的是记账，而不是写入面', () => {
     const core = governed(['src/a.c'])
     assert.equal(core.preExecute(exec('write', { file_path: 'outside.c' })).kind, 'deny')
+  })
+})
+
+describe('PTC：放行外层传输，内层子调用按自己的名字受管', () => {
+  it('外层 run_code 放行 —— 它自己不碰文件', () => {
+    // 在此之前它落在 unknown 里，于是作用域一生效 PTC 整体不可用，而它派发的内层子调用根本
+    // 没有机会被检查。拒绝外层不是更严的守卫，是把整个通道关掉。
+    const core = governed(['src/'])
+    assert.equal(core.preExecute(exec('run_code', { code: 'await tools.write(...)' })).kind, 'allow')
+  })
+
+  it('内层 write 越界时照样被拒', () => {
+    const core = governed(['src/'])
+    const verdict = core.preExecute(nested('write', { file_path: 'outside.c' }))
+    assert.equal(verdict.kind, 'deny')
+    assert.equal(verdict.info.code, GAC_CODES.WRITE_SCOPE_DENIED)
+  })
+
+  it('内层 write 在范围内放行', () => {
+    const core = governed(['src/'])
+    assert.equal(core.preExecute(nested('write', { file_path: 'src/a.c' })).kind, 'allow')
+  })
+
+  it('内层 pwsh 照样按 shell 拒绝 —— 换了个入口，边界没变', () => {
+    const core = governed(['src/'])
+    const verdict = core.preExecute(nested('pwsh', { command: 'echo hi > outside.c' }))
+    assert.equal(verdict.kind, 'deny')
+    assert.equal(verdict.info.code, GAC_CODES.SHELL_DENIED_UNDER_SCOPE)
+  })
+
+  it('内层未知工具照样拒绝', () => {
+    const core = governed(['src/'])
+    const verdict = core.preExecute(nested('mystery_tool', {}))
+    assert.equal(verdict.kind, 'deny')
+    assert.equal(verdict.info.code, GAC_CODES.UNGUARDABLE_WRITE_DENIED)
+  })
+
+  it('传输派发传输时按未知处理 —— 说明我对内核的理解有偏差', () => {
+    const core = governed(['src/'])
+    const verdict = core.preExecute(nested('run_code', { code: 'x' }))
+    assert.equal(verdict.kind, 'deny')
+    assert.equal(verdict.info.code, GAC_CODES.UNGUARDABLE_WRITE_DENIED)
+  })
+
+  it('没有声明作用域时外层传输照常放行', () => {
+    const core = createGacCore()
+    assert.equal(core.preExecute(exec('run_code', { code: 'x' })).kind, 'allow')
   })
 })
 
