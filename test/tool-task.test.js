@@ -1580,6 +1580,91 @@ describe('独立复核门禁 —— 六问齐备才能收口', () => {
   })
 })
 
+describe('同一批真的并行 —— 不是「协调器算了两个、执行排着队」', () => {
+  /**
+   * 冻结一份最小接口契约（同批两个写者必须先过这道门禁）。
+   *
+   * @param {object} h
+   * @param {string} taskId
+   * @returns {Promise<object>}
+   */
+  function freezeContractFor(h, taskId) {
+    return h.tool.execute({
+      action: 'contract',
+      contract_action: 'freeze',
+      task_id: taskId,
+      interface_contract: {
+        name: 'a',
+        operations: [{ name: 'a', signature: 'a(): void', behavior: '无副作用。' }],
+      },
+    }, h.exec)
+  }
+
+  it('第二个节点在第一个跑完之前就已启动', async () => {
+    // 这条钉的是实现侧的伪并行：`resolveReady` 明明把两个写范围不相交的节点算进同一批，而派遣循环
+    // 原先是 `for … await`，等于一个跑完再起第二个。原生子会话的 `start()` 返回带 `result` 的 run，
+    // 本来就允许同时持有多个——所以「逻辑并行 ≠ 实际并行」在这里是**我们的**问题，不是平台限制。
+    const events = []
+    const executor = {
+      name: 'builder',
+      supports: () => true,
+      run: async ({ node }) => {
+        events.push(`start:${node.id}`)
+        await new Promise((resolve) => { setTimeout(resolve, 25) })
+        events.push(`end:${node.id}`)
+        return { status: 'completed', summary: `${node.id} 完成` }
+      },
+    }
+    const h = dispatchHarness({ runtimeExecutors: [executor] })
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-PAR',
+      mode: 'standard_task',
+      plan: { nodes: [
+        { id: 'T1', objective: '甲', required_capabilities: ['implementation'], write_scope: ['a/'] },
+        { id: 'T2', objective: '乙', required_capabilities: ['implementation'], write_scope: ['b/'] },
+      ] },
+    }, h.exec)
+    // 同一批里有两个写者，所以要先冻结接口契约——这条门禁本身是对的（各自发明接口就会分叉），
+    // 本用例要验的是「契约冻上之后，两个节点是真的同时开工」。
+    await freezeContractFor(h, 'REQ-PAR')
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-PAR' }, h.exec)
+
+    assert.deepEqual(events.filter((entry) => entry.startsWith('start')), ['start:T1', 'start:T2'])
+    assert.ok(
+      events.indexOf('start:T2') < events.indexOf('end:T1'),
+      `第二个节点必须在第一个跑完之前就已启动；实际顺序：${events.join(' → ')}`,
+    )
+    assert.deepEqual(value.classifications, ['accepted', 'accepted'])
+  })
+
+  it('同批的结果按批次顺序登记，任务记录的写入仍然串行', async () => {
+    // 启动重叠，但记录写入保持确定性：先收哪个、后收哪个不能随调度漂移。
+    const h = dispatchHarness({
+      runtimeExecutors: [{
+        name: 'builder',
+        supports: () => true,
+        run: async ({ node }) => ({ status: 'completed', summary: `${node.id} 完成` }),
+      }],
+    })
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-PAR2',
+      mode: 'standard_task',
+      plan: { nodes: [
+        { id: 'T1', objective: '甲', required_capabilities: ['implementation'], write_scope: ['a/'] },
+        { id: 'T2', objective: '乙', required_capabilities: ['implementation'], write_scope: ['b/'] },
+      ] },
+    }, h.exec)
+    await freezeContractFor(h, 'REQ-PAR2')
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-PAR2' }, h.exec)
+    const dispatched = value.transitions.filter((entry) => entry.kind === 'dispatched').map((entry) => entry.node_id)
+    const reported = value.transitions.filter((entry) => entry.kind === 'reported').map((entry) => entry.node_id)
+    assert.deepEqual(dispatched, ['T1', 'T2'])
+    assert.deepEqual(reported, ['T1', 'T2'], '回顾报必须按批次顺序，不随调度漂移')
+  })
+})
+
 describe('只读角色收权 —— 派遣时收、回报时放', () => {
   /** 一个「派给会话、停在 in_progress」的执行者：只读节点的常态。 */
   const STAYS_IN_PROGRESS = {
