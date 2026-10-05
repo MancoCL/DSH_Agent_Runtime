@@ -98,7 +98,7 @@ plugin_manager { action: install_bundle, target: "<this directory>" }
   npm run plugin:off      # 测完关回去——本项目的默认状态
   ```
 
-  开关就是 profile patch 里 `- id: gac-runtime` 的 `disabled:` 一行；脚本只动这一行，其余字节原样保留（`scripts/plugin-switch.js`，纯变换有单测，`test/plugin-switch.test.js`）。打开会立刻生效（HMR 重载，无需重启），加载报告里出现 `plugin-loaded`；关闭出现 `plugin-unloaded`。
+  开关就是 profile patch 里 `- id: gac-runtime` 的 `disabled:` 一行；脚本只动这一行，其余字节原样保留（`scripts/plugin-switch.js`，纯变换有单测，`test/plugin-switch.test.js`）。**打开是否立刻生效，取决于宿主在不在监视配置——不要假设，看加载报告**：`plugin:on` 之后报告里应当出现新的 `plugin-loaded`，出现了才算真的在跑；没出现就是这个宿主不会热应用配置，实测需要先重启宿主。2026-10-05 实测过一次「没生效」：改完 patch 90 秒后报告里仍没有新记录（报告的最后一次写入停在 1 小时前），而历史上确实有过 3–8 ms 就应用的记录——两种情形都真实存在过，所以判断只能靠报告。关闭同理：`plugin-unloaded` 出现才算真的卸掉。
 
   三条纪律：**开着的时候不要改 `lib/*.js`**；**打开之后记得关回去**；**别凭记忆判断状态**，用 `plugin:status`。本文件以前声称重新启用只会重跑 `apply`、继续执行启动时载入的代码，因此重启是让改动生效的唯一途径。**在 watch root 放宽之后**，那是错的：被监视的文件一变，HMR 就替换模块缓存，所以重新启用会导入新模块。实测而非推理：在一次禁用 → 编辑 → 重新启用的循环之后，加载报告带上了新代码自己的字段（`prompt-section-registered`），没有重启。
 
