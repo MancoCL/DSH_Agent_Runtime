@@ -65,6 +65,27 @@ describe('validateProjectAdapter —— 接受形式正确的适配器', () => {
 })
 
 describe('execution 一节 —— 运行时真正读取的字段必须能通过校验', () => {
+  it('只读角色要不要连 shell 一起收回：默认 false，声明 true 就通过', () => {
+    // 默认必须是不收：验证者要逐条执行计划用例才能留下证据，收掉 shell 会让「每条用例都要有
+    // 独立证据」的收口门禁永远过不去（适配计划 §4.4 阶段 3 与 E2E-6 的矛盾，本项目选了前者）。
+    assert.equal(adapter().execution.revoke_shell_for_read_only_roles, false)
+    assert.equal(
+      adapter({ execution: { revoke_shell_for_read_only_roles: true } })
+        .execution.revoke_shell_for_read_only_roles,
+      true,
+    )
+  })
+
+  it('这个开关不是布尔量时被拒，而不是被当成 false', () => {
+    for (const value of ['true', 1, {}, []]) {
+      assert.throws(
+        () => adapter({ execution: { revoke_shell_for_read_only_roles: value } }),
+        (error) => error instanceof ProjectAdapterError && /revoke_shell/u.test(error.message),
+        `应当拒绝 ${JSON.stringify(value)}`,
+      )
+    }
+  })
+
   it('未声明时给出去掉猜测的默认值', () => {
     // 校验器不认识的字段，运行时也不该去读。反过来同样成立：运行时读的字段，校验器必须
     // 放行——否则适配器里写了会被整体拒绝，不写则永远读到 undefined，而读到的空值看起来

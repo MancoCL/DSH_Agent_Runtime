@@ -351,6 +351,81 @@ describe('PTC：放行外层传输，内层子调用按自己的名字受管', (
   })
 })
 
+describe('只读角色的兜底：拿不到收权接缝时，守卫按同一张表拒绝', () => {
+  /**
+   * 一个已经处于收权状态的会话。
+   *
+   * @param {boolean} [includeShell]
+   * @returns {ReturnType<typeof createGacCore>}
+   */
+  function revokedCore(includeShell = false) {
+    return createGacCore({
+      resolveRoot: () => ROOT,
+      roleGuard: {
+        active: (sessionId) => (sessionId === SESSION
+          ? {
+            session_id: SESSION,
+            task_id: 'R',
+            node_ids: ['T2'],
+            revoked: ['write', 'edit'],
+            include_shell: includeShell,
+            mode: 'guard-only',
+          }
+          : undefined),
+      },
+    })
+  }
+
+  it('没有声明作用域时也拒绝写入 —— 这一层管的正是这种会话', () => {
+    // 收权正常时工具根本不在视野里（内核返回 UNKNOWN_TOOL），这一层是接缝缺席时的兜底；
+    // 而它要管的会话恰恰是「没有声明作用域」的那种——只读节点通常就没有 gac_scope 声明。
+    const core = revokedCore()
+    const verdict = core.preExecute(exec('write', { file_path: 'src/a.c' }))
+    assert.equal(verdict.kind, 'deny')
+    assert.equal(verdict.info.code, GAC_CODES.READ_ONLY_ROLE_DENIED)
+    assert.match(verdict.reason, /T2/u)
+    assert.match(verdict.reason, /只读角色不写产品文件/u)
+  })
+
+  it('运行时自己的工具照常放行：只读的意思是「不写产品文件」，不是「不能说话」', () => {
+    const core = revokedCore()
+    for (const name of ['gac_task', 'gac_scope', 'gac_project']) {
+      assert.equal(core.preExecute(exec(name, {})).kind, 'allow', `${name} 必须仍可用`)
+    }
+  })
+
+  it('读工具放行，PTC 传输被拒 —— 与收权表同一份判据', () => {
+    const core = revokedCore()
+    assert.equal(core.preExecute(exec('read', { file_path: 'src/a.c' })).kind, 'allow')
+    // 传输自己收掉了：留着它等于给只读角色留一条通往写入面的通道。
+    const verdict = core.preExecute(exec('run_code', { code: 'x' }))
+    assert.equal(verdict.kind, 'deny')
+    assert.equal(verdict.info.code, GAC_CODES.READ_ONLY_ROLE_DENIED)
+  })
+
+  it('内层子调用同样被拒 —— 换个入口，边界没变', () => {
+    const core = revokedCore()
+    assert.equal(core.preExecute(nested('write', { file_path: 'src/a.c' })).kind, 'deny')
+  })
+
+  it('shell 默认放行（验证者要靠它跑用例）', () => {
+    const core = revokedCore(false)
+    assert.equal(core.preExecute(exec('pwsh', { command: 'npm test' })).kind, 'allow')
+  })
+
+  it('项目要求连 shell 一起收回时，shell 也被拒', () => {
+    const core = revokedCore(true)
+    const verdict = core.preExecute(exec('pwsh', { command: 'npm test' }))
+    assert.equal(verdict.kind, 'deny')
+    assert.equal(verdict.info.code, GAC_CODES.READ_ONLY_ROLE_DENIED)
+  })
+
+  it('别的会话不受影响', () => {
+    const core = revokedCore()
+    assert.equal(core.preExecute(exec('write', { file_path: 'x.c' }, 'session-2')).kind, 'allow')
+  })
+})
+
 describe('守卫自身的说明', () => {
   it('每一次拒绝都给出模型可以据以行动的原因', () => {
     const core = governed(['src/'])
