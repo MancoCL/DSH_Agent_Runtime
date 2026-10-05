@@ -89,6 +89,46 @@ describe('段落什么时候出现、什么时候整段消失', () => {
   })
 })
 
+describe('子会话读到的是另一套话（活体验收抓到的误导）', () => {
+  it('子会话不再被劝去用 gac_project / gac_scope —— 那两个工具根本不在它手里', () => {
+    // 实测：被派遣的子会话里也装着这段提示，于是它读到「先用 gac_project 声明模式、用 gac_scope
+    // 声明路径」——可它的授权由派遣者绑定，协调类工具也不在它的工具面里。子会话自己都在推理里
+    // 记下了这处冲突。门禁行为是对的，但这段话在主动误导它。
+    const text = gacPromptText({ adapter, child: true })
+    assert.doesNotMatch(text, /先用 gac_project/u)
+    assert.doesNotMatch(text, /用 gac_scope 声明/u)
+    assert.match(text, /被派遣的子会话/u)
+    assert.match(text, /不能从会话内部扩大/u)
+    assert.match(text, /不在你的工具面里/u)
+  })
+
+  it('子会话的写作用域被说成「派遣者绑定」，而不是「本会话声明」', () => {
+    const text = gacPromptText({
+      adapter,
+      child: true,
+      scope: scope({ origin: 'runtime', child_session_id: 'child-1', dispatch_id: 'REQ-DEMO-T1-A1' }),
+    })
+    assert.match(text, /由派遣者绑定/u)
+    assert.match(text, /不是你自报的/u)
+    assert.match(text, /越界的写入会在执行前被拒绝/u)
+    assert.doesNotMatch(text, /本会话声明的写作用域/u)
+  })
+
+  it('子会话不再被告知「引用证据号之前先用 gac_evidence 列出它们」', () => {
+    // 那句建议只对**手里有那个工具**的会话成立。子会话那段话里仍然会出现 `gac_evidence` 这个词——
+    // 因为它在列举「这些协调类工具不在你的工具面里」——所以断言要落在**建议**上，而不是词频上。
+    const text = gacPromptText({ adapter, child: true })
+    assert.doesNotMatch(text, /先用 gac_evidence 列出它们/u)
+    assert.match(text, /不在你的工具面里/u)
+  })
+
+  it('非子会话的行为一个字都没变', () => {
+    const text = gacPromptText({ adapter })
+    assert.match(text, /先用 gac_project 声明最低的充分模式/u)
+    assert.match(text, /gac_evidence/u)
+  })
+})
+
 describe('段落说出的当前模式', () => {
   it('带上模式、风险与理由', () => {
     const text = gacPromptText({ adapter, mode: mode() })
