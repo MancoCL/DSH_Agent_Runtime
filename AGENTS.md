@@ -37,9 +37,12 @@ npm run plugin:off      # 关回去：本项目的默认状态
 也不需要任何人去「修」。
 
 开关就是 profile patch 里 `- id: gac-runtime` 的 `disabled:` 一行；脚本只动这一行，其余字节原样
-保留（`scripts/plugin-switch.js`，纯变换有单测）。打开会立刻生效（HMR 重载，无需重启），加载报告
-里出现 `plugin-loaded`；关闭出现 `plugin-unloaded`。实测的关闭/重开循环、以及为什么「重开不会重新
-导入模块」的旧说法是错的，见 `README.md` 的 Install 一节。
+保留（`scripts/plugin-switch.js`，纯变换有单测）。**打开是否立刻生效取决于宿主在不在监视配置——
+不要假设，看加载报告**：`plugin:on` 之后报告里应当出现新的 `plugin-loaded`，出现了才算真的在跑；
+没出现就是这个宿主不会热应用配置，实测需要先重启宿主（2026-10-05 实测：改完 patch 90 秒后报告里
+仍没有新记录，而历史上确实有过 3–8 ms 就应用的记录——所以两种情形都真实存在过）。关闭同理，
+`plugin-unloaded` 出现才算真的卸掉。实测的关闭/重开循环、以及为什么「重开不会重新导入模块」的旧
+说法是错的，见 `README.md` 的 Install 一节。
 
 ## 1. 提交信息格式
 

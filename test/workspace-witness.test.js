@@ -802,6 +802,9 @@ function createFakeContext({
       registerMessageProjection: () => disposer,
     },
     tools: { register: () => disposer },
+    get: (name) => (name === 'workspaceChanges' && provideWorkspaceChanges
+      ? { summary: () => workspaceSummary }
+      : undefined),
     on: (event, listener, options) => {
       seen.listeners.push({ event, listener, options })
       return disposer
@@ -869,12 +872,19 @@ function emitWorkspaceChanges(ctx, seen, event = { type: 'workspace/changes', se
 describe('入口：把每一轮工作区变更记成一条证据', () => {
   it('workspace/changes 事件落成一条工作区观测证据', async () => {
     const root = makeProject('gac-witness-record-')
+    const mark = readReport().length
     const { ctx, seen } = createFakeContext({
       workspaceSummary: summary({ cwd: root }),
       cwd: root,
     })
     await apply(ctx)
     emitWorkspaceChanges(ctx, seen)
+
+    // 观测源在场时，加载报告里那条诊断要说 available: true——它是「这一层到底在不在跑」的唯一
+    // 入口，说反了比不说更糟。
+    const seam = readReport().slice(mark).filter((record) => record.event === 'witness-seam')
+    assert.equal(seam.length, 1)
+    assert.equal(seam[0].available, true)
 
     const witness = readEvidence(root).filter((record) => record.tool === WITNESS_SOURCE)
     assert.equal(witness.length, 1)
@@ -946,6 +956,7 @@ describe('入口：把每一轮工作区变更记成一条证据', () => {
     // 这条不是假想：本机 profile 里 dsh-workspace-changes 没有被装配进 bundles，因此这个服务
     // 目前就是缺席的。把它写进 inject 列表会让整个插件（连同写作用域闸门）不加载——拿一道
     // 强制执行去换一个可选的观测源，方向反了。
+    const mark = readReport().length
     const { ctx, seen } = createFakeContext({ provideWorkspaceChanges: false, cwd: tempHome })
     await apply(ctx)
     assert.deepEqual(
@@ -956,6 +967,12 @@ describe('入口：把每一轮工作区变更记成一条证据', () => {
     // 闸门必须在场：丢一段观测绝不能以丢掉一道强制执行为代价。
     assert.ok(seen.listeners.some((entry) => entry.event === 'tools/pre-execute'))
     assert.doesNotThrow(() => emitWorkspaceChanges(ctx, seen))
+
+    // 诊断必须在**服务缺席**时也留下：inject 的回调此时根本不会执行，所以只把它写在回调里
+    // 等于在最该出现的时候消失。实测踩到过——加载报告里 210 条 plugin-loaded、0 条 witness-seam。
+    const seam = readReport().slice(mark).filter((record) => record.event === 'witness-seam')
+    assert.equal(seam.length, 1)
+    assert.equal(seam[0].available, false)
   })
 
   it('每条记录都留下 witness-turn，报告里能核对到这一轮', async () => {
