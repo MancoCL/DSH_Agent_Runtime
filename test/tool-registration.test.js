@@ -92,6 +92,10 @@ function harness(options = {}) {
       run: async () => ({ status: 'in_progress', summary: '等待会话执行' }),
     }],
     ...(options.roleGuard === undefined ? {} : { roleGuard: options.roleGuard }),
+    ...(options.observationAvailableFor === undefined
+      ? {}
+      : { observationAvailableFor: options.observationAvailableFor }),
+    ...(options.eventLogFor === undefined ? {} : { eventLogFor: options.eventLogFor }),
     defineTool,
   }
   const ctx = { tools: { register: () => {} } }
@@ -117,6 +121,111 @@ describe('注册接线：五个工具一个都不能少', () => {
       assert.equal(typeof spec.output, 'object', `${spec.name} 必须声明 output`)
       assert.equal(typeof spec.output.schema, 'object', `${spec.name} 必须有 output.schema`)
       assert.equal(typeof spec.output.render, 'function', `${spec.name} 必须有 output.render`)
+    }
+  })
+
+  it('observationAvailableFor 真的接到了 gac_metrics 上，而不是只出现在形参表里', async () => {
+    // 活体踩到过：那个环境事实被转发给了 `gac_evidence`（两处注册的参数形状一样，改错了地方），
+    // 于是指标说「观测源是否在场未被告知」——而当时单测全绿，因为那些单测直接造
+    // `createMetricsTool`，测的是那个函数本身、不是这里的接线。这条用的是**注册进来的那一份**。
+    const h = harness({ observationAvailableFor: () => false })
+    await registerTools(h.ctx, h.deps)
+
+    const metricsTool = h.registered.find((spec) => spec.name === METRICS_TOOL_NAME)
+    assert.ok(metricsTool !== undefined, 'gac_metrics 必须注册上')
+    const value = await metricsTool.execute({}, { agent: { session: { id: 'session-1' } } })
+
+    assert.equal(value.evidence.witness.available, false, '观测源不在场这件事必须传到指标里')
+    assert.match(value.summary, /工作区观测不可用/u)
+  })
+
+  it('eventLogFor 真的接到了 gac_task 上 —— `audit` 动作在真实插件里曾经抛「未定义」', async () => {
+    // 活体踩到过：`gacEventLogFor` 定义在 `apply` 里、却在 `registerTools` 里被引用，于是
+    // `audit` 动作在真实插件里抛 `gacEventLogFor is not defined`，而单测全绿——它们传的是假的
+    // `eventLogFor`，接线断没断看不出来。这条用**注册进来的那一份**跑一次真实的 `audit`。
+    const h = harness({ eventLogFor: () => ({ load: () => [] }) })
+    await registerTools(h.ctx, h.deps)
+
+    const taskTool = h.registered.find((spec) => spec.name === TASK_TOOL_NAME)
+    await taskTool.execute({
+      action: 'create',
+      task_id: 'REQ-AUDIT',
+      mode: 'standard_task',
+      plan: {
+        nodes: [{
+          id: 'T1',
+          objective: '实现',
+          required_capabilities: ['implementation'],
+          write_scope: ['src/'],
+        }],
+      },
+    }, { agent: { session: { id: 'session-1' } } })
+
+    const value = await taskTool.execute(
+      { action: 'audit', task_id: 'REQ-AUDIT' },
+      { agent: { session: { id: 'session-1' } } },
+    )
+    assert.equal(value.task_id, 'REQ-AUDIT')
+    assert.equal(typeof value.message, 'string')
+  })
+
+  it('每个动作的返回字段都在 output.schema 里声明过 —— 这一类坑已经踩了三次', async () => {
+    // 三次都是同一个形状：`plan_id`、`missing_capabilities`、以及 `audit` 的整份视图——返回里
+    // 多了（或类型不符）一个字段，输出的 `additionalProperties: false` 就把**整次调用**拒掉，
+    // 而单测全绿，因为测试用的是透传的 `defineTool`，不做输出校验。这条把「返回什么」与
+    // 「声明了什么」在**同一个 spec** 上对起来，并按类型核对。
+    const h = harness({
+      observationAvailableFor: () => false,
+      eventLogFor: () => ({ load: () => [] }),
+    })
+    await registerTools(h.ctx, h.deps)
+    const taskTool = h.registered.find((spec) => spec.name === TASK_TOOL_NAME)
+    const exec = { agent: { session: { id: 'session-1' } } }
+    const declared = taskTool.output.schema.properties
+
+    /** 递归核对：对象里每一个键都必须在声明里出现；数组元素按声明的 items 核。 */
+    const assertDeclared = (value, schema, where) => {
+      assert.equal(typeof value, 'object')
+      for (const [key, entry] of Object.entries(value)) {
+        const spec = schema[key]
+        assert.ok(spec !== undefined, `${where} 的字段 ${key} 没有在 output.schema 里声明`)
+        if (!Array.isArray(entry) || spec.items === undefined) continue
+        for (const [index, item] of entry.entries()) {
+          if (spec.items.type === 'string') {
+            assert.equal(typeof item, 'string', `${where}.${key}[${index}] 应当是字符串`)
+            continue
+          }
+          // 只有声明了具体形状的对象才继续往里核；`additionalProperties: true` 表示「形状任意」，
+          // 那是有意的（审计视图里的节点状态、时间线就是这种），不该被这条测试挡住。
+          if (spec.items.properties !== undefined) {
+            assertDeclared(item, spec.items.properties, `${where}.${key}[${index}]`)
+          }
+        }
+      }
+    }
+
+    await taskTool.execute({
+      action: 'create',
+      task_id: 'REQ-SCHEMA',
+      mode: 'high_risk_task',
+      plan: {
+        nodes: [
+          { id: 'T1', objective: '实现', required_capabilities: ['implementation'], write_scope: ['src/'] },
+          { id: 'T2', objective: '验证', depends_on: ['T1'], required_capabilities: ['verification'], write_scope: [] },
+        ],
+      },
+    }, exec)
+
+    const calls = [
+      { action: 'status', task_id: 'REQ-SCHEMA' },
+      { action: 'list' },
+      { action: 'audit', task_id: 'REQ-SCHEMA' },
+      { action: 'advance', task_id: 'REQ-SCHEMA' },
+      { action: 'complete', task_id: 'REQ-SCHEMA', evidence: {} },
+    ]
+    for (const args of calls) {
+      const value = await taskTool.execute(args, exec)
+      assertDeclared(value, declared, `动作 ${args.action}`)
     }
   })
 

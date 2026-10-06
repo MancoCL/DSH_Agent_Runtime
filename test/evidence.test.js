@@ -344,9 +344,19 @@ describe('gac_metrics —— 只读，且必须有出口', () => {
     const h = metricsHarness()
     const value = await h.tool.execute({}, h.exec)
 
-    assert.equal(value.evidence.witness.available, undefined)
+    assert.equal(value.evidence.witness.available, null)
     assert.match(value.summary, /未被告知/u)
     assert.doesNotMatch(value.summary, /不可用/u)
+  })
+
+  it('出口必须是**无损 JSON** —— 任何一个 undefined 都会让宿主拒掉整份结果', async () => {
+    // 活体踩到过：`available: undefined` 让这个工具的返回被宿主判成
+    // `value is not lossless JSON`，整份指标读不出来。单测直接调 `execute()`、从不经过序列化，
+    // 所以三条单测全绿而线上是坏的——这条断言的就是那次序列化本身。
+    const h = metricsHarness()
+    const value = await h.tool.execute({}, h.exec)
+
+    assert.deepEqual(JSON.parse(JSON.stringify(value)), value)
   })
 
   it('是个只读工具：不声明任何必填参数', () => {
