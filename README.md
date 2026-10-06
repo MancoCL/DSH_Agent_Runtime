@@ -543,13 +543,33 @@ gac_task { action: "grill", grill_action: "confirm", confirmation: "<用户的�
 
 ### 模型路由
 
-`execution.provider_routes` 按**执行者名字**作键（即 `executors` 里列出的那些名字），而不是按能力：
+两条路径各有一套键空间，**不要混用**——它们的区分依据不同。
+
+**进程内执行者**按**执行者名字**作键（即 `executors` 里列出的那些名字），而不是按能力：
 
 ```json
 "execution": { "provider_routes": { "verifier": { "provider": "p", "model": "m" } } }
 ```
 
 之所以按名字作键，是因为能力路由返回的是一个*名字*，而这个名字要能找到它所表示的那个执行者。按能力作键、并把执行者命名为 `capability:provider/model`，意味着查找永远匹配不上，静默地落到「谁支持就谁上」的兜底分支——声明的路由被忽略，而看起来一切正常。按名字作键也让*同一个*能力下的两个执行者使用不同模型成为可表达的，而那正是独立性需要的东西。
+
+**原生子会话**按**语义角色**作键。这条路走的是另一套键空间，理由是：原生路径上只有**一个**执行者（`child:spawn`）覆盖全部节点，按执行者名根本区分不出「验证者跑在另一个模型上」，而能区分它们的只有角色。
+
+```json
+"execution": {
+  "role_routes": {
+    "*": { "provider": "opencode-go", "model": "cheap" },
+    "verification_execution": { "model": "strong" },
+    "review": { "model": "strong", "reasoning_effort": "high", "max_tokens": 8192 }
+  }
+}
+```
+
+- **`provider` 是模型 provider，不是派遣接缝名。** 这两个词在这里各指一样东西，而它们看起来都像「provider」：`ctx.subagents.start()` 的第一个参数（`spawn`）是**派遣接缝**，而 `role_routes.<角色>.provider` 进的是宿主请求的 `agentOptions.provider`，那是**已注册的模型适配器**（本机是 `opencode-go`）。写错的表现是宿主当场拒绝：`no adapter registered for provider "spawn"`（`NO_ADAPTER`）——活体验收实测过这一幕，也正是它证明了路由值确实送到了宿主。
+- 先按角色精确匹配，再退到 `*`（所有角色的缺省）；两条都没有就**继承父会话**（不传 `agentOptions`——传空对象会把父会话的模型一起清掉）。
+- 字段用适配器的 snake_case 写（`reasoning_effort`、`max_tokens`），运行时翻成宿主收的 `reasoningEffort`、`maxTokens`。角色名取自节点 `role` 的词表，拼错会在**读适配器时**被拒，而不是派遣时静默不生效。
+- 每次派遣的实际路由写进 `advance` 的返回文本（`；路由 provider/model`）：配错了模型、或某个角色悄悄继承回父会话，只能从这里发现。子会话起不来时，失败**原因**（宿主的 `diagnostic`）同样进返回文本——否则父会话只读到「结论 failed」，而原因只活在子会话日志里。
+- **适配器按根目录缓存，改动要重载插件（或 `forget()`）才生效**——这是有意的：策略在同一会话里必须稳定，中途换适配器会让跑着的任务脚下换规则。代价是「改了没生效」，而它是可发现的（返回文本里那行路由会显示实际生效的那一条）。
 
 ### 证据：由运行时签发，而不是由 Agent 写下
 
