@@ -436,6 +436,8 @@ describe('witnessFacts —— 压成可长期留存的字段', () => {
     assert.equal(facts.truncated, true)
     assert.equal(facts.coverage, 'partial')
     assert.equal(facts.in_scope_count, 1)
+    // **清单而不只是计数**：收口门禁要核对的是「哪些文件被判在范围内」，只有计数时那份判断无法复核。
+    assert.deepEqual(facts.in_scope, ['src/a.c'])
     assert.deepEqual(facts.out_of_scope, ['lib/b.js'])
     assert.deepEqual(facts.outside_project, [])
     assert.equal(typeof facts.files_digest, 'string')
@@ -468,6 +470,62 @@ describe('witnessFacts —— 压成可长期留存的字段', () => {
     assert.notEqual(facts.out_of_scope, classified.out_of_scope)
     assert.notEqual(facts.outside_project, classified.outside_project)
     assert.deepEqual(facts.out_of_scope, classified.out_of_scope)
+  })
+
+  it('身份字段给了才出现 —— 没有治理会话是真实情形，不该被记成空值', () => {
+    const compiled = compileWitnessSummary(summary())
+    const classified = classifyWitnessChanges(compiled, { scope: ['src/'], root: ROOT, cwd: ROOT })
+
+    const bare = witnessFacts(classified, compiled)
+    assert.equal('governing_session_id' in bare, false)
+    assert.equal('task_id' in bare, false)
+    assert.equal('node_id' in bare, false)
+
+    const identified = witnessFacts(classified, compiled, {
+      governing_session_id: 'parent-1',
+      task_id: 'REQ-1',
+      node_id: 'T1',
+    })
+    assert.equal(identified.governing_session_id, 'parent-1')
+    assert.equal(identified.task_id, 'REQ-1')
+    assert.equal(identified.node_id, 'T1')
+  })
+})
+
+describe('composeWitnessRecord 的身份字段一路进到证据载荷', () => {
+  it('治理会话与任务节点被带上，且能过证据编译器（工作区字段是闭集）', () => {
+    const compiled = compileWitnessSummary(summary({ total: 1, files: [{ path: 'src/a.c' }] }))
+    const composed = composeWitnessRecord(compiled, {
+      scope: ['src/'],
+      root: ROOT,
+      cwd: ROOT,
+      governingSessionId: 'parent-1',
+      taskId: 'REQ-1',
+      nodeId: 'T1',
+    })
+
+    assert.equal(composed.facts.governing_session_id, 'parent-1')
+    assert.equal(composed.facts.task_id, 'REQ-1')
+    assert.equal(composed.facts.node_id, 'T1')
+    // 闭集校验：多一个没声明的键就会被拒，所以这条断言实际在测「字段表也一起扩展了」。
+    const record = compileEvidence(
+      rawEvidence({ source: WITNESS_SOURCE, tool: WITNESS_SOURCE, workspace: { ...composed.facts } }),
+      { id: 'ev-w1' },
+    )
+    assert.equal(record.workspace.task_id, 'REQ-1')
+    assert.deepEqual(record.workspace.in_scope, ['src/a.c'])
+  })
+
+  it('没有治理会话时不写这个键，编译器照样接受', () => {
+    const compiled = compileWitnessSummary(summary({ total: 1, files: [{ path: 'src/a.c' }] }))
+    const composed = composeWitnessRecord(compiled, { scope: ['src/'], root: ROOT, cwd: ROOT })
+
+    assert.equal('governing_session_id' in composed.facts, false)
+    const record = compileEvidence(
+      rawEvidence({ source: WITNESS_SOURCE, tool: WITNESS_SOURCE, workspace: { ...composed.facts } }),
+      { id: 'ev-w2' },
+    )
+    assert.equal(record.workspace.governing_session_id, undefined)
   })
 })
 
