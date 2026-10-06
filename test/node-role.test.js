@@ -18,6 +18,7 @@ import { describe, it } from 'node:test'
 
 import { CHILD_OUTPUT_SCHEMAS, buildChildPrompt, childOutputSchemaFor } from '../lib/child-executor.js'
 import { CoordinatorError, NODE_ROLES, compileTask, nodeRoleOf } from '../lib/coordinator.js'
+import { planId } from '../lib/verification.js'
 
 /**
  * 造一个最小节点。
@@ -107,6 +108,74 @@ describe('按角色挑产出契约', () => {
     assert.equal(childOutputSchemaFor({ role: 'implementation' }), CHILD_OUTPUT_SCHEMAS.implementation)
     assert.equal(childOutputSchemaFor({ role: '不存在的角色' }), CHILD_OUTPUT_SCHEMAS.implementation)
     assert.equal(childOutputSchemaFor(undefined), CHILD_OUTPUT_SCHEMAS.implementation)
+  })
+})
+
+describe('验证执行节点的提示词 —— 活体第一次跑漏报之后补上的三条', () => {
+  const plan = {
+    schema_version: 1,
+    criteria: [],
+    frozen_at: 0,
+    cases: [
+      { id: 'C1', covers: ['AC1'], type: 'positive', expect: '文件存在' },
+      { id: 'C2', covers: ['AC1'], type: 'falsification', expect_failure: '文件缺失时应当判失败' },
+    ],
+  }
+
+  /**
+   * @returns {string}
+   */
+  function promptFor() {
+    return buildChildPrompt({
+      node: node({
+        id: 'V1',
+        role: 'verification_execution',
+        required_capabilities: ['verification'],
+        write_scope: [],
+        depends_on: ['D1'],
+      }),
+      task: { task_id: 'REQ-1', mode: 'high_risk_task' },
+      root: 'D:/proj',
+      dispatchId: 'REQ-1-V1-A1',
+      plan,
+    })
+  }
+
+  it('计划 id 由运行时算好交给它，而不是「(见盘上)」', () => {
+    // 活体验收里那轮提示词写的是「id = (见盘上)」，子会话只好去读盘反推内容寻址的 id。
+    // 那是运行时算得出来的事实，不该让子会话猜。
+    const prompt = promptFor()
+    assert.match(prompt, new RegExp(planId(plan), 'u'))
+    assert.doesNotMatch(prompt, /见盘上/u)
+  })
+
+  it('明说每一条用例都必须出现，一条都不能少', () => {
+    // 子会话报了 8 条用例的结论，却只在结构化字段里放了 5 条 → 整份报告被拒（缺 C2/C3/C6）。
+    assert.match(promptFor(), /每一条都必须出现在 executions 里，一条都不能少/u)
+  })
+
+  it('明说每条用例要引用各自那次调用，并禁止去读运行时的证据账本挑号', () => {
+    const prompt = promptFor()
+    assert.match(prompt, /每条用例必须引用各自那次调用/u)
+    assert.match(prompt, /取证摊薄/u)
+    assert.match(prompt, /去读 `\.dsh\/gac\/evidence\/`/u)
+    assert.match(prompt, /self:<n>/u)
+  })
+
+  it('用例逐条列出来（正例给 expect、反例给 expect_failure）', () => {
+    const prompt = promptFor()
+    assert.match(prompt, /C1（covers AC1，positive）：期望：文件存在/u)
+    assert.match(prompt, /C2（covers AC1，falsification）：反例/u)
+  })
+
+  it('没有冻结计划时如实说，而不是编一个 id', () => {
+    const prompt = buildChildPrompt({
+      node: node({ id: 'V1', role: 'verification_execution', required_capabilities: ['verification'], write_scope: [] }),
+      task: { task_id: 'REQ-1', mode: 'high_risk_task' },
+      root: 'D:/proj',
+      dispatchId: 'REQ-1-V1-A1',
+    })
+    assert.match(prompt, /还没有冻结的验证计划/u)
   })
 })
 
