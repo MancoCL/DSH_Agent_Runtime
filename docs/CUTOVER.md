@@ -92,12 +92,14 @@
 角色工具面隔离            PASS（活体 6 轮，§3 E2E-6）
 HIGH_RISK 完整链          PASS（活体，ADR §15 的 REQ-HR-5：四节点全 completed、三份产物由运行时登记、父会话零补写）
 语义产物自动登记          PASS（同上）
-工作区观测 live           **未通过** —— 本机 profile 未装配生产者，这一层是惰性的
+工作区观测 live           **validation profile 已通过（2026-10-06）；日常 profile 尚未安装**
 全部测试                  PASS
 ```
 
 - **工作区观测是必需项**（纵深防御层，不是可选增强）：它覆盖事前拦截够不着的那一类落盘——shell 重定向、生成器、外部进程、间接写入。**它进入日常 profile 之前，旧运行时不能切。** 路径：临时验收 profile 跑一次 live E2E → 通过后按 profile 的正规安装机制（`package.json` 的 `link:` 依赖 + `dsh.profile.bundles` + `pnpm install`，优先走 `plugin_manager`）装进日常 profile → 在日常 profile 重跑同一探针。**探针文档：[docs/WITNESS-LIVE-PROBE.md](WITNESS-LIVE-PROBE.md)**（含用例 A 范围内写入、用例 B **间接写入**——必须由未被绑定的只读子会话跑受控脚本，因为作用域生效期间父会话的 shell 被整体拒绝、那条路设计上走不通、用例 C 降级路径）。
   **validation profile 已建好并预检**：`~/.dsh/profiles/gac-verify`（与 `core-020` 同构，差异只有一处：`@deepseek-ai/dsh-workspace-changes` 作为 `link:` 依赖装进了它自己的 `node_modules`——**正规机制**，不是手工塞进被提升的 junction 集合；21 个标识符全部解析得到）。**它只在验收期间存在，不是第二个生产运行时。**
+  **live 结果（第 4 轮，逐字）**：`{"event":"witness-turn","turn":36,"listed":5,"total":5,"coverage":"complete","out_of_scope":4}` 与 `{"event":"witness-out-of-scope","turn":36,"files":4}`；证据 `ev-1789` 的 `workspace.in_scope = ["witness-probe-a.txt"]`、`out_of_scope = ["lib/index.js","lib/workspace-witness.js","test/workspace-witness.test.js","witness-probe-b.txt"]`，`governing_session_id` / `task_id` / `node_id` 齐全，且 `isPassingEvidence` 判为**不可用**（越界 4 个）。**越界清单里既有「守卫看不见的进程」写出的文件，也有同一轮在声明作用域之前改掉的真实源码文件——第二层抓到了事前拦截抓不到的东西。**
+  **这一轮还修掉一条只有活体能发现的缺陷**：生产者先 `append`（同步发布 `session/event`）、后把摘要存进记录表，插件读得太早，于是每一次都是 `witness-summary-missing`（提交 `f589bde`）。**日常 profile 尚未安装生产者，所以门槛仍未满足。**
 - **PTC 不在门槛里。** 它是执行便利，不是权限原语、验证原语、证据原语或隔离原语；没有它 GAC 仍然完整、安全、正确地工作。因此「PTC 缺席」不再算 Runtime 未完成。
 
 ## 6. 「新任务默认走 DSH」具体指什么
