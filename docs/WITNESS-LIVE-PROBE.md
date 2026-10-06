@@ -8,10 +8,10 @@
 那一类落盘（shell 重定向、生成器、外部进程、间接写入）。它缺席时，「没有越界写入」这句话无从成立。
 **它进入日常 profile 之前，旧运行时不能切。**
 
-## 0. validation profile 现状（2026-10-06 建好并预检）——**它其实没有必要存在**
+## 0. validation profile（2026-10-06 建好、预检、**用完后已删除**）——**它其实没有必要存在**
 
 ```text
-~/.dsh/profiles/gac-verify/
+~/.dsh/profiles/gac-verify/    ← 已删除；机器上现在只有 core-020 与 tauri
 ├─ package.json          与 core-020 同构，外加一条**多余**的 link: 依赖（见下）
 ├─ cordis.yml            []（树由 bundles + patch 组合）
 ├─ cordis.patch.yml      与 core-020 逐字节一致（插件开关就在里面）
@@ -122,13 +122,18 @@ npm run plugin:off
    - 该证据 `isPassingEvidence(...)` 判定为 **不可用**，理由里带越界数量（AC7）；
    - 盘上那个文件**确实存在**（证明这是「观测到了真实落盘」，不是纸面推断）。
 
-## 4. 用例 C：降级路径（在实验室里做，进日常之后就没法做了）
+## 4. 用例 C：降级路径（**待办**，需要一个 profile 改配置 + 重启）
 
-把 producer 从 `gac-verify/package.json` 的 `bundles` 里**临时**去掉、重载宿主，然后断言：
+把 producer 从**某个** profile 的 `dsh.profile.bundles` 里**临时**去掉（它由 `dsh-web-app` 的 patch 插入，
+所以要连带把那一行 patch 覆盖掉）、重载宿主，然后断言：
 
 - 插件**照常加载**，写作用域闸门、角色收权、协调器、原生子会话**照常工作**（§11）；
 - 加载报告里 `witness-seam: available: false`——**降级可见**，不是「没有 Witness 但看起来一切正常」（§12）；
 - `gac_metrics` 里这一层显示为不可用，而不是显示「零越界」。
+
+**它目前只有单测覆盖**（`test/workspace-witness.test.js`：服务缺席时插件照常加载、`witness-seam` 记
+`available: false`、闸门仍在）。要做活体版就得改配置 + 重启，因此如实列为待办而不是已验。原先打算
+「切回日常 profile 就是现成的降级现场」——**那个做法不成立**，因为生产者本来就在日常 profile 里。
 
 验完把 bundle 加回去并重载。**这一步只有在 validation profile 里好做**：进了日常 profile 之后，
 要么就得动生产配置，要么就永远不验。
