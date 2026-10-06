@@ -46,29 +46,25 @@ describe('分类表把每一类工具都摆在明处', () => {
   })
 })
 
-describe('PTC 传输单独一类：放行外层，内层按名字受管', () => {
-  it('把 run_code 归类为 ptc', () => {
-    assert.equal(classifyCall('run_code', { code: 'x' }).kind, CALL_KINDS.PTC)
+describe('本 profile 不支持的传输工具：知道它、明确拒绝', () => {
+  it('把 run_code 归类为 unsupported，而不是 unknown', () => {
+    // 两者的区别是**拒因要说准**：unknown 会让人以为「守卫不认识这个工具」，而事实是
+    // 「我们知道它是 PTC 的传输工具、本 profile 不支持」。
+    const call = classifyCall('run_code', { code: 'x' })
+    assert.equal(call.kind, CALL_KINDS.UNSUPPORTED)
+    assert.match(call.reason, /不在本运行时的生产能力清单里/u)
   })
 
-  it('外层传输不产出路径，也不声称自己受守卫', () => {
-    // 它自己不碰文件——真正动手的是它派发的内层子调用，而那些子调用会各自到达守卫。
+  it('不产出路径，也不声称自己受守卫', () => {
     const call = classifyCall('run_code', { file_path: 'src/a.c' })
     assert.deepEqual(call.paths, [])
     assert.equal(call.guarded, false)
-    assert.match(call.reason, /内层子调用/u)
   })
 
-  it('内层子调用按自己的名字分类，而不是继承 ptc', () => {
-    const inner = classifyCall('write', { file_path: 'src/a.c' }, { nested: true })
-    assert.equal(inner.kind, CALL_KINDS.WRITE)
-    assert.deepEqual(inner.paths, ['src/a.c'])
-    assert.equal(classifyCall('pwsh', { command: 'x' }, { nested: true }).kind, CALL_KINDS.SHELL)
-  })
-
-  it('传输派发传输时按未知处理', () => {
-    // 真出现这种调用，说明这张表对内核的理解有偏差；那就落到失败即拒绝那一侧。
-    assert.equal(classifyCall('run_code', { code: 'x' }, { nested: true }).kind, CALL_KINDS.UNKNOWN)
+  it('普通工具的分类与它无关 —— 不支持一个通道不该动到别的判定', () => {
+    assert.equal(classifyCall('write', { file_path: 'src/a.c' }).kind, CALL_KINDS.WRITE)
+    assert.equal(classifyCall('pwsh', { command: 'x' }).kind, CALL_KINDS.SHELL)
+    assert.deepEqual(classifyCall('write', { file_path: 'src/a.c' }).paths, ['src/a.c'])
   })
 
   it('内核若给传输改名，这里认不出来——落到失败即拒绝那一侧，而不是悄悄放行', () => {
@@ -76,12 +72,12 @@ describe('PTC 传输单独一类：放行外层，内层按名字受管', () => 
   })
 
   it('knownTools 把这一类也列出来', () => {
-    assert.deepEqual(knownTools().ptc, ['run_code'])
+    assert.deepEqual(knownTools().unsupported, ['run_code'])
   })
 
-  it('PTC 传输也在收权之列：只读执行者不该拿到派发通道', () => {
-    // 收权与门禁走同一张表。把传输留给一个只读执行者，等于给它在内层派发写入的机会——
-    // 那些内层调用确实会被门禁按名字检查，但收权的意思是「连通道都不给」。
+  it('它也在收权之列：只读执行者不该拿到这个通道', () => {
+    // 收权与门禁走同一张表。保留这一条还有一个具体原因：宿主 `restrict` 按名字拒绝这个名字，
+    // 所以 `lib/role-guard.js` 那边有一条排除护栏（否则整次子会话创建会失败）。
     assert.deepEqual(roleRevokedToolNames(['run_code']), ['run_code'])
   })
 })
