@@ -24,7 +24,10 @@
     "test": "node --test test/*.test.js",
     "plugin:status": "node scripts/plugin-switch.js status",
     "plugin:on": "node scripts/plugin-switch.js on",
-    "plugin:off": "node scripts/plugin-switch.js off"
+    "plugin:off": "node scripts/plugin-switch.js off",
+    "profile:status": "node scripts/profile-switch.js status",
+    "profile:use": "node scripts/profile-switch.js use",
+    "profile:restore": "node scripts/profile-switch.js restore"
   },
   "license": "MIT",
   "dsh": {
