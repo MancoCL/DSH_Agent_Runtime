@@ -1982,6 +1982,54 @@ describe('验证与复核的语义产物由运行时自动登记', () => {
     assert.ok(h.store.loadReview('REQ-R2') !== undefined)
   })
 
+  it('复核报告的 evidence 用 self:<n>#明细 时由运行时解析成真实号（第三轮活体就断在这道缝上）', async () => {
+    // 复核者照提示词交 `self:<n>`，而收口门禁拿 `evidence` 里的字符串逐字比对运行时发过的号——
+    // 不解析就必然判「不是运行时发出过的证据号」，于是收口被挡，而唯一补救办法是父会话手工重登。
+    const h = dispatchHarness({
+      executors: { implementation: ['builder'], verification: ['verifier'], review: ['reviewer'] },
+      evidence: [
+        { schema_version: 1, id: 'ev-21', session_id: 'child-review-9', tool: 'pwsh', is_error: false, exit_code: 0 },
+        { schema_version: 1, id: 'ev-22', session_id: 'child-review-9', tool: 'pwsh', is_error: false, exit_code: 0 },
+      ],
+      runtimeExecutors: [{
+        name: 'reviewer',
+        supports: () => true,
+        run: async () => ({
+          status: 'completed',
+          summary: '复核完成',
+          semantic: {
+            role: 'review',
+            child_session_id: 'child-review-9',
+            payload: {
+              status: 'completed',
+              ...reviewDraft(),
+              // 复核报告的引用形式是「证据号#明细」，明细是复核者自己写的说明，必须原样保留。
+              evidence: ['self:1# 目录枚举与字节读回', 'self:2# 证据账本逐条重建'],
+            },
+          },
+        }),
+      }],
+    })
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-R4',
+      mode: 'standard_task',
+      plan: {
+        nodes: [
+          { id: 'R1', objective: '复核', required_capabilities: ['review'], write_scope: [], role: 'review' },
+        ],
+      },
+    }, h.exec)
+
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-R4' }, h.exec)
+
+    assert.match(value.message, /已登记独立复核报告/u)
+    assert.deepEqual(h.store.loadReview('REQ-R4').evidence, [
+      'ev-21# 目录枚举与字节读回',
+      'ev-22# 证据账本逐条重建',
+    ])
+  })
+
   it('复核报告真的缺答案时仍然被拒（白名单不等于放水）', async () => {
     const h = dispatchHarness({
       executors: { implementation: ['builder'], verification: ['verifier'], review: ['reviewer'] },
@@ -2014,6 +2062,35 @@ describe('验证与复核的语义产物由运行时自动登记', () => {
 
     assert.match(value.message, /复核报告被拒/u)
     assert.equal(h.store.hasReview('REQ-R3'), false)
+  })
+})
+
+describe('冻结需求时传错参数名会被响亮拒绝（活体验收里静默丢了 2 条验收标准）', () => {
+  it('用 criteria 而不是 acceptance_criteria 传标准 → 拒绝并指出正确字段名', async () => {
+    const h = dispatchHarness()
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-GRILL',
+      mode: 'standard_task',
+      plan: {
+        nodes: [
+          { id: 'T1', objective: '实现', required_capabilities: ['implementation'], write_scope: ['src/'] },
+        ],
+      },
+    }, h.exec)
+    await h.tool.execute({ action: 'grill', task_id: 'REQ-GRILL', grill_action: 'record', round: { questions: [{ id: 'Q1', question: '验收标准是什么', answer: 'AC1/AC2' }] } }, h.exec)
+    await h.tool.execute({ action: 'grill', task_id: 'REQ-GRILL', grill_action: 'converge' }, h.exec)
+
+    await assert.rejects(
+      async () => h.tool.execute({
+        action: 'grill',
+        task_id: 'REQ-GRILL',
+        grill_action: 'confirm',
+        confirmation: '就按这个做',
+        criteria: ['AC1', 'AC2'],
+      }, h.exec),
+      /acceptance_criteria/u,
+    )
   })
 })
 
