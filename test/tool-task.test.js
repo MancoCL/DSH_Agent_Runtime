@@ -1944,6 +1944,77 @@ describe('验证与复核的语义产物由运行时自动登记', () => {
     assert.equal(report.source_session_id, 'child-review-1')
     assert.equal(report.reviewed_plan_id, undefined, '这个任务没有计划，盖的就是 undefined')
   })
+
+  it('复核产出里带的传输字段（status）不能把整份报告撞掉 —— 两个契约各有各的字段', async () => {
+    // 高风险流程第二轮活体验收实测：复核节点把六问五维全答了、81 次只读调用全做完，报告却因为
+    // 多带一个 `status`（产出契约要求它，复核报告的字段表里没有它）被判 MALFORMED，整份被拒。
+    const h = dispatchHarness({
+      executors: { implementation: ['builder'], verification: ['verifier'], review: ['reviewer'] },
+      runtimeExecutors: [{
+        name: 'reviewer',
+        supports: () => true,
+        run: async () => ({
+          status: 'completed',
+          summary: '复核完成',
+          semantic: {
+            role: 'review',
+            child_session_id: 'child-review-2',
+            // 产出契约里的形状：status 在顶层，报告字段也在顶层。
+            payload: { status: 'completed', ...reviewDraft() },
+          },
+        }),
+      }],
+    })
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-R2',
+      mode: 'standard_task',
+      plan: {
+        nodes: [
+          { id: 'R1', objective: '复核', required_capabilities: ['review'], write_scope: [], role: 'review' },
+        ],
+      },
+    }, h.exec)
+
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-R2' }, h.exec)
+
+    assert.match(value.message, /已登记独立复核报告/u)
+    assert.ok(h.store.loadReview('REQ-R2') !== undefined)
+  })
+
+  it('复核报告真的缺答案时仍然被拒（白名单不等于放水）', async () => {
+    const h = dispatchHarness({
+      executors: { implementation: ['builder'], verification: ['verifier'], review: ['reviewer'] },
+      runtimeExecutors: [{
+        name: 'reviewer',
+        supports: () => true,
+        run: async () => ({
+          status: 'completed',
+          summary: '复核完成',
+          semantic: {
+            role: 'review',
+            child_session_id: 'child-review-3',
+            payload: { status: 'completed', summary: '复核完成' },
+          },
+        }),
+      }],
+    })
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-R3',
+      mode: 'standard_task',
+      plan: {
+        nodes: [
+          { id: 'R1', objective: '复核', required_capabilities: ['review'], write_scope: [], role: 'review' },
+        ],
+      },
+    }, h.exec)
+
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-R3' }, h.exec)
+
+    assert.match(value.message, /复核报告被拒/u)
+    assert.equal(h.store.hasReview('REQ-R3'), false)
+  })
 })
 
 describe('create 的下一步话术说准顺序（活体验收里父会话先调 grill 连吃三次「找不到任务」）', () => {
