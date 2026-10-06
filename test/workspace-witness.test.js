@@ -735,10 +735,11 @@ describe('证据列表与指标里的工作区观测', () => {
   it('指标新增一个 witness 块，工具调用的统计一个都不变', () => {
     const toolCall = compileEvidence(rawEvidence({ value: { exitCode: 0 } }), { id: 'ev-1' })
     const block = summarizeEvidence([toolCall, witnessRecord()])
-    // `available` 是三态：调用方没给「观测源在不在」这个环境事实时它是 `undefined`——不宣称可用，
-    // 也不宣称不可用。压成 `!== false` 会让报告在最需要谨慎的地方显得笃定。
+    // `available` 是三态：调用方没给「观测源在不在」这个环境事实时它是 `null`——不宣称可用，
+    // 也不宣称不可用。压成 `!== false` 会让报告在最需要谨慎的地方显得笃定；写成 `undefined`
+    // 则不是合法 JSON（活体踩到过，见 test/evidence.test.js 的无损断言）。
     assert.deepEqual(block.witness, {
-      available: undefined,
+      available: null,
       observations: 1,
       out_of_scope: 1,
       partial_coverage: 1,

@@ -128,6 +128,23 @@ describe('收口门禁：声明需要的能力缺项时，高风险任务拒绝�
     }, h.exec)
   }
 
+  it('拒因的每个字段都在 output.schema 里声明过 —— 否则整条拒因会被输出校验拒掉', async () => {
+    // 活体踩到过：拒因里带了 `missing_capabilities` 而 schema 没声明，于是模型看到的是
+    // `"value.missing_capabilities" is not a declared property`，而不是「缺了什么、为什么不能收口」。
+    // 这与 `plan_id` 那次是同一个坑（那段注释就写在 schema 里），而单测全绿——因为测试用的
+    // `defineTool` 是透传的，不做输出校验。这条断言把「返回什么」与「声明了什么」对起来。
+    const h = capabilityHarness({ missing: ['workspace_observation'] })
+    await createHighRisk(h)
+
+    const value = await h.tool.execute({ action: 'complete', task_id: 'REQ-HR', evidence: {} }, h.exec)
+    const declared = Object.keys(h.tool.output.schema.properties)
+
+    assert.equal(value.action, 'complete_refused', '先确认这条路径真的走到了')
+    for (const key of Object.keys(value)) {
+      assert.ok(declared.includes(key), `字段 ${key} 没有在 output.schema 里声明`)
+    }
+  })
+
   it('高风险 + 缺项 + 没有豁免 → 拒绝，并说清缺的是什么、缺了它意味着什么', async () => {
     const h = capabilityHarness({ missing: ['workspace_observation'] })
     await createHighRisk(h)
