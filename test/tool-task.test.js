@@ -1946,6 +1946,26 @@ describe('验证与复核的语义产物由运行时自动登记', () => {
   })
 })
 
+describe('create 的下一步话术说准顺序（活体验收里父会话先调 grill 连吃三次「找不到任务」）', () => {
+  it('建完任务后指出 grill 与 contract 作用于已存在的任务，再讲派遣', async () => {
+    const h = dispatchHarness()
+    const value = await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-ORDER',
+      mode: 'standard_task',
+      plan: {
+        nodes: [
+          { id: 'T1', objective: '实现', required_capabilities: ['implementation'], write_scope: ['src/'] },
+        ],
+      },
+    }, h.exec)
+
+    assert.match(value.message, /都作用于\*\*已存在\*\*的任务/u)
+    assert.match(value.message, /grill/u)
+    assert.match(value.message, /contract/u)
+  })
+})
+
 describe('失败节点的返回文本 —— 不写成「执行完成」，且带出可追溯信息', () => {
   it('结论与措辞一致，并带出执行者给的可追溯信息', async () => {
     // 活体验收实测到的那句自相矛盾：「节点 T1 由 child:spawn 执行完成。 T1 失败…」——读的人第一句
