@@ -102,6 +102,7 @@ HIGH_RISK 完整链          PASS（活体，ADR §15 的 REQ-HR-5：四节点�
   **这一轮还修掉一条只有活体能发现的缺陷**：生产者先 `append`（同步发布 `session/event`）、后把摘要存进记录表，插件读得太早，于是每一次都是 `witness-summary-missing`（提交 `f589bde`）。
   **一处更正（原判断是错的）**：此前写的是「本机 profile 未装配生产者」。**生产者一直在场**——它不在 profile 自己的依赖里，却是 `dsh-web-app` 的 bundle patch 插入的一行（`cordis.patch.yml:339`），因此每个含 `dsh-web-app` 的 profile 都有它。当时的判断用的是**解析层**（profile 的 `package.json` 与提升 junction），而正确的判据是**已加载树**：服务在不在（`witness-seam`）、事件来不来（`workspace/changes`）。**因此「把生产者装进日常 profile」这一步根本不需要**，临时验收 profile 也没有存在的必要——它**已经删掉**（机器上只剩 `core-020` 与 `tauri`），「验收一个运行时、运行另一个运行时」的隐患随之消失。经过见 [docs/WITNESS-LIVE-PROBE.md](WITNESS-LIVE-PROBE.md) §0 与 §7。
 - **PTC 不在门槛里。** 它是执行便利，不是权限原语、验证原语、证据原语或隔离原语；没有它 GAC 仍然完整、安全、正确地工作。因此「PTC 缺席」不算 Runtime 未完成——**而它其实在场**（`dsh-base` 的 patch 插入 `ptc-runtime` 与 `workflow-ptc`），`run_code` 只在 PTC 模式下才呈现给模型。
+- **门槛本身现在有执行点。** 上面那张表的每一项都能被机器核对：工程在适配器里声明 `execution.required_capabilities`，插件在第一次工具调用时逐项核对**已加载树**并把缺项写进加载报告的 `capability-check`；`high_risk_task` 收口时缺项未获显式豁免（`capability_ack`）就按 `GAC_COMPLETION_CAPABILITY_MISSING` 拒绝。**本仓库的适配器已声明全部六项**，因此这条路径在本工程上是活的（不是只写了文档）。决定与两个实现坑见 `docs/ADR-0001-子会话执行载体.md` §20。
 
 ## 6. 「新任务默认走 DSH」具体指什么
 

@@ -765,8 +765,22 @@ node scripts/repair-session-events.js --apply    # 真的修：先备份再原�
   （`cordis.patch.yml:339`），因此**一直在场**；`ptc-runtime` 同理（`dsh-base` 的 patch 插入）。可靠
   的判据是**服务在不在**（`witness-seam` 那一行）与**事件来不来**（`workspace/changes` 有没有追加），
   而不是解析层能不能从那个锚点找到包。
-- **清单要有执行点，不能只是散文。** 必需能力由适配器声明、由加载报告与 `gac_metrics` 暴露；可选能力
-  由守卫的显式路径兜住。只写在文档里的契约会与代码漂移——本仓库在 `checkpoint` 那条上已经吃过一次。
+- **清单要有执行点，不能只是散文。** 上面那张表现在是**机器可校验**的，三件事各有一处代码：
+
+  1. **项目声明**它需要哪些能力：适配器的 `execution.required_capabilities`（闭集见
+     `lib/capabilities.js`，拼错的标识在**校验适配器时**就被拒）；
+  2. **核对真实环境**：第一次用到某个工程时（第一次工具调用）逐项核对**已加载树**的真实状态——
+     `native_child_dispatch` 看子会话接缝、`workspace_observation` 看观测接缝，其余几项是本插件
+     自己的机制（加载即具备）。结果写进加载报告的 `capability-check`（每个工程一次，缺项写明
+     「缺了它意味着什么」）；
+  3. **高风险收口时拒绝结论**：`high_risk_task` 收口若本工程声明的能力有缺项，守卫按
+     `GAC_COMPLETION_CAPABILITY_MISSING` 拒绝，并说明「缺的是结论的凭据」。想继续就得用
+     `capability_ack` 显式写下接受缺口的理由——它随任务记录落盘、重启后仍在，并出现在
+     `gac_task action:"audit"` 的链条里。**拒的是收口，不是工具**：一个永远收不了口的高风险模式
+     就是「把自己关在门外」的同一个形状，本仓库在 `gac_scope` 上已经踩过一次。
+
+  只写在文档里的契约会与代码漂移——本仓库在 `checkpoint` 那条上已经吃过一次（`AGENTS.md` §5 自己
+  承认它「没有代码消费」）。
 
 ## 已知局限
 

@@ -19,7 +19,15 @@
   "execution": {
     "require_contract": ["high_risk_task"],
     "provider_routes": {},
-    "native_child_dispatch": true
+    "native_child_dispatch": true,
+    "required_capabilities": [
+      "native_child_dispatch",
+      "workspace_observation",
+      "role_isolation",
+      "write_claims",
+      "evidence_log",
+      "semantic_artifacts"
+    ]
   },
   "risk": {
     "high_risk_paths": [
