@@ -312,9 +312,42 @@ describe('gac_metrics —— 只读，且必须有出口', () => {
         taskStoreFor: () => store,
         sessionRootFor: () => store.root,
         evidenceFor: () => options.evidence ?? [],
+        // 观测源在不在是环境事实：缺省**不给**这个事实（报告因此不宣称可用、也不宣称不可用）。
+        ...(options.observationAvailable === undefined
+          ? {}
+          : { observationAvailableFor: () => options.observationAvailable }),
       }),
     }
   }
+
+  it('观测源不在场时，指标说的是「这一层不可用」，而不是报一串 0', async () => {
+    // 这条是这一整块最重要的读法：源缺席时三个数全是 0，而 0 恰好是想要的那个数——
+    // 「0 轮观测」与「真的没有越界改动」在读数上完全分不开。
+    const h = metricsHarness({ observationAvailable: false })
+    const value = await h.tool.execute({}, h.exec)
+
+    assert.equal(value.evidence.witness.available, false)
+    assert.match(value.summary, /工作区观测不可用/u)
+    assert.match(value.summary, /读不出任何东西/u)
+  })
+
+  it('观测源在场时照常报数', async () => {
+    const h = metricsHarness({ observationAvailable: true })
+    const value = await h.tool.execute({}, h.exec)
+
+    assert.equal(value.evidence.witness.available, true)
+    assert.match(value.summary, /工作区观测 0 轮/u)
+    assert.doesNotMatch(value.summary, /不可用/u)
+  })
+
+  it('没被告知在场与否时不宣称可用 —— 「不知道」与「在场」是两件事', async () => {
+    const h = metricsHarness()
+    const value = await h.tool.execute({}, h.exec)
+
+    assert.equal(value.evidence.witness.available, undefined)
+    assert.match(value.summary, /未被告知/u)
+    assert.doesNotMatch(value.summary, /不可用/u)
+  })
 
   it('是个只读工具：不声明任何必填参数', () => {
     const h = metricsHarness()
