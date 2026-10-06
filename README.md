@@ -39,7 +39,7 @@ GAC plugin      →  执行模式、写作用域、写占用声明、验证、�
 | 6 | `lib/metrics.js` + `lib/tool-metrics.js` —— 带只读出口的指标 | 已完成 |
 | 6 | `lib/tool-evidence.js` —— 证据号可被发现，因而可以被引用 | 已完成 |
 | 5 | `lib/gac-events.js` + `lib/gac-event-log.js` —— GAC 审计事件（写工程自己的文件，**不**写会话日志） | 已完成（审计，不是状态权威） |
-| 6 | `lib/workspace-witness.js` —— 工作区差异观测（witness 的原生替代） | 已完成，55 个测试；本机 profile 未装配观测源，因此它是惰性的 |
+| 6 | `lib/workspace-witness.js` —— 工作区差异观测（witness 的原生替代） | 已完成，55 个测试；本机 profile 未装配观测源，因此它是惰性的（服务与摘要形状已对着真包 `dsh-workspace-changes@0.2.0-rc.2` 的类型声明逐字段核实，见 ADR §17） |
 | 7 | 遗留系统切换 —— 处置与 E2E 状态已记录 | 记录在 [docs/CUTOVER.md](docs/CUTOVER.md) 中；本仓库之外的东西一律未动 |
 
 **在相信上面这张表之前，先读 [docs/CUTOVER.md](docs/CUTOVER.md)。** 它逐项记录了什么是真正验证过的、什么不是——包括大纲的**六条 E2E 判据里有四条跑过真实会话、两条与字面判据仍有差别**，以及阶段 1-3（节点由原生子会话承载）的实测结论与三条残留。这里的表说的是哪些东西有代码；那份文档说的是哪些东西有证据。
