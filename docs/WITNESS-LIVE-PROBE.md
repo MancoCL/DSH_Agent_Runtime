@@ -122,21 +122,34 @@ npm run plugin:off
    - 该证据 `isPassingEvidence(...)` 判定为 **不可用**，理由里带越界数量（AC7）；
    - 盘上那个文件**确实存在**（证明这是「观测到了真实落盘」，不是纸面推断）。
 
-## 4. 用例 C：降级路径（**待办**，需要一个 profile 改配置 + 重启）
+## 4. 用例 C：降级路径（**待办**，一条命令 + 重启）
 
-把 producer 从**某个** profile 的 `dsh.profile.bundles` 里**临时**去掉（它由 `dsh-web-app` 的 patch 插入，
-所以要连带把那一行 patch 覆盖掉）、重载宿主，然后断言：
+**做法已经具体了**，而且**不必动 `package.json`**：生产者那一行是 `dsh-web-app` 的 bundle patch 插入的，
+而 profile 自己的 `cordis.patch.yml` **在 bundles 之后应用**（`cordis.yml` 的文件头写着这个顺序：
+bundles → `cordis.patch.yml` → overlays）。所以在那份 patch 末尾加两行就能把它关掉：
 
-- 插件**照常加载**，写作用域闸门、角色收权、协调器、原生子会话**照常工作**（§11）；
+```yaml
+- id: workspace-changes
+  disabled: true
+```
+
+然后**重启宿主**（bundle 组合在启动时读，热应用不可靠——见 `AGENTS.md` §0 实测的三种情形），断言：
+
+- 插件**照常加载**，写作用域闸门、角色收权、协调器、原生子会话**照常工作**（§11）——具体做法：声明一个
+  写作用域，再让一个范围外的结构化写入被拒，逐字抄下拒因；
 - 加载报告里 `witness-seam: available: false`——**降级可见**，不是「没有 Witness 但看起来一切正常」（§12）；
-- `gac_metrics` 里这一层显示为不可用，而不是显示「零越界」。
+- **本仓库声明的能力会因此报缺项**：`capability-check` 一行里 `missing` 含 `workspace_observation`，
+  且 `high_risk_task` 收口会被 `GAC_COMPLETION_CAPABILITY_MISSING` 拒（除非显式 `capability_ack`）。
+  这一条是 `docs/ADR-0001-子会话执行载体.md` §20 那套机制在**真实降级现场**的验收；
+- `gac_metrics` 里这一层显示为不可用，而不是显示「零越界」（**这条目前做不到**，见 §8 的待办）。
+
+验完把那两行删掉并重启。**这一步在实验室（临时 profile）里做**：在日常 profile 里动它，等于拿生产配置
+做实验。
 
 **它目前只有单测覆盖**（`test/workspace-witness.test.js`：服务缺席时插件照常加载、`witness-seam` 记
-`available: false`、闸门仍在）。要做活体版就得改配置 + 重启，因此如实列为待办而不是已验。原先打算
-「切回日常 profile 就是现成的降级现场」——**那个做法不成立**，因为生产者本来就在日常 profile 里。
-
-验完把 bundle 加回去并重载。**这一步只有在 validation profile 里好做**：进了日常 profile 之后，
-要么就得动生产配置，要么就永远不验。
+`available: false`、闸门仍在；`test/capabilities.test.js` 与 `test/tool-task.test.js`：缺项拒绝收口、
+显式豁免可过）。原先打算「切回日常 profile 就是现成的降级现场」——**那个做法不成立**，因为生产者本来
+就在日常 profile 里。
 
 **`gac_metrics` 目前只显示「工作区观测 N 轮（越界改动 M 个）」——缺一个「不可用」状态**：源不在时
 `N=0` 与「真的没有观测」在读数上分不开。这是 AC 之外的一条真缺口，本轮先记在这里。
