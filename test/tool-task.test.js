@@ -2094,6 +2094,72 @@ describe('冻结需求时传错参数名会被响亮拒绝（活体验收里静�
   })
 })
 
+describe('时间戳不能是 0（活体验收的复核报告如实记过这条缺口）', () => {
+  it('建任务、冻需求、冻计划、冻契约四处都写下真实时刻', async () => {
+    // 缺省值是 `0`，而工具层原先一处都没传 `now`——于是盘上「什么时候冻的」全都答不出来。
+    // 复核报告把它记为缺口而非阻塞问题，这类缺口不会挡住任何门禁，只会让事后审计无从下手。
+    const before = Date.now()
+    const h = dispatchHarness()
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-TS',
+      mode: 'standard_task',
+      plan: {
+        nodes: [
+          { id: 'T1', objective: '实现', required_capabilities: ['implementation'], write_scope: ['src/'] },
+        ],
+      },
+    }, h.exec)
+    await h.tool.execute({
+      action: 'grill',
+      task_id: 'REQ-TS',
+      grill_action: 'record',
+      round: { questions: [{ id: 'Q1', question: '验收标准是什么', answer: 'AC1' }] },
+    }, h.exec)
+    await h.tool.execute({ action: 'grill', task_id: 'REQ-TS', grill_action: 'converge' }, h.exec)
+    await h.tool.execute({
+      action: 'grill',
+      task_id: 'REQ-TS',
+      grill_action: 'confirm',
+      confirmation: '就按这个做',
+      acceptance_criteria: ['AC1'],
+    }, h.exec)
+    await h.tool.execute({
+      action: 'contract',
+      task_id: 'REQ-TS',
+      contract_action: 'freeze',
+      interface_contract: {
+        name: 'demo',
+        operations: [{ name: 'op', signature: 'op(): void', behavior: '做点什么' }],
+      },
+    }, h.exec)
+    await h.tool.execute({
+      action: 'plan',
+      task_id: 'REQ-TS',
+      criteria: ['AC1'],
+      verification_plan: {
+        cases: [
+          { id: 'C1', covers: ['AC1'], type: 'positive', expect: '文件存在' },
+          { id: 'C2', covers: ['AC1'], type: 'falsification', expect_failure: '文件缺失应当判失败' },
+        ],
+      },
+    }, h.exec)
+    const after = Date.now()
+
+    for (const [label, value] of [
+      ['created_at', h.store.load('REQ-TS').created_at],
+      ['frozen_at（需求）', h.store.loadGrilling('REQ-TS').frozen_at],
+      ['frozen_at（计划）', h.store.loadPlan('REQ-TS').frozen_at],
+      ['frozen_at（契约）', h.store.loadContract('REQ-TS').frozen_at],
+    ]) {
+      assert.ok(
+        typeof value === 'number' && value >= before && value <= after,
+        `${label} 应当是真实时刻，收到 ${value}`,
+      )
+    }
+  })
+})
+
 describe('create 的下一步话术说准顺序（活体验收里父会话先调 grill 连吃三次「找不到任务」）', () => {
   it('建完任务后指出 grill 与 contract 作用于已存在的任务，再讲派遣', async () => {
     const h = dispatchHarness()
