@@ -60,10 +60,10 @@ function governed(writeScope, options = {}) {
 }
 
 /**
- * 一次带 `parent` 令牌的调用：内核用它区分「模型直呼」与「传输派发」。
+ * 一次 PTC **内层子调用**：与 `exec` 同一形状，另带内核给出的 `parent` 令牌。
  *
- * 本运行时**不再**为 PTC 保留专用逻辑（PTC 不在生产能力清单里，见 `lib/tool-targets.js`），
- * 所以这个助手只剩一个用途：证明「带不带 `parent` 都不改变判定」——分类只看工具名与参数。
+ * 这个令牌是内核区分「模型直呼」与「传输派发」的唯一标志（`dsh-tools` 的
+ * `ToolExecution.parent` 注释）：内层子调用带着它走到同一个 `tools/pre-execute`。
  *
  * @param {string} name
  * @param {object} args
@@ -304,48 +304,50 @@ describe('运行时自己的工具不能被它自己执行的作用域挡住', (
   })
 })
 
-describe('不支持的传输工具（PTC）：明确拒绝，而不是"放行外层、内层各自受管"', () => {
-  it('作用域生效时 run_code 被拒，拒因说清是「本 profile 不支持」', () => {
+describe('PTC：放行外层传输，内层子调用按自己的名字受管', () => {
+  it('外层 run_code 放行 —— 它自己不碰文件', () => {
+    // 在此之前它落在 unknown 里，于是作用域一生效 PTC 整体不可用，而它派发的内层子调用根本
+    // 没有机会被检查。拒绝外层不是更严的守卫，是把整个通道关掉。
     const core = governed(['src/'])
-    const verdict = core.preExecute(exec('run_code', { code: 'await tools.write(...)' }))
-
-    assert.equal(verdict.kind, 'deny')
-    assert.equal(verdict.info.code, GAC_CODES.PTC_UNSUPPORTED)
-    // 拒因必须与 `unknown` 那条**分得开**：前者是「我们不知道该怎么检查它」，后者是
-    // 「我们知道它、本 profile 不支持」——读的人据此决定下一步去查哪里。
-    assert.match(verdict.info.reason, /不在本运行时的生产能力清单里/u)
-    assert.doesNotMatch(verdict.info.reason, /不是本运行时知道如何/u)
+    assert.equal(core.preExecute(exec('run_code', { code: 'await tools.write(...)' })).kind, 'allow')
   })
 
-  it('没有声明作用域时不管它 —— 守卫只管受治理的会话', () => {
+  it('内层 write 越界时照样被拒', () => {
+    const core = governed(['src/'])
+    const verdict = core.preExecute(nested('write', { file_path: 'outside.c' }))
+    assert.equal(verdict.kind, 'deny')
+    assert.equal(verdict.info.code, GAC_CODES.WRITE_SCOPE_DENIED)
+  })
+
+  it('内层 write 在范围内放行', () => {
+    const core = governed(['src/'])
+    assert.equal(core.preExecute(nested('write', { file_path: 'src/a.c' })).kind, 'allow')
+  })
+
+  it('内层 pwsh 照样按 shell 拒绝 —— 换了个入口，边界没变', () => {
+    const core = governed(['src/'])
+    const verdict = core.preExecute(nested('pwsh', { command: 'echo hi > outside.c' }))
+    assert.equal(verdict.kind, 'deny')
+    assert.equal(verdict.info.code, GAC_CODES.SHELL_DENIED_UNDER_SCOPE)
+  })
+
+  it('内层未知工具照样拒绝', () => {
+    const core = governed(['src/'])
+    const verdict = core.preExecute(nested('mystery_tool', {}))
+    assert.equal(verdict.kind, 'deny')
+    assert.equal(verdict.info.code, GAC_CODES.UNGUARDABLE_WRITE_DENIED)
+  })
+
+  it('传输派发传输时按未知处理 —— 说明我对内核的理解有偏差', () => {
+    const core = governed(['src/'])
+    const verdict = core.preExecute(nested('run_code', { code: 'x' }))
+    assert.equal(verdict.kind, 'deny')
+    assert.equal(verdict.info.code, GAC_CODES.UNGUARDABLE_WRITE_DENIED)
+  })
+
+  it('没有声明作用域时外层传输照常放行', () => {
     const core = createGacCore()
     assert.equal(core.preExecute(exec('run_code', { code: 'x' })).kind, 'allow')
-  })
-
-  it('**不支持一个通道不会削弱普通写守卫**（这是这一轮唯一保留的 PTC 相关断言）', () => {
-    const core = governed(['src/'])
-
-    const outside = core.preExecute(exec('write', { file_path: 'outside.c' }))
-    assert.equal(outside.kind, 'deny')
-    assert.equal(outside.info.code, GAC_CODES.WRITE_SCOPE_DENIED)
-
-    assert.equal(core.preExecute(exec('write', { file_path: 'src/a.c' })).kind, 'allow')
-    assert.equal(core.preExecute(exec('pwsh', { command: 'echo hi' })).info.code, GAC_CODES.SHELL_DENIED_UNDER_SCOPE)
-    assert.equal(core.preExecute(exec('mystery_tool', {})).info.code, GAC_CODES.UNGUARDABLE_WRITE_DENIED)
-  })
-
-  it('带不带 `parent` 令牌都不改变判定 —— 分类只看工具名与参数', () => {
-    // 这条守的是**收缩之后安全性没有丢**：旧实现专门为「内层子调用」写了一条路径（内层 `write`
-    // 查作用域、内层 `pwsh` 按 shell 拒）。现在那条路径没了，因为分类根本不看 `parent`——
-    // 无论调用来自模型直呼还是传输派发，同一个名字得到同一个判定。
-    const core = governed(['src/'])
-
-    const outside = core.preExecute(nested('write', { file_path: 'outside.c' }))
-    assert.equal(outside.kind, 'deny')
-    assert.equal(outside.info.code, GAC_CODES.WRITE_SCOPE_DENIED)
-    assert.equal(core.preExecute(nested('write', { file_path: 'src/a.c' })).kind, 'allow')
-    assert.equal(nested('pwsh', { command: 'x' }).parent === undefined, false, '助手确实带上了令牌')
-    assert.equal(core.preExecute(nested('pwsh', { command: 'x' })).info.code, GAC_CODES.SHELL_DENIED_UNDER_SCOPE)
   })
 })
 
