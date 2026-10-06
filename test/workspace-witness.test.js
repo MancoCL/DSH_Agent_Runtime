@@ -735,12 +735,25 @@ describe('证据列表与指标里的工作区观测', () => {
   it('指标新增一个 witness 块，工具调用的统计一个都不变', () => {
     const toolCall = compileEvidence(rawEvidence({ value: { exitCode: 0 } }), { id: 'ev-1' })
     const block = summarizeEvidence([toolCall, witnessRecord()])
-    assert.deepEqual(block.witness, { observations: 1, out_of_scope: 1, partial_coverage: 1 })
+    // `available` 是三态：调用方没给「观测源在不在」这个环境事实时它是 `undefined`——不宣称可用，
+    // 也不宣称不可用。压成 `!== false` 会让报告在最需要谨慎的地方显得笃定。
+    assert.deepEqual(block.witness, {
+      available: undefined,
+      observations: 1,
+      out_of_scope: 1,
+      partial_coverage: 1,
+    })
     assert.equal(block.total, 2)
     assert.equal(block.errors, 0)
     assert.equal(block.denied_writes, 0)
     assert.equal(block.denied_shells, 0)
     assert.deepEqual(block.by_tool, { 'workspace-changes': 1, pwsh: 1 })
+  })
+
+  it('观测源缺席时 witness 块如实记 false —— 那三个 0 因此读得出来', () => {
+    const block = summarizeEvidence([witnessRecord()], { observationAvailable: false })
+    assert.equal(block.witness.available, false)
+    assert.equal(block.witness.observations, 1, '在场与否不改变已经落盘的观测条数')
   })
 
   it('渲染把工作区观测讲成四件事，而不是工具调用的那三行', () => {
