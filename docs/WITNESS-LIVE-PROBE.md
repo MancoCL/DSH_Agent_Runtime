@@ -149,6 +149,33 @@ bundles → `cordis.patch.yml` → overlays）。所以在那份 patch 末尾加
 验完把那两行删掉并重启。**这一步在实验室（临时 profile）里做**：在日常 profile 里动它，等于拿生产配置
 做实验。
 
+### 4.1 结果：**五条全过**（2026-10-06，实验室 profile `gac-verify`）
+
+实验室与日常**逐字节同构**，唯一差异是 patch 末尾那两行把 `workspace-changes` 关掉；`package.json`
+的依赖列表与日常完全一致（不再像上一版那样多装一个包——那次是错的，生产者本来就在场）。
+
+| 断言 | 逐字结果 |
+| --- | --- |
+| 插件照常加载 | `plugin-loaded`，`registered_tools = ["gac_project","gac_scope","gac_task","gac_metrics","gac_evidence"]` |
+| 降级可见 | `witness-seam available=false`（`child-dispatch-seam available=true` 照旧） |
+| 守卫照常工作 | 范围外结构化写入被逐字拒绝：`GAC: 任务 REQ-WIT-DEGRADE 的节点 REQ-WIT-DEGRADE 只能写入 [witness-probe-a.txt]。…在该作用域之外` |
+| 能力契约报缺项 | `capability-check` 的 `missing = ["workspace_observation"]`、`ok = false` |
+| 高风险收口被拒 | 拒因逐字到达模型：「…但本工程声明需要的能力里缺了：**工作区观测（纵深防御层）**（…「没有越界写入」无从成立）。**缺的是结论的凭据**，所以不能收口…」；带 `capability_ack` 后该门禁放行（拒绝理由变成「节点未完成」） |
+| ⑥ 指标说不可用 | 「**工作区观测不可用**（观测源不在场）：这一层是惰性的，因此「0 轮」读不出任何东西…」 |
+| 豁免可审计 | `gac_task action:"audit"` 里逐字出现：「收口时接受了能力缺口（workspace_observation）：…这不是缺口，是有意接受的条件。」 |
+
+**这一轮还抓到四条只有活体能发现的缺陷**（全部「单测全绿而线上是坏的」，修复见提交 `8987dd1`）：
+
+1. 指标里的 `available: undefined` **不是合法 JSON** → 宿主把整份指标判成 `value is not lossless JSON`；
+2. `observationAvailableFor` 被转发给了 `gac_evidence` 而不是 `gac_metrics`（两处注册的参数形状一样，改错了地方）→ 指标说「观测源是否在场未被告知」；
+3. 能力门禁的拒因带了 `missing_capabilities` 而输出 schema 没声明 → **模型看到的是校验错误，而不是「缺了什么、为什么不能收口」**（与 schema 注释里记的 `plan_id` 那次同一个坑）；
+4. `gacEventLogFor` 定义在 `apply` 里、却在 `registerTools` 里被引用 → `audit` 动作抛「未定义」；修完又露出第二层——`audit` 的整份返回都没在 schema 里声明（`nodes` 还被声明成字符串数组而它返回对象），所以 **`audit` 从来就没能用过**。
+
+四条盲区是同一个形状：**测试用的是透传的 `defineTool`，不做输出校验；传的是假依赖，接线断没断看不出来**。
+所以钉子都改打在「真正注册的那一份」上，并加了一条**通用**的 schema 一致性断言（把 `status`/`list`/
+`audit`/`advance`/`complete` 五个动作的返回逐字段逐类型对着 `output.schema` 核一遍）——这一类坑已经
+踩了三次，通用断言比单点补丁更值得。
+
 **它目前只有单测覆盖**（`test/workspace-witness.test.js`：服务缺席时插件照常加载、`witness-seam` 记
 `available: false`、闸门仍在；`test/capabilities.test.js` 与 `test/tool-task.test.js`：缺项拒绝收口、
 显式豁免可过）。原先打算「切回日常 profile 就是现成的降级现场」——**那个做法不成立**，因为生产者本来
