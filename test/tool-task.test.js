@@ -1597,6 +1597,141 @@ describe('独立复核门禁 —— 六问齐备才能收口', () => {
   })
 })
 
+describe('设计节点是验证计划的作者（语义不再倒置）', () => {
+  const goodPlan = {
+    cases: [
+      { id: 'C1', covers: ['AC1'], type: 'positive', expect: '文件存在' },
+      { id: 'C2', covers: ['AC1'], type: 'falsification', expect_failure: '文件缺失时应当判失败' },
+    ],
+  }
+
+  /**
+   * 一个按角色回不同产物的执行者。
+   *
+   * @param {object} [options]
+   * @returns {object}
+   */
+  function designHarness({ plan = goodPlan } = {}) {
+    return dispatchHarness({
+      runtimeExecutors: [{
+        name: 'verifier',
+        supports: () => true,
+        run: async ({ node }) => (node.role === 'verification_design'
+          ? {
+            status: 'completed',
+            summary: '方案写好了',
+            semantic: { role: 'verification_design', payload: { plan } },
+          }
+          : { status: 'completed', summary: '验证完成' }),
+      }],
+    })
+  }
+
+  /**
+   * 一个高风险任务的计划：设计节点 + 执行节点。
+   *
+   * @param {object} [designOverrides]
+   * @returns {object}
+   */
+  function highRiskPlan(designOverrides = {}) {
+    return {
+      nodes: [
+        {
+          id: 'D1',
+          objective: '设计验证方案',
+          required_capabilities: ['verification'],
+          write_scope: [],
+          ...designOverrides,
+        },
+        {
+          id: 'V1',
+          objective: '执行验证',
+          required_capabilities: ['verification'],
+          write_scope: [],
+          depends_on: ['D1'],
+        },
+      ],
+    }
+  }
+
+  /**
+   * @param {object} h
+   * @param {object} plan
+   * @returns {Promise<object>}
+   */
+  function createHighRisk(h, plan) {
+    return h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-HR-T',
+      mode: 'high_risk_task',
+      plan,
+    }, h.exec)
+  }
+
+  it('显式声明为设计节点的，可以在没有冻结计划时开工；计划由它产出并自动冻结', async () => {
+    const h = designHarness()
+    await createHighRisk(h, highRiskPlan({ role: 'verification_design' }))
+
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-HR-T' }, h.exec)
+
+    assert.notEqual(value.action, 'plan_required', `不该被计划门禁挡住：${value.message}`)
+    assert.match(value.message, /已由设计节点冻结验证计划/u)
+    assert.equal(h.store.hasPlan('REQ-HR-T'), true, '计划应当已经落盘')
+    assert.equal(h.store.loadPlan('REQ-HR-T').cases.length, 2)
+    assert.equal(h.store.load('REQ-HR-T').nodes.get('D1').status, 'completed')
+  })
+
+  it('**没声明角色**的验证节点仍然被计划门禁挡住 —— 那条豁免不能靠推断拿到', async () => {
+    const h = designHarness()
+    await createHighRisk(h, highRiskPlan())
+
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-HR-T' }, h.exec)
+
+    assert.equal(value.action, 'plan_required')
+    assert.equal(h.store.load('REQ-HR-T').nodes.get('D1').status, 'pending')
+  })
+
+  it('计划冻上之后，后续的验证节点照常被放行', async () => {
+    const h = designHarness()
+    await createHighRisk(h, highRiskPlan({ role: 'verification_design' }))
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-HR-T' }, h.exec)
+
+    const second = await h.tool.execute({ action: 'advance', task_id: 'REQ-HR-T' }, h.exec)
+
+    assert.notEqual(second.action, 'plan_required')
+    assert.equal(h.store.load('REQ-HR-T').nodes.get('V1').status, 'completed')
+  })
+
+  it('方案不合法 → 节点判失败，理由来自编译器，且盘上没有计划', async () => {
+    // 反例没写 `expect_failure`：这是与验收标准无关的硬性拒绝。
+    const h = designHarness({ plan: { cases: [{ id: 'C1', covers: ['AC1'], type: 'falsification' }] } })
+    await createHighRisk(h, highRiskPlan({ role: 'verification_design' }))
+
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-HR-T' }, h.exec)
+
+    assert.match(value.message, /验证方案被拒/u)
+    assert.match(value.message, /expect_failure/u)
+    assert.equal(h.store.hasPlan('REQ-HR-T'), false)
+    assert.equal(h.store.load('REQ-HR-T').nodes.get('D1').status, 'failed')
+  })
+
+  it('与已冻结计划不同的第二份方案被拒 —— 计划一经冻结不得改写', async () => {
+    const h = designHarness({ plan: { cases: [{ id: 'X1', covers: ['AC1'], type: 'positive', expect: 'x' }] } })
+    await createHighRisk(h, highRiskPlan({ role: 'verification_design' }))
+    await h.tool.execute({
+      action: 'plan',
+      task_id: 'REQ-HR-T',
+      criteria: [],
+      verification_plan: { cases: [{ id: 'P1', covers: ['AC1'], type: 'positive', expect: 'p' }] },
+    }, h.exec)
+
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-HR-T' }, h.exec)
+
+    assert.match(value.message, /计划一经冻结不得改写/u)
+    assert.equal(h.store.load('REQ-HR-T').nodes.get('D1').status, 'failed')
+  })
+})
+
 describe('失败节点的返回文本 —— 不写成「执行完成」，且带出可追溯信息', () => {
   it('结论与措辞一致，并带出执行者给的可追溯信息', async () => {
     // 活体验收实测到的那句自相矛盾：「节点 T1 由 child:spawn 执行完成。 T1 失败…」——读的人第一句
