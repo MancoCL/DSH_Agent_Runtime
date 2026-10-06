@@ -38,9 +38,11 @@ import { evidenceToolOptions, projectEvidence, selectEvidence } from '../lib/too
 import {
   WITNESS_SOURCE,
   WitnessError,
+  SUMMARY_READ_STEPS,
   classifyWitnessChanges,
   compileWitnessSummary,
   composeWitnessRecord,
+  readWitnessSummary,
   resolveGoverningSession,
   witnessFacts,
 } from '../lib/workspace-witness.js'
@@ -841,18 +843,34 @@ function makeProject(prefix, { governed = true } = {}) {
  *
  * @param {object} [options]
  * @param {object|undefined} [options.workspaceSummary] - 服务会给出的那一轮摘要。
+ * @param {boolean} [options.summaryLate] - 摘要**晚一步**才就绪：前几次读（同一同步块内）返回
+ *   `undefined`，让出一个宏任务之后才给。这是生产者的真实形状——它先 `append`（同步发布事件）、
+ *   再把摘要存进记录表，两者在同一个同步块里。
  * @param {boolean} [options.provideWorkspaceChanges] - 是否提供 `workspaceChanges` 服务。
  * @param {string} [options.cwd] - 会话工作目录。
  * @returns {{ctx: object, seen: {listeners: object[], injections: object[]}}}
  */
 function createFakeContext({
   workspaceSummary,
+  summaryLate = false,
   provideWorkspaceChanges = true,
   cwd,
 } = {}) {
   const seen = { listeners: [], injections: [] }
   const disposer = () => {}
   const session = { id: SESSION_ID, header: { cwd }, append: () => {} }
+  // **按时间**就绪，而不是按调用次数：生产者的「稍后」是同一个同步块结束，不是「下一次调用」。
+  // 用调用次数模拟会让「去掉等待」的突变悄悄通过（实测踩到过）。第一次读发生在事件发布期间
+  // （`append` 内部），此时安排一个宏任务把摘要「存下来」——与生产者先发布、后 `records.set` 一致。
+  let ready = !summaryLate
+  let scheduled = false
+  const summary = () => {
+    if (!ready && !scheduled) {
+      scheduled = true
+      setImmediate(() => { ready = true })
+    }
+    return ready ? workspaceSummary : undefined
+  }
   const ctx = {
     sessions: {
       get: (id) => (id === SESSION_ID ? session : undefined),
@@ -860,7 +878,7 @@ function createFakeContext({
     },
     tools: { register: () => disposer },
     get: (name) => (name === 'workspaceChanges' && provideWorkspaceChanges
-      ? { summary: () => workspaceSummary }
+      ? { summary }
       : undefined),
     on: (event, listener, options) => {
       seen.listeners.push({ event, listener, options })
@@ -875,7 +893,7 @@ function createFakeContext({
       const provided = {}
       if (deps.includes('systemPrompt')) provided.systemPrompt = { section: () => disposer }
       if (deps.includes('workspaceChanges') && provideWorkspaceChanges) {
-        provided.workspaceChanges = { summary: () => workspaceSummary }
+        provided.workspaceChanges = { summary }
       }
       callback(provided)
       return disposer
@@ -914,6 +932,19 @@ function readReport() {
 }
 
 /**
+ * 让出若干步，等延迟读取走完。
+ *
+ * 缺失/就绪的判断发生在让出几步之后（生产者先发布事件、后存摘要），所以断言前必须等它。
+ *
+ * @returns {Promise<void>}
+ */
+async function flushDeferred() {
+  for (let i = 0; i < SUMMARY_READ_STEPS + 2; i += 1) {
+    await new Promise((resolve) => { setImmediate(resolve) })
+  }
+}
+
+/**
  * 触发一轮工作区变更事件。
  *
  * @param {object} ctx
@@ -925,6 +956,53 @@ function emitWorkspaceChanges(ctx, seen, event = { type: 'workspace/changes', se
   assert.ok(listener !== undefined, 'apply() 必须订阅 session/event')
   listener.listener(ctx.sessions.get(SESSION_ID), event)
 }
+
+describe('readWitnessSummary —— 等生产者把摘要存下来', () => {
+  it('摘要已经就绪时立刻返回，不让出任何一步', async () => {
+    let defers = 0
+    const found = await readWitnessSummary({
+      read: () => ({ turn: 3 }),
+      defer: async () => { defers += 1 },
+    })
+    assert.deepEqual(found, { summary: { turn: 3 }, attempts: 0 })
+    assert.equal(defers, 0)
+  })
+
+  it('摘要晚一步就绪时让出一步再读到（这就是真实顺序）', async () => {
+    let reads = 0
+    let defers = 0
+    const found = await readWitnessSummary({
+      read: () => { reads += 1; return reads === 1 ? undefined : { turn: 35 } },
+      defer: async () => { defers += 1 },
+    })
+    assert.deepEqual(found, { summary: { turn: 35 }, attempts: 1 })
+    assert.equal(defers, 1)
+  })
+
+  it('一直读不到就有界地放弃 —— 让出 steps-1 步，返回 undefined', async () => {
+    let defers = 0
+    const found = await readWitnessSummary({
+      read: () => undefined,
+      steps: 4,
+      defer: async () => { defers += 1 },
+    })
+    assert.equal(found, undefined)
+    assert.equal(defers, 3, '有界：不无限等')
+  })
+
+  it('读的时候抛错按「还没就绪」处理，绝不把异常抛给事件发布路径', async () => {
+    let reads = 0
+    const found = await readWitnessSummary({
+      read: () => { reads += 1; if (reads === 1) throw new Error('服务坏了'); return { turn: 1 } },
+      defer: async () => {},
+    })
+    assert.deepEqual(found, { summary: { turn: 1 }, attempts: 1 })
+  })
+
+  it('没有 read 时也返回 undefined，而不是抛错', async () => {
+    assert.equal(await readWitnessSummary({ defer: async () => {}, steps: 2 }), undefined)
+  })
+})
 
 describe('入口：把每一轮工作区变更记成一条证据', () => {
   it('workspace/changes 事件落成一条工作区观测证据', async () => {
@@ -1002,11 +1080,48 @@ describe('入口：把每一轮工作区变更记成一条证据', () => {
     })
     await apply(ctx)
     assert.doesNotThrow(() => emitWorkspaceChanges(ctx, seen))
+    // 缺失是**让出几步之后**才下的结论（生产者先发布、后存摘要），所以要等那几步走完再断言。
+    await flushDeferred()
     assert.deepEqual(readEvidence(alone), [])
     assert.ok(
       readReport().some((record) => record.event === 'witness-summary-missing'),
       '取不到摘要时必须留下可查的痕迹，而不是安静地什么都不做',
     )
+  })
+
+  it('生产者先发布事件、后存摘要时，仍然记下这一轮（真实事故的回归钉）', async () => {
+    // 实测踩到的顺序：生产者 `session.append("workspace/changes", …)` 会**同步**发布本事件，而摘要
+    // 是在 append 返回**之后**才存进它的记录表。也就是说处理函数第一次读到的必然是空——当时的表现
+    // 是加载报告里只有 `witness-summary-missing`（seq 8560），会话日志里那个事件却确实存在。
+    // 这条断言的是「等几步之后能读到」，也就是那次事故的修复本身。
+    const ordered = makeProject('gac-witness-ordered-')
+    const { ctx, seen } = createFakeContext({
+      workspaceSummary: summary({ cwd: ordered, turn: 35 }),
+      summaryLate: true,
+      cwd: ordered,
+    })
+    await apply(ctx)
+    const mark = readReport().length
+    emitWorkspaceChanges(ctx, seen, { type: 'workspace/changes', seq: 8560, data: { turn: 35 } })
+    // 摘要要等一个宏任务才就绪；等待期间**不能**被记成缺失。
+    assert.equal(
+      readReport().slice(mark).some((record) => record.event === 'witness-summary-missing'),
+      false,
+      '还在等的时候不该下「缺失」的结论',
+    )
+    await flushDeferred()
+
+    const mine = readReport().slice(mark)
+    assert.ok(
+      mine.some((record) => record.event === 'witness-turn'),
+      '等到摘要就绪之后必须留下 witness-turn，而不是把这一轮算成缺失',
+    )
+    assert.equal(
+      mine.some((record) => record.event === 'witness-summary-missing'),
+      false,
+      '摘要只是晚一步，不该被记成缺失',
+    )
+    assert.equal(readEvidence(ordered).length, 1, '这一轮必须真的落一条证据')
   })
 
   it('workspaceChanges 服务缺席时插件照常加载，事件到达也不抛错', async () => {
