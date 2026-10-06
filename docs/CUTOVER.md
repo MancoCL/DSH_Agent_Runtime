@@ -96,7 +96,8 @@ HIGH_RISK 完整链          PASS（活体，ADR §15 的 REQ-HR-5：四节点�
 全部测试                  PASS
 ```
 
-- **工作区观测是必需项**（纵深防御层，不是可选增强）：它覆盖事前拦截够不着的那一类落盘——shell 重定向、生成器、外部进程、间接写入。**它进入日常 profile 之前，旧运行时不能切。** 路径：临时验收 profile 跑一次 live E2E → 通过后按 profile 的正规安装机制（`package.json` 的 `link:` 依赖 + `dsh.profile.bundles` + `pnpm install`，优先走 `plugin_manager`）装进日常 profile → 在日常 profile 重跑同一探针。
+- **工作区观测是必需项**（纵深防御层，不是可选增强）：它覆盖事前拦截够不着的那一类落盘——shell 重定向、生成器、外部进程、间接写入。**它进入日常 profile 之前，旧运行时不能切。** 路径：临时验收 profile 跑一次 live E2E → 通过后按 profile 的正规安装机制（`package.json` 的 `link:` 依赖 + `dsh.profile.bundles` + `pnpm install`，优先走 `plugin_manager`）装进日常 profile → 在日常 profile 重跑同一探针。**探针文档：[docs/WITNESS-LIVE-PROBE.md](WITNESS-LIVE-PROBE.md)**（含用例 A 范围内写入、用例 B **间接写入**——必须由未被绑定的只读子会话跑受控脚本，因为作用域生效期间父会话的 shell 被整体拒绝、那条路设计上走不通、用例 C 降级路径）。
+  **validation profile 已建好并预检**：`~/.dsh/profiles/gac-verify`（与 `core-020` 同构，差异只有一处：`@deepseek-ai/dsh-workspace-changes` 作为 `link:` 依赖装进了它自己的 `node_modules`——**正规机制**，不是手工塞进被提升的 junction 集合；21 个标识符全部解析得到）。**它只在验收期间存在，不是第二个生产运行时。**
 - **PTC 不在门槛里。** 它是执行便利，不是权限原语、验证原语、证据原语或隔离原语；没有它 GAC 仍然完整、安全、正确地工作。因此「PTC 缺席」不再算 Runtime 未完成。
 
 ## 6. 「新任务默认走 DSH」具体指什么
