@@ -101,6 +101,8 @@ describe('工具形状', () => {
     const options = taskToolOptions({ taskStoreFor: () => store, sessionRootFor: () => store.root })
     assert.deepEqual([...options.parameters.action.enum], [
       'create', 'grill', 'contract', 'plan', 'advance', 'reopen', 'review', 'status', 'list', 'complete',
+      // 只读审计：把链条从已落盘的产物与追加日志里派生出来（不新增存储）。
+      'audit',
     ])
     for (const [name, spec] of Object.entries(options.parameters)) {
       assert.equal(Object.hasOwn(spec, 'required'), false, `${name} 不应带 required 键`)
@@ -2177,6 +2179,46 @@ describe('create 的下一步话术说准顺序（活体验收里父会话先调
     assert.match(value.message, /都作用于\*\*已存在\*\*的任务/u)
     assert.match(value.message, /grill/u)
     assert.match(value.message, /contract/u)
+  })
+})
+
+describe('审计动作：把链条从盘上派生出来（只读，不新增存储）', () => {
+  it('时间线来自追加日志（按任务筛过），缺口来自盘上事实', async () => {
+    const store = new TaskStore({ root: scratch() })
+    const { compileTask } = await import('../lib/coordinator.js')
+    store.save(compileTask({
+      task_id: 'REQ-AUD',
+      mode: 'standard_task',
+      nodes: [
+        { id: 'T1', objective: '实现', required_capabilities: ['implementation'], write_scope: ['src/'] },
+      ],
+    }), { create: true })
+    const tool = createTaskTool({
+      defineTool: (options) => options,
+      taskStoreFor: () => store,
+      sessionRootFor: () => store.root,
+      // 生产环境里这两个依赖都在；测试直接造工具，所以按最小形状给上。
+      adapterFor: () => ({ execution: { require_contract: [] } }),
+      evidenceFor: () => [],
+      eventLogFor: () => ({
+        load: () => [
+          { at: 5, type: 'gac/task-created', data: { task_id: 'REQ-AUD', mode: 'standard_task' } },
+          { at: 9, type: 'gac/task-created', data: { task_id: '别的任务', mode: 'standard_task' } },
+        ],
+      }),
+    })
+    const exec = { agent: { session: { id: 'session-1' } } }
+
+    const value = await tool.execute({ action: 'audit', task_id: 'REQ-AUD' }, exec)
+
+    assert.equal(value.action, 'audit')
+    assert.equal(value.timeline.length, 1, '时间线只该有这个任务的事件')
+    assert.match(value.timeline[0].summary, /建立任务/u)
+    assert.equal(value.ok, false)
+    assert.equal(value.gaps.some((gap) => /需求未冻结/u.test(gap)), true)
+    assert.equal(value.gaps.some((gap) => /没有验证计划/u.test(gap)), true)
+    // **只读**：审计不改任何状态。
+    assert.equal(store.load('REQ-AUD').status, 'pending')
   })
 })
 
