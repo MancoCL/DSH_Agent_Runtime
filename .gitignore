@@ -32,6 +32,9 @@ node_modules/
 # 会话日志的事件词表是宿主构建期生成的，外部插件写进去会让整份日志被拒读。
 .dsh/gac/events/
 
+# 验证报告（逐条用例的执行结论与证据引用）同样是运行时状态
+.dsh/gac/verifications/
+
 # 操作系统噪音文件
 Thumbs.db
 .DS_Store

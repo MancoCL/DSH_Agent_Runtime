@@ -1732,6 +1732,220 @@ describe('设计节点是验证计划的作者（语义不再倒置）', () => {
   })
 })
 
+describe('验证与复核的语义产物由运行时自动登记', () => {
+  const CASES = [
+    { id: 'C1', covers: ['AC1'], type: 'positive', expect: '文件存在' },
+    { id: 'C2', covers: ['AC1'], type: 'falsification', expect_failure: '文件缺失时应当判失败' },
+  ]
+  const CHILD = 'child-verify-1'
+
+  /**
+   * 高风险任务：设计节点产出计划，验证执行节点逐条给结论。
+   *
+   * @param {object} [options]
+   * @param {object} [options.state] - 「子会话知道的计划 id」，由 `createAndDesign` 填。
+   * @returns {object}
+   */
+  function verificationHarness({ executions = [
+    { case_id: 'C1', outcome: 'passed', evidence_ref: 'self:1' },
+    { case_id: 'C2', outcome: 'passed', evidence_ref: 'self:2' },
+  ], state } = {}) {
+    return dispatchHarness({
+      // 子会话「第 1、2 次工具调用」对应的证据记录：运行时签发过、来自那个子会话。
+      evidence: [
+        { schema_version: 1, id: 'ev-11', session_id: CHILD, tool: 'pwsh', is_error: false, exit_code: 0 },
+        { schema_version: 1, id: 'ev-12', session_id: CHILD, tool: 'pwsh', is_error: false, exit_code: 0 },
+      ],
+      runtimeExecutors: [{
+        name: 'verifier',
+        supports: () => true,
+        run: async ({ node }) => {
+          if (node.role === 'verification_design') {
+            return {
+              status: 'completed',
+              summary: '方案',
+              semantic: {
+                role: 'verification_design',
+                child_session_id: 'child-design-1',
+                payload: { plan: { cases: CASES } },
+              },
+            }
+          }
+          // 计划 id 由**提示词**交给执行节点（`buildChildPrompt` 对执行角色会带上它），这里用
+          // `state` 模拟「子会话照抄了它」——真实子会话拿到的是同一份东西。
+          return {
+            status: 'completed',
+            summary: '逐条跑完了',
+            semantic: {
+              role: 'verification_execution',
+              child_session_id: CHILD,
+              payload: { plan_id: state?.planId, executions },
+            },
+          }
+        },
+      }],
+    })
+  }
+
+  /**
+   * 建任务、让设计节点冻计划，并把计划 id 交给「子会话」。
+   *
+   * @param {object} h
+   * @param {object} state
+   * @returns {Promise<void>}
+   */
+  async function createAndDesign(h, state) {
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-V',
+      // 用 `standard_task`：计划门禁只对 `high_risk_task` 生效，而这个用例要验的是**语义产物的
+      // 自动登记与收口消费**。计划一旦存在，收口的证据门禁照样生效（`needsVerification` 看的是
+      // 「有没有计划」），所以这里仍然是完整的那条链，只是不必再配一份复核报告。
+      mode: 'standard_task',
+      plan: {
+        nodes: [
+          {
+            id: 'D1',
+            objective: '设计方案',
+            required_capabilities: ['verification'],
+            write_scope: [],
+            role: 'verification_design',
+          },
+          {
+            id: 'V1',
+            objective: '执行方案',
+            required_capabilities: ['verification'],
+            write_scope: [],
+            depends_on: ['D1'],
+          },
+        ],
+      },
+    }, h.exec)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-V' }, h.exec)
+    const { planId } = await import('../lib/verification.js')
+    state.planId = planId(h.store.loadPlan('REQ-V'))
+  }
+
+  it('验证子会话报 self:<n>，运行时解析成真实签发的号并登记验证报告', async () => {
+    const state = { planId: undefined }
+    const h = verificationHarness({ state })
+    await createAndDesign(h, state)
+
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-V' }, h.exec)
+
+    assert.match(value.message, /已登记验证报告（2 条用例/u)
+    const report = h.store.loadVerification('REQ-V')
+    assert.equal(report.plan_id, state.planId, '计划 id 必须是运行时冻结的那一个')
+    assert.deepEqual(report.executions.map((entry) => entry.evidence_ref), ['ev-11', 'ev-12'])
+    assert.equal(report.source_session_id, CHILD)
+  })
+
+  it('收口直接用运行时登记的那份报告 —— 父会话不必再手写载荷', async () => {
+    const state = { planId: undefined }
+    const h = verificationHarness({ state })
+    await createAndDesign(h, state)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-V' }, h.exec)
+
+    const done = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-V',
+      evidence: { all_criteria_covered: true },
+    }, h.exec)
+
+    assert.equal(done.action, 'completed', `不该被证据门禁拒：${done.message}`)
+  })
+
+  it('计划 id 对不上 → 当场判失败，而不是一路滑到收口', async () => {
+    const h = verificationHarness({ state: { planId: 'plan-deadbeef' } })
+    await createAndDesign(h, { planId: undefined })
+
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-V' }, h.exec)
+
+    assert.match(value.message, /验证报告对不上当前计划/u)
+    assert.equal(h.store.hasVerification('REQ-V'), false)
+  })
+
+  it('解析不到的引用 → 节点判失败，且盘上没有验证报告', async () => {
+    const state = { planId: undefined }
+    const h = verificationHarness({
+      state,
+      executions: [
+        { case_id: 'C1', outcome: 'passed', evidence_ref: 'self:99' },
+        { case_id: 'C2', outcome: 'passed', evidence_ref: 'self:2' },
+      ],
+    })
+    await createAndDesign(h, state)
+
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-V' }, h.exec)
+
+    assert.match(value.message, /证据引用解析不到/u)
+    assert.equal(h.store.hasVerification('REQ-V'), false)
+    assert.equal(h.store.load('REQ-V').nodes.get('V1').status, 'failed')
+  })
+
+  it('两条用例共用一份证据 → 被同一套校验拒掉（取证摊薄）', async () => {
+    const state = { planId: undefined }
+    const h = verificationHarness({
+      state,
+      executions: [
+        { case_id: 'C1', outcome: 'passed', evidence_ref: 'self:1' },
+        { case_id: 'C2', outcome: 'passed', evidence_ref: 'self:1' },
+      ],
+    })
+    await createAndDesign(h, state)
+
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-V' }, h.exec)
+
+    assert.match(value.message, /验证报告被拒/u)
+    assert.equal(h.store.hasVerification('REQ-V'), false)
+  })
+
+  it('复核节点交回六问五维，运行时自动登记，并盖上它自己观察到的计划 id', async () => {
+    const h = dispatchHarness({
+      executors: { implementation: ['builder'], verification: ['verifier'], review: ['reviewer'] },
+      runtimeExecutors: [{
+        name: 'reviewer',
+        supports: () => true,
+        run: async ({ node }) => (node.role === 'review'
+          ? {
+            status: 'completed',
+            summary: '复核完成',
+            semantic: { role: 'review', child_session_id: 'child-review-1', payload: reviewDraft() },
+          }
+          : { status: 'completed', summary: '实现完成' }),
+      }],
+    })
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-R',
+      mode: 'standard_task',
+      plan: {
+        nodes: [
+          { id: 'T1', objective: '实现', required_capabilities: ['implementation'], write_scope: ['src/'] },
+          {
+            id: 'R1',
+            objective: '复核',
+            required_capabilities: ['review'],
+            write_scope: [],
+            depends_on: ['T1'],
+            role: 'review',
+          },
+        ],
+      },
+    }, h.exec)
+
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-R' }, h.exec)
+    // 复核节点依赖实现节点，因此在**第二批**才被派遣。
+    const second = await h.tool.execute({ action: 'advance', task_id: 'REQ-R' }, h.exec)
+
+    assert.match(second.message, /已登记独立复核报告/u, `第一批：${value.message}`)
+    const report = h.store.loadReview('REQ-R')
+    assert.ok(report !== undefined, '复核报告应当已经落盘')
+    assert.equal(report.source_session_id, 'child-review-1')
+    assert.equal(report.reviewed_plan_id, undefined, '这个任务没有计划，盖的就是 undefined')
+  })
+})
+
 describe('失败节点的返回文本 —— 不写成「执行完成」，且带出可追溯信息', () => {
   it('结论与措辞一致，并带出执行者给的可追溯信息', async () => {
     // 活体验收实测到的那句自相矛盾：「节点 T1 由 child:spawn 执行完成。 T1 失败…」——读的人第一句
