@@ -8,11 +8,11 @@
 那一类落盘（shell 重定向、生成器、外部进程、间接写入）。它缺席时，「没有越界写入」这句话无从成立。
 **它进入日常 profile 之前，旧运行时不能切。**
 
-## 0. validation profile 现状（2026-10-06 建好并预检）
+## 0. validation profile 现状（2026-10-06 建好并预检）——**它其实没有必要存在**
 
 ```text
 ~/.dsh/profiles/gac-verify/
-├─ package.json          与 core-020 同构，差异只有一处：多装 producer
+├─ package.json          与 core-020 同构，外加一条**多余**的 link: 依赖（见下）
 ├─ cordis.yml            []（树由 bundles + patch 组合）
 ├─ cordis.patch.yml      与 core-020 逐字节一致（插件开关就在里面）
 ├─ pnpm-workspace.yaml   nodeLinker: hoisted
@@ -20,10 +20,16 @@
 └─ node_modules/         含 @deepseek-ai/dsh-workspace-changes（profile 内 junction）
 ```
 
-**安装方式**是正规机制：把 `@deepseek-ai/dsh-workspace-changes` 作为 `link:` 依赖写进该 profile 的
-`package.json`、加进 `dsh.profile.bundles`、在该目录跑 `pnpm install`（`link:` 依赖不需要网络）。
-**不是**手工往被提升的 `profiles/node_modules` 里塞 junction——那种状态会被一次升级抹掉，于是「生产
-里有 Witness」变成升级就消失的手工事实。
+**为什么「多装 producer」这一步是多余的**：生产者**一直在场**——它不在任何 profile 自己的依赖里，却是
+`dsh-web-app` 的 bundle patch 插入的一行（`cordis.patch.yml:339`），因此每个含 `dsh-web-app` 的 profile
+（包括日常 profile）都有它。当时判「不在场」用的是**解析层**（profile 的 `package.json` 与提升
+junction 集合），而正确的判据是**已加载树**：服务在不在（加载报告的 `witness-seam` 一行）、事件来不来
+（`workspace/changes` 有没有被追加）。两者给出的是相反答案——日常 profile 里 `witness-seam available=true`
+且历史里早有 56 条 `workspace/changes`，那就是它一直在场的证据。
+
+**所以这个 profile 的用途已经被日常 profile 直接取代**（见 §5），验收做完即删（见 §6）。当时的安装方式
+本身是正规的：`link:` 依赖写进该 profile 的 `package.json` + 加进 `dsh.profile.bundles` + 在该目录
+`pnpm install`（`link:` 不需要网络），**不是**手工往被提升的 `profiles/node_modules` 里塞 junction。
 
 **预检结果**：21 个标识符全部解析得到（bundle 18 项 + 依赖 + 5 个关键服务）。两个
 `@deepseek-ai/dsh-experimental-*` bundle **日常 profile 自己也解析不到**（既不在提升集合、也不在
@@ -171,19 +177,42 @@ seq** 记的是 `witness-summary-missing`。修法是先同步试一次、没有
 有了活体证据（AC4、AC5）；身份字段齐全（AC6）；`isPassingEvidence(ev-1789)` = **不可用**，理由
 「这一轮有 4 个越界改动」（AC7），对照实验（只清空越界清单）立刻变可用，证明判定读的正是那个字段。
 
-**仍未做的**：日常 profile 的安装与重跑（AC8、AC9）、降级用例 C。前者见 §6，后者可以**在切回日常
-profile 时顺带做**——日常 profile 本来就没装生产者，切回去就是一次现成的降级现场：断言
-`witness-seam: available: false` 且守卫照常工作，不必再改任何配置。
+## 6. 日常 profile 重跑：**通过**（2026-10-06）
 
-## 6. 通过之后
+**这一步不需要安装任何东西**——生产者本来就在日常 profile 里（§0）。切回 `core-020` 之后，同一套探针
+直接重跑（`write_scope:["witness-probe-a.txt"]` 声明在根会话；`witness-probe-a.txt` 由结构化 `write`
+在范围内创建；`witness-probe-b.txt` 由**作用域声明之前启动的后台进程**创建）：
 
-按同一份 `package.json` 的做法把 producer 装进**日常 profile**，在日常 profile 里**重跑同一组探针**
-（AC8、AC9）——只在 validation profile 里成立的能力**不算支持**。重跑时要逐字记下四样东西（否则这轮
-验收等于没做）：加载报告里的 `witness-turn` / `witness-out-of-scope` 行；证据记录（id + 整个
-`workspace` 载荷）；`isPassingEvidence(...)` 的返回值；以及**验收前后各起一次会话、确认历史能打开**
-（这是 §13 那场「会话历史打不开」事故的回归检查，AC10）。然后：
+```json
+{"event":"witness-turn","turn":38,"listed":2,"total":2,"coverage":"complete","out_of_scope":1,"outside_project":0}
+{"event":"witness-out-of-scope","turn":38,"files":1,"outside_project":0}
+```
 
-- 更新 README「生产能力契约」：工作区观测从「必需（validation profile 已活体验证）」改成
-  「必需，已在日常 profile 启用」；
-- 更新 `docs/CUTOVER.md` §5 的门槛表：`工作区观测 live` 改为 PASS；
-- 删除或冻结 validation profile（它是实验室，不是第二个生产运行时）。
+证据 `ev-1820` 的 `workspace` 载荷：
+
+```json
+{"turn":38,"listed":2,"total":2,"truncated":false,"coverage":"complete",
+ "in_scope":["witness-probe-a.txt"],"in_scope_count":1,
+ "out_of_scope":["witness-probe-b.txt"],"outside_project":[],"files_digest":"d31c36a0",
+ "governing_session_id":"session-961bd12e-…","task_id":"REQ-WIT-DAILY","node_id":"REQ-WIT-DAILY"}
+```
+
+一次**干净的两文件探针**：范围内的那个、范围外的那个，各归各位 ✓ ——AC8、AC9 在日常 profile 通过。
+（`ev-1789` 是更丰富的一例：越界 4 个，含三个真实源码文件，`isPassingEvidence` 判为不可用。）
+
+**AC10（会话历史未被破坏）的活体核对**：扫全部 101 个会话日志文件，插件自有事件类型共 97 条、涉及
+23 个会话，**全部带 `ignorable` 标记**（可读），最新一条是 2026-10-05T13:16:29Z（早于本轮工作）；
+**当前会话里 0 条**。那 97 条就是 AGENTS.md §0 记的历史事故与修复，不是新损害。
+
+**仍未做的**：降级用例 C。做法**已经变了**：原计划是「切回日常 profile 就是现成的降级现场」，而生产者
+本来就在日常 profile 里，所以现成的降级现场**不存在**——要验就得把生产者从某个 profile 的
+`dsh.profile.bundles` 里摘掉再重启。**它目前只有单测覆盖**（`test/workspace-witness.test.js`：服务缺席
+时插件照常加载、`witness-seam` 记 `available: false`、闸门仍在）。要做活体版就得改配置 + 重启，
+因此列为待办而不是已验。
+
+## 7. 收尾
+
+- README「生产能力契约」与 `docs/CUTOVER.md` §5 的门槛表都已更新为**日常 profile PASS**；
+- **validation profile 已无用途**（它存在的唯一理由是装生产者，而那一步是多余的）：验收做完即删。
+  删它还有一个更重要的好处——它把一个**与日常不同**的 profile 从机器上移除，「验收一个运行时、运行
+  另一个运行时」的隐患随之消失。
