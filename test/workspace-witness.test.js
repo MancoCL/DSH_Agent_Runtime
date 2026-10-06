@@ -1004,6 +1004,100 @@ describe('readWitnessSummary —— 等生产者把摘要存下来', () => {
   })
 })
 
+describe('生产能力契约的执行点：第一次用到某个工程时核对并留痕', () => {
+  /**
+   * 一个声明了 `required_capabilities` 的工程。
+   *
+   * @param {string[]} required
+   * @returns {string} 工程根。
+   */
+  function projectRequiring(required) {
+    const root = mkdtempSync(join(tmpdir(), 'gac-capability-'))
+    mkdirSync(join(root, '.dsh', 'gac'), { recursive: true })
+    writeFileSync(
+      join(root, '.dsh', 'gac', 'project.json'),
+      JSON.stringify({
+        project: { id: 'capability-demo', title: '能力契约' },
+        execution: { required_capabilities: required },
+      }),
+      'utf8',
+    )
+    return root
+  }
+
+  /**
+   * 触发一次「工具调用前」拦截（核对就挂在这条路径上）。
+   *
+   * @param {object} ctx
+   * @param {object} seen
+   */
+  function emitToolCall(ctx, seen) {
+    const listener = seen.listeners.find((entry) => entry.event === 'tools/pre-execute')
+    assert.ok(listener !== undefined, 'apply() 必须订阅 tools/pre-execute')
+    // 形状要与真实内核一致：会话挂在 `agent.session` 上（`exec.agent.session.id`），不是 `agent` 本身。
+    listener.listener({
+      name: 'write',
+      arguments: { file_path: 'a.c' },
+      agent: { session: ctx.sessions.get(SESSION_ID) },
+    })
+  }
+
+  it('声明的能力不在场时，报告里留下缺项（可见，而不是等收口失败才知道）', async () => {
+    const root = projectRequiring(['workspace_observation'])
+    const { ctx, seen } = createFakeContext({ provideWorkspaceChanges: false, cwd: root })
+    await apply(ctx)
+    const mark = readReport().length
+    emitToolCall(ctx, seen)
+
+    const check = readReport().slice(mark).filter((record) => record.event === 'capability-check')
+    assert.equal(check.length, 1)
+    assert.deepEqual(check[0].required, ['workspace_observation'])
+    assert.deepEqual(check[0].missing, ['workspace_observation'])
+    assert.equal(check[0].ok, false)
+  })
+
+  it('能力在场时核对为 ok，且同一个工程只报一次（不刷屏）', async () => {
+    const root = projectRequiring(['workspace_observation'])
+    const { ctx, seen } = createFakeContext({ workspaceSummary: summary({ cwd: root }), cwd: root })
+    await apply(ctx)
+    const mark = readReport().length
+    emitToolCall(ctx, seen)
+    emitToolCall(ctx, seen)
+
+    const check = readReport().slice(mark).filter((record) => record.event === 'capability-check')
+    assert.equal(check.length, 1, '每次工具调用都报一遍会把报告刷满')
+    assert.deepEqual(check[0].missing, [])
+    assert.equal(check[0].ok, true)
+  })
+
+  it('要求的子会话接缝不在场时如实报缺 —— 这条映射是真的，不是写死的', async () => {
+    // 这个假 ctx 只提供 `workspaceChanges`，没有 `subagents`；所以「原生子会话」这一项必须被判缺。
+    const root = projectRequiring(['workspace_observation', 'native_child_dispatch'])
+    const { ctx, seen } = createFakeContext({ workspaceSummary: summary({ cwd: root }), cwd: root })
+    await apply(ctx)
+    const mark = readReport().length
+    emitToolCall(ctx, seen)
+
+    const check = readReport().slice(mark).filter((record) => record.event === 'capability-check')
+    assert.equal(check.length, 1)
+    assert.deepEqual(check[0].missing, ['native_child_dispatch'])
+    assert.equal(check[0].ok, false)
+  })
+
+  it('没有声明需要的工程不产生这一行 —— 免得报告里全是「不要求任何能力」', async () => {
+    const root = makeProject('gac-capability-none-')
+    const { ctx, seen } = createFakeContext({ workspaceSummary: summary({ cwd: root }), cwd: root })
+    await apply(ctx)
+    const mark = readReport().length
+    emitToolCall(ctx, seen)
+
+    assert.equal(
+      readReport().slice(mark).some((record) => record.event === 'capability-check'),
+      false,
+    )
+  })
+})
+
 describe('入口：把每一轮工作区变更记成一条证据', () => {
   it('workspace/changes 事件落成一条工作区观测证据', async () => {
     const root = makeProject('gac-witness-record-')

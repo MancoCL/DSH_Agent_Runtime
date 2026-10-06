@@ -83,6 +83,134 @@ async function createStandard(h) {
   }, h.exec)
 }
 
+describe('收口门禁：声明需要的能力缺项时，高风险任务拒绝收口', () => {
+  /**
+   * 一个声明了 `required_capabilities` 的 harness。
+   *
+   * `missing` 直接注入，不经过真实接缝——这条门禁判的是「声明 × 环境」，环境由调用方给出，
+   * 因此这里测的是判定本身。真实环境的接线由入口那侧的报告测试钉着。
+   *
+   * @param {object} [options]
+   * @param {string[]} [options.missing] - 缺哪些能力。
+   * @param {boolean} [options.inject] - 是否注入这个访问器（缺省注入）。
+   * @returns {object}
+   */
+  function capabilityHarness({ missing = [], inject = true } = {}) {
+    const store = new TaskStore({ root: scratch() })
+    const gaps = missing.map((id) => ({ id, description: `能力 ${id}`, absent: `缺了它：${id}` }))
+    return {
+      store,
+      exec: { agent: { session: { id: 'session-1' } } },
+      tool: createTaskTool({
+        defineTool: identityDefineTool,
+        taskStoreFor: () => store,
+        sessionRootFor: () => store.root,
+        ...(inject
+          ? { capabilitiesFor: () => ({ required: missing, missing: gaps }) }
+          : {}),
+      }),
+    }
+  }
+
+  /**
+   * 建一个高风险任务（它的计划门禁要求 mode 与计划同时在）。
+   *
+   * @param {object} h
+   * @param {string} [taskId]
+   * @returns {Promise<object>}
+   */
+  async function createHighRisk(h, taskId = 'REQ-HR') {
+    return h.tool.execute({
+      action: 'create',
+      task_id: taskId,
+      mode: 'high_risk_task',
+      plan: standardPlan(),
+    }, h.exec)
+  }
+
+  it('高风险 + 缺项 + 没有豁免 → 拒绝，并说清缺的是什么、缺了它意味着什么', async () => {
+    const h = capabilityHarness({ missing: ['workspace_observation'] })
+    await createHighRisk(h)
+
+    const value = await h.tool.execute({ action: 'complete', task_id: 'REQ-HR', evidence: {} }, h.exec)
+
+    assert.equal(value.action, 'complete_refused')
+    assert.ok(value.blockers.includes('GAC_COMPLETION_CAPABILITY_MISSING'))
+    assert.deepEqual(value.missing_capabilities, ['workspace_observation'])
+    assert.match(value.message, /缺了它：workspace_observation/u)
+    assert.match(value.message, /capability_ack/u, '要告诉调用方怎么继续，而不是只说不行')
+    assert.equal(h.store.load('REQ-HR').capability_ack, undefined, '被拒时不该留下豁免')
+  })
+
+  it('高风险 + 缺项 + 显式豁免 → 过这道门禁，且豁免留在任务记录里', async () => {
+    const h = capabilityHarness({ missing: ['workspace_observation'] })
+    await createHighRisk(h)
+
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-HR',
+      evidence: {},
+      capability_ack: '本机 CI 装不了观测源，已知并接受',
+    }, h.exec)
+
+    // 这道门禁放行了：后面的拒绝（计划未冻结之类）不该是能力那条。
+    assert.equal(value.blockers?.includes('GAC_COMPLETION_CAPABILITY_MISSING') ?? false, false)
+    const ack = h.store.load('REQ-HR').capability_ack
+    assert.equal(ack.reason, '本机 CI 装不了观测源，已知并接受')
+    assert.deepEqual(ack.missing, ['workspace_observation'])
+    assert.equal(typeof ack.at, 'number')
+  })
+
+  it('空白豁免不算豁免 —— 随便填个空格不能绕过门禁', async () => {
+    const h = capabilityHarness({ missing: ['workspace_observation'] })
+    await createHighRisk(h)
+
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-HR',
+      evidence: {},
+      capability_ack: '   ',
+    }, h.exec)
+
+    assert.equal(value.action, 'complete_refused')
+    assert.ok(value.blockers.includes('GAC_COMPLETION_CAPABILITY_MISSING'))
+  })
+
+  it('标准任务不受这条门禁管辖（它不要求独立验证与证据）', async () => {
+    const h = capabilityHarness({ missing: ['workspace_observation'] })
+    await createStandard(h)
+
+    const value = await h.tool.execute({ action: 'complete', task_id: 'REQ-1', evidence: {} }, h.exec)
+
+    assert.equal(value.blockers?.includes('GAC_COMPLETION_CAPABILITY_MISSING') ?? false, false)
+  })
+
+  it('没有注入访问器时这条门禁不生效 —— 生效与否必须能从接线看出来', async () => {
+    const h = capabilityHarness({ missing: ['workspace_observation'], inject: false })
+    await createHighRisk(h)
+
+    const value = await h.tool.execute({ action: 'complete', task_id: 'REQ-HR', evidence: {} }, h.exec)
+
+    assert.equal(value.blockers?.includes('GAC_COMPLETION_CAPABILITY_MISSING') ?? false, false)
+  })
+
+  it('豁免随记录落盘、重启后仍可审计', async () => {
+    const h = capabilityHarness({ missing: ['workspace_observation'] })
+    await createHighRisk(h)
+    await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-HR',
+      evidence: {},
+      capability_ack: '已知并接受',
+    }, h.exec)
+
+    // 换一个 store 实例读同一份盘上记录：这就是「重启之后还在不在」。
+    const reloaded = new TaskStore({ root: h.store.root }).load('REQ-HR')
+    assert.equal(reloaded.capability_ack.reason, '已知并接受')
+    assert.deepEqual(reloaded.capability_ack.missing, ['workspace_observation'])
+  })
+})
+
 describe('工具形状', () => {
   it('名字固定', () => {
     assert.equal(TASK_TOOL_NAME, 'gac_task')
