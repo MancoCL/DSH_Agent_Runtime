@@ -194,6 +194,27 @@ describe('isPassingEvidence —— 能不能充当「通过」的凭据', () => 
     // 不是每条证据都是命令；缺失是诚实的，不该被当成失败。
     assert.equal(isPassingEvidence({ is_error: false }).usable, true)
   })
+
+  it('工作区观测发现越界改动时不可用 —— 它证明不了这次改动是合规的', () => {
+    // 这条分支此前**没有测试**：代码在，但没人断言过。越界证据被当作通过凭据引用的后果，
+    // 与「编造一个证据号」是同一类——一条「跑过了」的记录被用来支持「没越界」的结论。
+    const verdict = isPassingEvidence({
+      is_error: false,
+      source: 'workspace',
+      workspace: { in_scope: ['src/a.c'], out_of_scope: ['lib/b.c'], coverage: 'complete' },
+    })
+    assert.equal(verdict.usable, false)
+    assert.match(verdict.reason, /1 个越界改动/u)
+  })
+
+  it('工作区观测只在范围内有改动时可用', () => {
+    const verdict = isPassingEvidence({
+      is_error: false,
+      source: 'workspace',
+      workspace: { in_scope: ['src/a.c'], out_of_scope: [], coverage: 'complete' },
+    })
+    assert.equal(verdict.usable, true)
+  })
 })
 
 describe('EvidenceLog —— 只追加、运行时发号', () => {
