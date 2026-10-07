@@ -15,15 +15,15 @@ GAC plugin      →  执行模式、写作用域、写占用声明、验证、�
 
 | 阶段 | 组件 | 状态 |
 | --- | --- | --- |
-| 0 | `lib/write-scope.js` —— 严格的包含判定 | 已完成，35 个测试 |
-| 0 | `lib/project.js` —— Project Adapter + 模式升级 | 已完成，30 个测试 |
+| 0 | `lib/write-scope.js` —— 严格的包含判定 | 已完成 |
+| 0 | `lib/project.js` —— Project Adapter + 模式升级 | 已完成 |
 | 0 | `lib/tool-targets.js` —— 什么算作一次写入 | 已完成 |
-| 0 | `lib/plugin.js` —— `tools/pre-execute` 门禁 | 已完成，28 个测试 |
+| 0 | `lib/plugin.js` —— `tools/pre-execute` 门禁 | 已完成 |
 | 0.5 | `lib/tool-scope.js` —— `gac_scope` 工具 | 已完成 |
-| 0.5 | `lib/index.js` —— DSH 外壳，已装进 `core-020` profile | **已在真实会话中验证** |
+| 0.5 | `lib/index.js` —— DSH 外壳 | **已在真实会话中验证** |
 | 1 | `lib/project-state.js` —— 从 `.dsh/gac/project.json` 加载 Project Adapter | 已完成 |
 | 1 | `lib/tool-project.js` —— `gac_project`：检查适配器 + 声明模式 | 已完成 |
-| 1 | `lib/prompt-section.js` —— 把 GAC 状态放进模型自己的系统提示 | 已完成，24 个测试，实测通过 |
+| 1 | `lib/prompt-section.js` —— 把 GAC 状态放进模型自己的系统提示 | 已完成，实测通过 |
 | 2 | `lib/claims.js` + `lib/claim-store.js` —— 写占用声明 | 已完成 |
 | 3 | `lib/coordinator.js` —— 任务 DAG、就绪节点、状态迁移 | 已完成（逻辑） |
 | 3 | `lib/child-executor.js` —— 节点由**原生子会话**承载（语义角色工具面、真并发、深度上限） | 已完成并**活体验收通过**：子会话 id 与父不同、子会话自己写的文件、结果回到 `applyResult`、父会话不自锁；接缝缺席时按角色阻塞或显式降级（见下） |
@@ -31,17 +31,17 @@ GAC plugin      →  执行模式、写作用域、写占用声明、验证、�
 | 3 | `lib/capability-router.js` + `lib/executor.js` —— 派遣会真正调用 | 已完成 |
 | 4 | `lib/verification.js` —— 计划、反例与可追溯性门禁 | 已完成 |
 | 4 | 计划与证据门禁已接进 `gac_task` | 已完成 |
-| 4 | `lib/review.js` + `assets/ENGINEERING_POLICY.md` —— 独立复核：六问与五个质量维度 | 已完成，24 个测试 |
+| 4 | `lib/review.js` + `assets/ENGINEERING_POLICY.md` —— 独立复核：六问与五个质量维度 | 已完成 |
 | 4 | `lib/role-guard.js` —— 只读角色的写入面收权（E2E-6） | 已完成；**已活体验证 6 轮**：`write`/`edit` 被守卫逐字拒绝、探针文件从未落地、回报后立刻生效与恢复。收权在**它自己那个作用域**上确实生效（`write`/`edit` 已不在 `view(agent).visible` 里）。判据的字面形态 `UNKNOWN_TOOL` **已作废**：`restrict` 只过滤该作用域**继承**来的工具，agent 自己那一层注册的工具不受管辖（这条豁免是刻意的，子会话的 `structured_output` 就靠它活），所以判据改为报告里的 `mode` 与 `presented`/`removed` 名单——见 [docs/CUTOVER.md](docs/CUTOVER.md) §3 E2E-6 |
-| 4 | `lib/role-tools.js` —— **语义角色工具策略**：每个角色一档，判据只有「这个角色该看到什么」 | 已完成，23 个测试。设计节点是纯推理节点（`read`/`grep`/`glob`/`shell`/`write`/`edit`/`run_code`/委派都不在它的工具面里）；委派与父会话协调类在任何角色下都拒（`GAC_CHILD_DELEGATION_DENIED`） |
-| 4 | `lib/child-surface.js` —— `start()` 之后用**子会话自己的视图**对账补收 + 单调守卫 | 已完成，11 个测试。收不掉就如实降级成 `guard-only` 并记 `child-surface-unverified`；拿不到 `localAgent` 记 `child-surface-unavailable`，不假装收过 |
+| 4 | `lib/role-tools.js` —— **语义角色工具策略**：每个角色一档，判据只有「这个角色该看到什么」 | 已完成。设计节点是纯推理节点（`read`/`grep`/`glob`/`shell`/`write`/`edit`/`run_code`/委派都不在它的工具面里）；委派与父会话协调类在任何角色下都拒（`GAC_CHILD_DELEGATION_DENIED`） |
+| 4 | `lib/child-surface.js` —— `start()` 之后用**子会话自己的视图**对账补收 + 单调守卫 | 已完成。收不掉就如实降级成 `guard-only` 并记 `child-surface-unverified`；拿不到 `localAgent` 记 `child-surface-unavailable`，不假装收过 |
 | 5 | `lib/grilling.js` —— 多轮需求精化 | 已完成 |
 | 5 | `lib/contract.js` —— 接口契约冻结 | 已完成 |
 | 6 | `lib/evidence.js` + `lib/evidence-store.js` —— 由运行时签发的证据 | 已完成 |
 | 6 | `lib/metrics.js` + `lib/tool-metrics.js` —— 带只读出口的指标 | 已完成 |
 | 6 | `lib/tool-evidence.js` —— 证据号可被发现，因而可以被引用 | 已完成 |
 | 5 | `lib/gac-events.js` + `lib/gac-event-log.js` —— GAC 审计事件（写工程自己的文件，**不**写会话日志） | 已完成（审计，不是状态权威） |
-| 6 | `lib/workspace-witness.js` —— 工作区差异观测（witness 的原生替代） | 已完成，55 个测试；**日常 profile 已活体验证（2026-10-06，证据 `ev-1820`）**：`witness-turn listed=2 total=2 coverage=complete out_of_scope=1`，并生成了真实工作区证据；`maxFiles=500` 截断也实测过（505 个变更 → `listed=500 / total=505 / coverage=partial`）。服务与摘要形状已对着真包 `dsh-workspace-changes@0.2.0-rc.2` 的类型声明逐字段核实，见 ADR §17 |
+| 6 | `lib/workspace-witness.js` —— 工作区差异观测（witness 的原生替代） | 已完成；**日常 profile 已活体验证（2026-10-06，证据 `ev-1820`）**：`witness-turn listed=2 total=2 coverage=complete out_of_scope=1`，并生成了真实工作区证据；`maxFiles=500` 截断也实测过（505 个变更 → `listed=500 / total=505 / coverage=partial`）。服务与摘要形状已对着真包 `dsh-workspace-changes@0.2.0-rc.2` 的类型声明逐字段核实，见 ADR §17 |
 | 7 | 遗留系统切换 —— 处置与 E2E 状态已记录 | 记录在 [docs/CUTOVER.md](docs/CUTOVER.md) 中；本仓库之外的东西一律未动 |
 
 **在相信上面这张表之前，先读 [docs/CUTOVER.md](docs/CUTOVER.md)。** 它逐项记录了什么是真正验证过的、什么不是——包括大纲的**六条 E2E 判据里有四条跑过真实会话、两条与字面判据仍有差别**，以及阶段 1-3（节点由原生子会话承载）的实测结论与三条残留。这里的表说的是哪些东西有代码；那份文档说的是哪些东西有证据。
@@ -87,7 +87,7 @@ plugin_manager { action: install_bundle, target: "<this directory>" }
     name: "@deepseek-ai/dsh-hmr"
     config:
       root:
-        - D:/WorkSpace/99_Others/02_UserProject/Agent_Runtime
+        - D:/WorkSpace/DSH_Agent_Runtime
   ```
 
   profile 补丁层的优先级最高，所以它会覆盖基础 bundle 的 `root: []`。它在下次重启时生效；此后 `lib/*.js` 的编辑会自行重载。
@@ -110,21 +110,13 @@ plugin_manager { action: install_bundle, target: "<this directory>" }
 
 - 因为它是链接，本插件保留自己的 `node_modules`，无法裸 import `@deepseek-ai/*`。`lib/resolve-dsh.js` 转而从 profile 目录解析它们。
 
-  **本机上那条路径的真相**：`~/.dsh/profiles/node_modules/@deepseek-ai/*` 是指向桌面安装（`resources/dsh/node_modules`）的 **junction**，而链接集合是桌面安装的**子集**。所以解析会在 profile 目录这个锚点上成功，落点却在桌面安装里；而 `@deepseek-ai/dsh-workspace-changes`（witness 的观测源）、`@deepseek-ai/dsh-ptc-runtime`（PTC）这类包**桌面安装里有、链接集合里没有**，插件因此解析不到——「服务缺席」的准确原因就在这里，与它们是否存在于桌面安装无关。`node scripts/diagnose-resolution.js` 会把成功的那一个锚点单独打出来（`OK <anchor>`），这条信息此前是缺的：它把成功的锚点误报成「未走到」，正好指错地方。
-
-### 这台机器上的当前状态
-
-下面这些已经应用过了，所以以后对 `lib/*.js` 的编辑无需重启就会重载：
-
-- `dsh-gac-runtime` 已作为指向本目录的链接装进 `core-020` profile。
-- `~/.dsh/profiles/core-020/cordis.patch.yml` 带着上面的 `hmr` 覆盖项。该文件旁边躺着一份带时间戳的备份。
-- 同一个文件里 `- id: gac-runtime` 是 `disabled: true`——这是本项目的**默认状态**，不是待修的故障。要实测时用 `npm run plugin:on`，测完 `npm run plugin:off`。
-
-仍然需要重启的：对 `package.json`、`cordis.patch.yml` 的改动，或任何会改变已注册插件或工具集合的改动。
+  **本机上那条路径的真相**：`~/.dsh/profiles/node_modules/@deepseek-ai/*` 是指向桌面安装（`resources/dsh/node_modules`）的 **junction**，而链接集合是桌面安装的**子集**。所以解析会在 profile 目录这个锚点上成功，落点却在桌面安装里；而 `@deepseek-ai/dsh-workspace-changes`（witness 的观测源）、`@deepseek-ai/dsh-ptc-runtime`（PTC）这类包**桌面安装里有、链接集合里没有**。曾经由此推出「插件因此解析不到、服务缺席」——**那条推理是错的**：判据不是解析层，而是**已加载树**（`witness-seam` 在不在、`workspace/changes` 来不来），这两个生产者本来就在场，见 [docs/CUTOVER.md](docs/CUTOVER.md) 里那条判据更正。`node scripts/diagnose-resolution.js` 会把成功的那一个锚点单独打出来（`OK <anchor>`），这条信息此前是缺的：它把成功的锚点误报成「未走到」，正好指错地方。
 
 ### 哪个 profile？
 
 这台机器上有两个：`core-020`（Web GUI）和 `tauri`（桌面外壳）。`plugin_manager` 安装进的是**活跃** profile。下结论之前先用 `plugin_manager { action: list_bundles }` 查一下。
+
+仍然需要重启的：对 `package.json`、`cordis.patch.yml` 的改动，或任何会改变已注册插件或工具集合的改动。
 
 ---
 
@@ -366,7 +358,7 @@ advance → done
 
 | 执行者 | 什么时候在 | 承载什么 |
 | --- | --- | --- |
-| **原生子会话**（`child:<provider>`） | 适配器声明 `execution.native_child_dispatch: true` 时（**代码默认 `false`**，见下） | **所有节点**：写文件的与只读的各跑一个独立会话 |
+| **原生子会话**（`child:<provider>`） | 代码默认即开；适配器把 `execution.native_child_dispatch` 显式写成 `false` 时才关掉（见下） | **所有节点**：写文件的与只读的各跑一个独立会话 |
 | 路由进来的进程内执行者 | 适配器声明了 `execution.provider_routes` | 只承载 `write_scope` 为空的节点——它没有写入工具 |
 | 会话型执行者 | 总在（兜底） | 需要落盘的节点被如实登记为 `in_progress` 等待会话执行，而不是伪造一份没写任何文件的成功报告 |
 
@@ -524,7 +516,7 @@ gac_task { action: "audit", task_id: "REQ-HR-5" }
 | 收权 | `tools.restrict` 把名字从该作用域的**视野**里去掉 | 收权之后按同一作用域复查 `view(agent).visible`，`write`/`edit` 已不在 |
 | 守卫 | `tools/pre-execute` 上的拒绝 | 逐字拒绝：`GAC: 会话 … 当前只读角色不得使用 "write" …`，报告里记成 `guard-denied` / `GAC_READ_ONLY_ROLE_DENIED` |
 
-实测到的拦截**总是守卫**，而**不是** `UNKNOWN_TOOL`。两个内核事实把这件事的解释收窄到一种：其一，`tools/pre-execute` 瀑布排在 dispatch 之前（`dsh-tools` 的 `prepareExecution` 是「`createExecution` → 瀑布 → 才 `resolveExecution`」），所以调用一定先撞上守卫；其二，**模型面的工具清单每次装配都会重算**（`dsh-system-prompt` 的 `assemble(context)` 就地调用每个 provider），而 `dsh-tools` 注册的那个 provider 是 `wireSchemas(context.scope)`、读的是限制感知的 `view(scope).visible`。既然收权**之后紧接着的那一步**模型仍然拿到了 `write`，唯一自洽的读法就是：**收权落到的那个作用域，与装配工具清单用的那个作用域不是同一个**。收权因此只对「它自己那个作用域」生效；模型面那一份清单照旧把工具提供出去，拦住调用的是守卫。判据字面要求的形态（`UNKNOWN_TOOL`）**还没被观察到**；装配作用域到底是哪一个（疑似会话）也还没查明——两条都记在 [docs/CUTOVER.md](docs/CUTOVER.md) §3 E2E-6 与 §6 第 2 条。
+实测到的拦截**总是守卫**，而**不是** `UNKNOWN_TOOL`。两个内核事实把这件事的解释收窄到一种：其一，`tools/pre-execute` 瀑布排在 dispatch 之前（`dsh-tools` 的 `prepareExecution` 是「`createExecution` → 瀑布 → 才 `resolveExecution`」），所以调用一定先撞上守卫；其二，**模型面的工具清单每次装配都会重算**（`dsh-system-prompt` 的 `assemble(context)` 就地调用每个 provider），而 `dsh-tools` 注册的那个 provider 是 `wireSchemas(context.scope)`、读的是限制感知的 `view(scope).visible`。既然收权**之后紧接着的那一步**模型仍然拿到了 `write`，说明收权与装配清单**就在同一个作用域**上：`restrict` 只过滤该作用域**继承**来的工具，而 agent 自己那一层注册的工具不受管辖——这条 own 层豁免是内核刻意的（子会话的 `structured_output` 就靠它活）。因此拦住调用的**只能是守卫**，不是收权；判据随之改为报告里的 `mode` 与 `presented`/`removed` 名单，`UNKNOWN_TOOL` 那个字面形态**已作废**，见 [docs/CUTOVER.md](docs/CUTOVER.md) §3 E2E-6。
 
 **守卫是 fail-closed 的：判据是类别，不是名单。** 一次隔离验证里，对**根本不存在的**工具名发起的调用同样被逐字拒绝——`roleRevokedToolNames` 属于「失败即拒」的分类器，凡不属于 read / shell / runtime 的名字一律收回，名单里有没有它并不重要。这比按名单严，但它有一个读法上的后果：**「守卫拒绝了某次调用」不能用来证明那个名字在收权名单上**，只能证明它不在被放行的那几类里；同样，一个只读角色「可用的工具清单里没有 `write`」也不能单独证明是收权把它摘掉的——要断言收权本身生效，只能看报告里的 `mode` 与 `revoked`，那是独立的一层数据。最近一次同类验证的读数：`write` 与 `edit` 两个调用都被 `GAC_READ_ONLY_ROLE_DENIED` 逐字拒绝、探针文件从未落地、会话本身没被锁死；而同一次的报告是 `mode: "guard-only"`、`revoked: []`、`role-revocation-unverified` ——**拦住写入的是守卫那一层，这一点不要读成「收权成功」**。
 
@@ -825,13 +817,16 @@ npm test          # 全部测试，不需要 DSH（以 `npm test` 的输出为�
 lib/
   index.js           DSH 外壳：注册守卫与声明工具
   plugin.js          pre-execute 门禁（对每一个未知项都按失败即拒绝）
+  prompt-section.js  系统提示段落：把门禁与当前状态放进模型视野
   write-scope.js     严格的路径包含判定——安全边界
   claims.js          写占用声明冲突检测（纯函数）
   claim-store.js     持久化存储，一份占用一个文件，带孤儿清理
   capability-router.js  按所需能力挑选执行者（纯函数）
+  capabilities.js    生产能力的机器可校验形态：声明、加载时核对、收口时把关
   contract.js        接口契约：并行开工之前先冻结它（纯函数）
   executor.js        执行边界：调用，或者诚实地拒绝
   gac-events.js      GAC 会话事件：词汇表、归约器、投影（纯函数）
+  gac-event-log.js   只追加的 GAC 审计事件日志，写在工程自己的目录里
   evidence.js        运行时签发的证据记录与引用（纯函数）
   evidence-store.js  只追加的 JSONL 日志；证据号由运行时签发
   engineering-policy.js  把 assets/ENGINEERING_POLICY.md 原文读给审查者
@@ -841,8 +836,11 @@ lib/
   review.js          独立复核：六问与五个质量维度的门禁（纯函数）
   role-guard.js      只读角色的收权：把写入面从该角色自己的视野里拿掉
   role-tools.js      语义角色工具策略：每个角色该看到什么、什么算委派（纯函数）
+  child-binding.js   子会话权限绑定：授权由派遣者绑定，不由执行者自报
+  child-executor.js  原生子会话执行者：把节点真正交给宿主的一个独立子会话
   child-surface.js   子会话起好之后的对账补收与单调守卫
   task-store.js      持久化存储，一份任务一个文件，含计划与加载时重新校验
+  task-audit.js      从已落盘产物与追加日志派生出任务审计视图（纯函数）
   tool-task.js       gac_task 工具
   tool-metrics.js    只读的 gac_metrics 工具
   tool-evidence.js   只读的 gac_evidence 工具

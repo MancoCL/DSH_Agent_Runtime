@@ -42,7 +42,7 @@
 | `workflow.py` CLI | 退役 | 本仓库不适用 |
 | `templates/*.json` | 保留为插件内 schema | **部分完成**。`templates/review.json` 的 `verification_independence` 六条 key 与 `engineering_quality` 五个维度**逐字**迁进 `lib/review.js`（见 §3 E2E-3）；`verification-plan.json` 的语义已在 `lib/verification.js`；其余模板（`requirement` / `invocation` / `memory` / `approval` / `result` / `tasks` / `verification` / `adr`）**未**沿用——本仓库用自己的 schema，其中 `invocation` 与 `memory` 两行本来就标着「部分」与「未做」 |
 | `.claude/workflow/tasks/**` | **只读归档**，不重写 | **本仓库未触碰**（按 §0 的决定） |
-| `tests/`（Python 回归） | 迁移为插件侧测试 | **精神上完成**：671 条 JS 测试覆盖同类断言；但**不是**逐条迁移，schema 门禁断言未按原样搬过来 |
+| `tests/`（Python 回归） | 迁移为插件侧测试 | **精神上完成**：本仓库的 JS 测试覆盖了同类断言；但**不是**逐条迁移，schema 门禁断言未按原样搬过来 |
 
 ## 3. E2E 验收（方案 §9）——逐项实际状态
 
