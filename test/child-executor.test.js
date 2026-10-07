@@ -374,3 +374,90 @@ describe('接缝缺席时显式降级', () => {
     assert.match(outcome.summary, /缺少能力/u)
   })
 })
+
+describe('接缝缺席时不得静默退回主会话', () => {
+  // 「原生子会话不可用」有两种处理：显式降级（由上层看见并决定）与阻塞（不许替跑）。
+  // 分界线是**这次任务是否要求独立执行者**——高风险、非实现节点、以及本来就不该派子会话的
+  // direct_edit，三者都必须 fail closed：降级成 in_progress 等于让主会话悄悄把活干了。
+
+  it('高风险任务：接缝缺席 → blocked，并带上稳定码', async () => {
+    const executor = createChildExecutor({ subagentsFor: () => undefined })
+    const outcome = await executor.run(runInput({ task: { task_id: 'REQ-HR', mode: 'high_risk_task' } }))
+
+    assert.equal(outcome.status, 'blocked')
+    assert.equal(outcome.blocked_by.code, 'GAC_CHILD_SEAM_UNAVAILABLE')
+    assert.match(outcome.blocked_by.detail, /high_risk_task/u)
+    assert.match(outcome.summary, /不由主会话代跑/u)
+    assert.equal(outcome.reason !== undefined, true, '阻塞同样要带原因')
+  })
+
+  it('direct_edit：本来就不该派子会话，缺席也是 blocked', async () => {
+    const executor = createChildExecutor({ subagentsFor: () => undefined })
+    const outcome = await executor.run(runInput({ task: { task_id: 'REQ-D', mode: 'direct_edit' } }))
+
+    assert.equal(outcome.status, 'blocked')
+    assert.match(outcome.blocked_by.detail, /direct_edit/u)
+  })
+
+  it('任务里有非实现节点：缺席就是 blocked，并点名是哪些节点', async () => {
+    // 有独立验证者要跑，却把实现也交给主会话——那正是「自我验证」，必须挡住。
+    const nodes = new Map([
+      ['T1', { id: 'T1', role: 'implementation', write_scope: ['src/'] }],
+      ['V1', { id: 'V1', role: 'verification_execution', write_scope: [] }],
+    ])
+    const executor = createChildExecutor({ subagentsFor: () => undefined })
+    const outcome = await executor.run(runInput({
+      task: { task_id: 'REQ-2', mode: 'standard_task', nodes },
+    }))
+
+    assert.equal(outcome.status, 'blocked')
+    assert.match(outcome.blocked_by.detail, /V1/u)
+    assert.equal(outcome.blocked_by.detail.includes('T1'), false, '实现节点不是阻塞理由')
+  })
+
+  it('节点表写成数组时同样读得出来', async () => {
+    const nodes = [
+      { id: 'T1', role: 'implementation', write_scope: ['src/'] },
+      { id: 'R1', role: 'review', write_scope: [] },
+    ]
+    const executor = createChildExecutor({ subagentsFor: () => undefined })
+    const outcome = await executor.run(runInput({
+      task: { task_id: 'REQ-3', mode: 'standard_task', nodes },
+    }))
+    assert.equal(outcome.status, 'blocked')
+    assert.match(outcome.blocked_by.detail, /R1/u)
+  })
+
+  it('拿不到父 agent + 高风险 → blocked，不是 in_progress', async () => {
+    const { service } = fakeSubagents()
+    const executor = createChildExecutor({ subagentsFor: () => service })
+    const outcome = await executor.run(runInput({
+      agent: undefined,
+      task: { task_id: 'REQ-HR', mode: 'high_risk_task' },
+    }))
+    assert.equal(outcome.status, 'blocked')
+    assert.equal(outcome.blocked_by.code, 'GAC_CHILD_SEAM_UNAVAILABLE')
+    assert.match(outcome.summary, /没有可用的父 agent/u)
+  })
+
+  it('节点表读不出来时如实说，并按「只有实现节点」处理', async () => {
+    // 读不出节点表就无法核对独立性。按「只有实现节点」处理是唯一不谎报的选择，
+    // 但消息里必须写明白——否则「为什么这次降级了」无从判断。
+    const executor = createChildExecutor({ subagentsFor: () => undefined })
+    const outcome = await executor.run(runInput({
+      task: { task_id: 'REQ-4', mode: 'standard_task', nodes: 42 },
+    }))
+    assert.equal(outcome.status, 'in_progress')
+    assert.match(outcome.summary, /读不出来/u)
+  })
+
+  it('只有实现节点的 standard_task 仍是显式降级 —— 老行为不变', async () => {
+    const nodes = new Map([['T1', { id: 'T1', role: 'implementation', write_scope: ['src/'] }]])
+    const executor = createChildExecutor({ subagentsFor: () => undefined })
+    const outcome = await executor.run(runInput({
+      task: { task_id: 'REQ-5', mode: 'standard_task', nodes },
+    }))
+    assert.equal(outcome.status, 'in_progress')
+    assert.match(outcome.summary, /原生子会话不可用/u)
+  })
+})
