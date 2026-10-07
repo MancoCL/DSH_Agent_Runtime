@@ -760,7 +760,7 @@ node scripts/repair-session-events.js --apply    # 真的修：先备份再原�
 | 证据（运行时签发） | **必需** | 「每条用例都有证据」可以靠编造满足 |
 | GAC 审计日志（工程自己的追加文件） | **必需** | 复盘只能靠会话日志，而那是宿主拥有的格式 |
 | PTC / `run_code` | **已装载，非必需** | 正常：它是执行便利，不是权限原语。缺席**不产生**降级告警；在场时守卫**放行外层传输、按名字守卫内层子调用** |
-| Agent Teams / 任意委派 | **默认不支持（且被拒）** | 正常：GAC owns orchestration。委派类工具在任何语义角色下都返回 `GAC_CHILD_DELEGATION_DENIED` |
+| Agent Teams / 任意委派 | **默认不支持（且被拒）** | 正常：GAC owns orchestration。委派类工具在任何语义角色下都返回 `GAC_CHILD_DELEGATION_DENIED`（2026-10-08 活体验证：`subagent` / `team_task_create` / 只读的 `team_task_list` 三次调用全部被拒，没有产生任何子会话或共享任务条目） |
 | memory provider | **默认不支持** | 正常 |
 
 三条口径：
@@ -805,7 +805,7 @@ node scripts/repair-session-events.js --apply    # 真的修：先备份再原�
 
 6. **PTC（`run_code`）在场，但它的守护建立在一个内核保证上。** 外层传输被**放行**——它自己不碰文件；真正受管的是它派发的**内层子调用**，而它们之所以受得到管，是因为内核在 `ToolExecution.parent` 上标出子调用、并保证每一次都走 `tools/pre-execute`。这条保证原先只是内核契约，**2026-10-06 已在本机活体验收**：内层 `write` 越界写入被 `GAC_WRITE_SCOPE_DENIED` 拒、内层 `pwsh` 被 `GAC_SHELL_DENIED_UNDER_SCOPE` 拒，被拒的文件盘上确实不存在，而**同一段程序里的外层 `run_code` 照常跑完**——「放行外层传输、内层子调用按自己的名字受管」成立，PTC 因此不是绕过写作用域的通道。逐字证据与自包含配方见 [docs/PTC-LIVE-PROBE.md](docs/PTC-LIVE-PROBE.md) 与 [docs/CUTOVER.md](docs/CUTOVER.md)。**PTC 运行时在日常 profile 里是装载的**（`dsh-base/cordis.patch.yml` 插入 `ptc-runtime` 与 `workflow-ptc`），`run_code` 只是**只在 PTC 模式下**才被呈现给模型——所以「工具面里没有 `run_code`」**不等于**「PTC 不在场」。本轮曾据后者把它收缩为「明确拒绝」，那是**基于错误前提**的改动（它会打断 PTC 模式下声明了作用域的活能力），已撤回；决策记录与教训见 `docs/ADR-0001-子会话执行载体.md` §19。
 
-7. **子会话委派封堵在进程外 provider 上装不上。** 委派类与父会话协调类的判据、创建期 `toolFilter`、`start()` 之后的对账补收与守卫都已落地；但 `ctx.subagents.start()` 只返回 `run.id`，进程外 provider 拿不到 `localAgent`，那两层的容器就无从取得。此时记 `child-surface-unavailable` 并按角色阻塞（高风险任务 fail closed），**不宣称委派已被封堵**——这条限制是平台接缝的形状，不是本插件没做。
+7. **子会话委派封堵在进程外 provider 上装不上，且在呈现层收不干净。** 委派类与父会话协调类的判据、创建期 `toolFilter`、`start()` 之后的对账补收与守卫都已落地；但 `ctx.subagents.start()` 只返回 `run.id`，进程外 provider 拿不到 `localAgent`，那两层的容器就无从取得。此时记 `child-surface-unavailable` 并按角色阻塞（高风险任务 fail closed），**不宣称委派已被封堵**——这条限制是平台接缝的形状，不是本插件没做。**2026-10-08 活体**：真实子会话里 `subagent`、`team_task_create`、以及只读的 `team_task_list` 三次调用**全部被拒**（拦截按工具族做，fail-closed 成立），同一会话里 `pwsh` 被写作用域闸门独立拒掉、而 `read`/`glob`/`write` 正常；但呈现层那 7 个委派类名字**收不掉**——内核 `restrict` 在本机宿主上把它们当「unknown global tools」抛错、整次收权归零，运行时如实记 `child-surface-unverified`，只剩全局守卫逐次拒绝。**能不能收掉取决于宿主把哪些名字算作「可收集合」，运行时无法单方面决定。**
 
 8. **memory provider 暂不支持。** 适配器可以声明 `memory.allow` / `deny_as_project_fact`，但运行时没有 Memory Runtime：没有真实 consumer，且它会制造第二个事实源。当前定位是 unsupported / future，不是待办。
 
