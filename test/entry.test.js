@@ -144,11 +144,23 @@ describe('子会话的引入方式 —— 判据变更（见 docs/ADR-0001-子�
   it('不引入 Agent Teams 依赖 —— 它不在 profile 的解析集里，且不是执行基座', async () => {
     // Team 与原生子会话是同一个基座上的两个消费者，但它的看板没有 mode / 写作用域 / 证据 / 验证计划
     // / 风险升级，两套任务模型必然漂移（ADR-0001 §3 D3）。这里把它钉成结构性约束。
-    const offenders = []
-    for (const { file, source } of await libSources()) {
-      if (/agentTeams|spawn_teammate|team_task_|dsh-experimental-agent-team/u.test(source)) offenders.push(file)
-    }
+    //
+    // **判据变更说明**：这条原先要求「任何文件都不许出现这些名字」。收口阶段 `lib/role-tools.js` 必须
+    // **点名**它们，才能把它们从子会话工具面里收掉——点名拒绝与把执行基座建在上面是两回事，前者正是
+    // 这条约束要的执行方式。所以判据从「谁提到」收紧到「谁拿它当依赖」：只有那一处拒绝名单可以提到
+    // 这些名字，且它不许 import 那个包、不许注册任何工具。
+    const allowlist = new Set(['role-tools.js'])
+    const sources = await libSources()
+    const offenders = sources
+      .filter(({ file, source }) => !allowlist.has(file)
+        && /agentTeams|spawn_teammate|team_task_|dsh-experimental-agent-team/u.test(source))
+      .map(({ file }) => file)
     assert.deepEqual(offenders, [], '不要把执行基座建在 Agent Teams 上')
+
+    const policy = sources.find(({ file }) => file === 'role-tools.js')
+    assert.ok(policy !== undefined, '点名委派工具的拒绝名单模块应当存在')
+    assert.doesNotMatch(policy.source, /agent-team/u, '拒绝名单不 import 那个包')
+    assert.doesNotMatch(policy.source, /\.register\s*\(/u, '拒绝名单不注册工具')
   })
 })
 

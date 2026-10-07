@@ -86,10 +86,14 @@ describe('execution 一节 —— 运行时真正读取的字段必须能通过�
     }
   })
 
-  it('原生子会话派遣的开关：默认 false，声明 true 才通过', () => {
-    // 默认必须关：打开它会改变「谁在写文件」，这件事要先在真实会话里验过再默认开
-    // （docs/ADR-0001-子会话执行载体.md §8.4）。
-    assert.equal(adapter().execution.native_child_dispatch, false)
+  it('原生子会话派遣的开关：默认 true，显式 false 才关', () => {
+    // 默认开：独立 Session / 独立上下文 / 独立工具面已是正式架构，默认关会让新纳管的工程静默退回
+    // 主会话自我验证。默认开不等于静默降级——接缝缺席时由执行者阻塞或显式降级（lib/child-executor.js）。
+    assert.equal(adapter().execution.native_child_dispatch, true)
+    assert.equal(
+      adapter({ execution: { native_child_dispatch: false } }).execution.native_child_dispatch,
+      false,
+    )
     assert.equal(
       adapter({ execution: { native_child_dispatch: true } }).execution.native_child_dispatch,
       true,

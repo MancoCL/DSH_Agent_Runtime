@@ -423,3 +423,236 @@ describe('子会话执行者：起会话时绑、结束时放', () => {
     assert.equal(seen.during, undefined, '只读节点不该有绑定')
   })
 })
+
+describe('语义角色登记：只读节点也要有身份', () => {
+  /**
+   * 守卫 + 绑定 + 角色来源，三者接在同一条线上（与 `lib/index.js` 的接线同构）。
+   *
+   * `childRoleFor` 晚绑定：门禁只在工具调用时执行，那时 `bindings` 早已赋值——真实接线里也是这个
+   * 形状（`apply` 里先声明 `childRoleOf`，再在运行时把角色来源填进去）。
+   *
+   * @returns {{core: object, bindings: object}}
+   */
+  function roleGoverned() {
+    let bindings
+    const core = createGacCore({
+      resolveRoot: () => ROOT,
+      childRoleFor: (sessionId) => bindings?.roleOf(sessionId),
+    })
+    bindings = createChildBindings({ registry: core.registry })
+    return { core, bindings }
+  }
+
+  /** 登记一个只读设计子会话的角色（没有写范围）。 */
+  function declareDesigner(bindings, overrides = {}) {
+    return bindings.declareRole({
+      child_session_id: CHILD,
+      role: 'verification_design',
+      write_scope: [],
+      dispatch_id: 'REQ-1-D1-A1',
+      ...overrides,
+    })
+  }
+
+  it('childRoleFor 返回裸角色名时也按那个角色判定，而不是退化成「谁都不许读」', () => {
+    // 接线少包一层（只回角色名、不回登记条目）曾经会让 `roleEntry.role` 读成 `undefined`，
+    // 于是**每个**子会话都落到最保守的那一档，连实现节点的 `read` 一起被拒——方向 fail-closed，
+    // 理由完全错。这条盯着那个退化：裸名字只丢治理身份，不丢角色。
+    const designer = createGacCore({ resolveRoot: () => ROOT, childRoleFor: () => 'verification_design' })
+    const denied = designer.preExecute(execution({ sessionId: CHILD, name: 'read', args: { file_path: 'x.txt' } }))
+    assert.equal(denied.kind, 'deny')
+    assert.equal(denied.info.code, GAC_CODES.ROLE_TOOL_DENIED)
+
+    const builder = createGacCore({ resolveRoot: () => ROOT, childRoleFor: () => 'implementation' })
+    assert.equal(
+      builder.preExecute(execution({ sessionId: CHILD, name: 'read', args: { file_path: 'x.txt' } })).kind,
+      'allow',
+      '实现节点仍然读得到',
+    )
+  })
+
+  it('空写范围不绑写作用域，但角色登记得上', () => {
+    const bindings = newBindings()
+    assert.equal(bindings.bind({
+      child_session_id: CHILD,
+      task_id: 'REQ-1',
+      node_id: 'D1',
+      dispatch_id: 'REQ-1-D1-A1',
+      role: 'verification_design',
+      write_scope: [],
+    }), undefined, '空写范围仍然不绑')
+    assert.equal(bindings.roleOf(CHILD), undefined)
+
+    declareDesigner(bindings)
+    assert.equal(bindings.roleOf(CHILD).role, 'verification_design')
+    assert.deepEqual(bindings.roleOf(CHILD).write_scope, [])
+    assert.deepEqual(bindings.inspectRoles().length, 1)
+  })
+
+  it('**设计子会话的 read 在执行前被拒** —— 独立性来自结构，不来自提示词', () => {
+    // 真实 `REQ-HR-5` 里设计子会话启动时确实没被推入实现信息，但它自己把实现产物读了过来
+    // （`hr5-artifact.txt` 的 `Length=3`）。工具还在，模型就仍有能力读；只有工具不在才算隔离。
+    const { core, bindings } = roleGoverned()
+    declareDesigner(bindings)
+
+    const denied = core.preExecute(execution({ sessionId: CHILD, name: 'read', args: { file_path: 'src/a.c' } }))
+    assert.equal(denied.kind, 'deny')
+    assert.equal(denied.info.code, GAC_CODES.ROLE_TOOL_DENIED)
+    assert.equal(denied.info.child_session_id, CHILD)
+    assert.equal(denied.info.dispatch_id, 'REQ-1-D1-A1')
+    assert.match(denied.reason, /verification_design/u)
+    assert.match(denied.reason, /read/u)
+  })
+
+  it('grep / glob / pwsh 同样被拒 —— 少拒一个，那条路就还在', () => {
+    const { core, bindings } = roleGoverned()
+    declareDesigner(bindings)
+    for (const name of ['grep', 'glob', 'pwsh', 'read_image', 'web_fetch']) {
+      const denied = core.preExecute(execution({ sessionId: CHILD, name, args: {} }))
+      assert.equal(denied.kind, 'deny', `${name} 应当被拒`)
+      assert.equal(denied.info.code, GAC_CODES.ROLE_TOOL_DENIED)
+    }
+  })
+
+  it('PTC 传输 `run_code` 也拒 —— 收权点名它会抛错，只剩守卫这一层', () => {
+    const { core, bindings } = roleGoverned()
+    declareDesigner(bindings)
+    const denied = core.preExecute(execution({ sessionId: CHILD, name: 'run_code', args: { code: 'x' } }))
+    assert.equal(denied.kind, 'deny')
+    assert.equal(denied.info.code, GAC_CODES.ROLE_TOOL_DENIED)
+  })
+
+  it('回报通道不能被误伤：设计子会话仍能交结构化产出', () => {
+    const { core, bindings } = roleGoverned()
+    declareDesigner(bindings)
+    assert.deepEqual(
+      core.preExecute(execution({
+        sessionId: CHILD,
+        name: 'structured_output',
+        args: { status: 'completed', summary: '方案' },
+      })),
+      { kind: 'allow' },
+    )
+  })
+
+  it('委派类拒绝用独立的码：那是编排权问题，不是这个角色的读写权限', () => {
+    const { core, bindings } = roleGoverned()
+    declareDesigner(bindings)
+    for (const name of ['subagent', 'subagent_fork', 'workflow', 'spawn_teammate', 'send_message', 'team_task_create']) {
+      const denied = core.preExecute(execution({ sessionId: CHILD, name, args: {} }))
+      assert.equal(denied.kind, 'deny', `${name} 应当被拒`)
+      assert.equal(denied.info.code, GAC_CODES.CHILD_DELEGATION_DENIED)
+      assert.match(denied.reason, /编排权归 GAC/u)
+    }
+  })
+
+  it('实现子会话不受角色档限制：读、写、shell 照旧', () => {
+    const { core, bindings } = roleGoverned()
+    bindWriter(bindings, { write_scope: ['a.txt'] })
+    bindings.declareRole({
+      child_session_id: CHILD,
+      role: 'implementation',
+      write_scope: ['a.txt'],
+      dispatch_id: 'REQ-1-T1-A1',
+    })
+
+    assert.deepEqual(
+      core.preExecute(execution({ sessionId: CHILD, name: 'read', args: { file_path: 'a.txt' } })),
+      { kind: 'allow' },
+    )
+    assert.deepEqual(
+      core.preExecute(execution({ sessionId: CHILD, name: 'write', args: { file_path: 'a.txt' } })),
+      { kind: 'allow' },
+    )
+    // 越界写仍按写作用域拒（角色档没有把它放宽）。
+    assert.equal(
+      core.preExecute(execution({ sessionId: CHILD, name: 'write', args: { file_path: 'b.txt' } })).info.code,
+      GAC_CODES.WRITE_SCOPE_DENIED,
+    )
+  })
+
+  it('角色登记按 dispatch 释放，迟到的释放不得动摇新 attempt', () => {
+    const bindings = newBindings()
+    declareDesigner(bindings, { dispatch_id: 'REQ-1-D1-A1' })
+    declareDesigner(bindings, { dispatch_id: 'REQ-1-D1-A2', role: 'verification_execution' })
+
+    assert.equal(bindings.releaseRole('REQ-1-D1-A1'), false, '旧 dispatch 已不是当前登记')
+    assert.equal(bindings.roleOf(CHILD).role, 'verification_execution')
+    assert.equal(bindings.releaseRole('REQ-1-D1-A2'), true)
+    assert.equal(bindings.roleOf(CHILD), undefined)
+    assert.equal(bindings.releaseRole('REQ-1-D1-A2'), false, '释放是幂等的')
+  })
+
+  it('释放之后不再受角色管 —— 收权必须能撤销，否则等于把会话永久关在门外', () => {
+    const { core, bindings } = roleGoverned()
+    declareDesigner(bindings)
+    assert.equal(core.preExecute(execution({ sessionId: CHILD, name: 'read', args: {} })).kind, 'deny')
+
+    bindings.releaseRole('REQ-1-D1-A1')
+    assert.deepEqual(core.preExecute(execution({ sessionId: CHILD, name: 'read', args: {} })), { kind: 'allow' })
+  })
+
+  it('按会话释放要把两张表一起清干净（角色表不会漏在内存里）', () => {
+    const { bindings } = governed()
+    bindWriter(bindings)
+    bindings.declareRole({
+      child_session_id: CHILD,
+      role: 'implementation',
+      write_scope: ['a.txt'],
+      dispatch_id: 'REQ-1-T1-A1',
+    })
+
+    assert.equal(bindings.releaseSession(CHILD), true)
+    assert.equal(bindings.get(CHILD), undefined)
+    assert.equal(bindings.roleOf(CHILD), undefined)
+    assert.equal(bindings.releaseSession(CHILD), false, '都清掉了，第二次什么也不动')
+  })
+
+  it('只有角色登记（没有写绑定）时，按会话释放同样生效', () => {
+    const bindings = newBindings()
+    declareDesigner(bindings)
+    assert.equal(bindings.releaseSession(CHILD), true)
+    assert.equal(bindings.roleOf(CHILD), undefined)
+  })
+
+  it('执行者派遣只读节点时登记角色，跑完连角色一起释放', async () => {
+    const { bindings } = governed()
+    const seen = { during: undefined }
+    const service = {
+      list: () => ['spawn'],
+      getProvider: () => ({ capabilities: { agentOptions: true, outputSchema: true, depthLimit: true } }),
+      start: async () => ({
+        id: 'child-session-1',
+        result: new Promise((resolve) => {
+          setTimeout(() => {
+            seen.during = bindings.roleOf('child-session-1')
+            resolve({ structured: { status: 'completed', summary: '做完了' }, stopReason: 'completed' })
+          }, 0)
+        }),
+        dispose: async () => {},
+      }),
+    }
+    const executor = createChildExecutor({ subagentsFor: () => service, bindings })
+
+    await executor.run({
+      node: {
+        id: 'D1',
+        role: 'verification_design',
+        objective: '推导验证方案',
+        write_scope: [],
+        depends_on: [],
+        expected_artifacts: [],
+        execution: { attempt: 1 },
+      },
+      task: { task_id: 'REQ-1', mode: 'standard_task' },
+      root: ROOT,
+      dispatchId: 'REQ-1-D1-A1',
+      agent: { id: 'agent-1', session: { id: 'parent-session', header: { delegationDepth: 0 } } },
+      signal: new AbortController().signal,
+    })
+
+    assert.equal(seen.during?.role, 'verification_design', '跑的时候角色登记必须在场')
+    assert.equal(bindings.get('child-session-1'), undefined, '只读节点没有写绑定')
+    assert.equal(bindings.roleOf('child-session-1'), undefined, '角色登记也要在 finally 里释放')
+  })
+})
