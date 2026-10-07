@@ -489,6 +489,31 @@ describe('语义角色登记：只读节点也要有身份', () => {
     assert.deepEqual(bindings.inspectRoles().length, 1)
   })
 
+  it('角色登记带上任务与节点 —— 委派拒因里不再渲染成「任务 undefined／节点 undefined」', () => {
+    // 活体验收实测到这一幕：子会话调 `subagent` **确实被拒了**，但拒因写的是「任务 undefined／
+    // 节点 undefined／派遣 REQ-DELEG-1-P1-A1」。根因是角色登记条目只冻结了 role / write_scope /
+    // dispatch_id，而 `childRoleOf` 先返回这条条目，于是 `roleDenyReason` 拿到的绑定缺 task_id /
+    // node_id。拦截方向是对的，拒绝记录却归因不到具体节点——审计里少了一半身份。
+    const { core, bindings } = roleGoverned()
+    const entry = bindings.declareRole({
+      child_session_id: CHILD,
+      task_id: 'REQ-1',
+      node_id: 'D1',
+      role: 'verification_design',
+      write_scope: [],
+      dispatch_id: 'REQ-1-D1-A1',
+    })
+    assert.equal(entry.task_id, 'REQ-1')
+    assert.equal(entry.node_id, 'D1')
+
+    const denied = core.preExecute(execution({ sessionId: CHILD, name: 'subagent', args: { prompt: 'x' } }))
+    assert.equal(denied.kind, 'deny')
+    assert.equal(denied.info.code, GAC_CODES.CHILD_DELEGATION_DENIED)
+    assert.match(denied.reason, /任务 REQ-1/u)
+    assert.match(denied.reason, /节点 D1/u)
+    assert.doesNotMatch(denied.reason, /undefined/u)
+  })
+
   it('**设计子会话的 read 在执行前被拒** —— 独立性来自结构，不来自提示词', () => {
     // 真实 `REQ-HR-5` 里设计子会话启动时确实没被推入实现信息，但它自己把实现产物读了过来
     // （`hr5-artifact.txt` 的 `Length=3`）。工具还在，模型就仍有能力读；只有工具不在才算隔离。
