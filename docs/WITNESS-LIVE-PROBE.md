@@ -118,11 +118,8 @@ npm run plugin:off
    - 该证据按 `isPassingEvidence(...)` 判定为**不可用**，理由里带越界数量（AC7）；
    - 盘上那个文件确实存在（证明这是「观测到了真实落盘」，不是纸面推断）。
 6. **用完删除两个探针文件**（先 `gac_scope clear` 释放作用域，再用 shell 删）。
-     `governing_session_id` 是**父会话**（子会话借用了先代的作用域），`task_id`/`node_id` 来自那份声明；
-   - 该证据 `isPassingEvidence(...)` 判定为 **不可用**，理由里带越界数量（AC7）；
-   - 盘上那个文件**确实存在**（证明这是「观测到了真实落盘」，不是纸面推断）。
 
-## 4. 用例 C：降级路径（**待办**，一条命令 + 重启）
+## 4. 用例 C：降级路径（一条命令 + 重启）
 
 **做法已经具体了**，而且**不必动 `package.json`**：生产者那一行是 `dsh-web-app` 的 bundle patch 插入的，
 而 profile 自己的 `cordis.patch.yml` **在 bundles 之后应用**（`cordis.yml` 的文件头写着这个顺序：
@@ -176,10 +173,10 @@ bundles → `cordis.patch.yml` → overlays）。所以在那份 patch 末尾加
 `audit`/`advance`/`complete` 五个动作的返回逐字段逐类型对着 `output.schema` 核一遍）——这一类坑已经
 踩了三次，通用断言比单点补丁更值得。
 
-**它目前只有单测覆盖**（`test/workspace-witness.test.js`：服务缺席时插件照常加载、`witness-seam` 记
-`available: false`、闸门仍在；`test/capabilities.test.js` 与 `test/tool-task.test.js`：缺项拒绝收口、
-显式豁免可过）。原先打算「切回日常 profile 就是现成的降级现场」——**那个做法不成立**，因为生产者本来
-就在日常 profile 里。
+**这一格的证据是上面 §4.1 的活体五条**，单测是随后的回归钉子（`test/workspace-witness.test.js`：服务缺席
+时插件照常加载、`witness-seam` 记 `available: false`、闸门仍在；`test/capabilities.test.js` 与
+`test/tool-task.test.js`：缺项拒绝收口、显式豁免可过）。原先打算「切回日常 profile 就是现成的降级现场」——
+**那个做法不成立**，因为生产者本来就在日常 profile 里。
 
 **`gac_metrics` 的「不可用」状态已补**（2026-10-06）：源缺席时不再报那串 0，而是说清「这一层是惰性的，
 因此 0 读不出任何东西」；`available` 是三态，没被告知时不宣称可用。断言在 `test/evidence.test.js`
@@ -254,11 +251,10 @@ seq** 记的是 `witness-summary-missing`。修法是先同步试一次、没有
 23 个会话，**全部带 `ignorable` 标记**（可读），最新一条是 2026-10-05T13:16:29Z（早于本轮工作）；
 **当前会话里 0 条**。那 97 条就是 AGENTS.md §0 记的历史事故与修复，不是新损害。
 
-**仍未做的**：降级用例 C。做法**已经变了**：原计划是「切回日常 profile 就是现成的降级现场」，而生产者
-本来就在日常 profile 里，所以现成的降级现场**不存在**——要验就得把生产者从某个 profile 的
-`dsh.profile.bundles` 里摘掉再重启。**它目前只有单测覆盖**（`test/workspace-witness.test.js`：服务缺席
-时插件照常加载、`witness-seam` 记 `available: false`、闸门仍在）。要做活体版就得改配置 + 重启，
-因此列为待办而不是已验。
+**降级用例 C 已验**（结果见上面 §4.1）。做法换过一次：原计划是「切回日常 profile 就是现成的降级现场」，
+而生产者本来就在日常 profile 里，所以现成的降级现场**不存在**——改成在实验室 profile 的 patch 末尾关掉
+生产者再重启。单测是随后的回归钉子（`test/workspace-witness.test.js`：服务缺席时插件照常加载、
+`witness-seam` 记 `available: false`、闸门仍在）。
 
 ## 7. 收尾
 
