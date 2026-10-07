@@ -1,5 +1,5 @@
 /**
- * 子会话的权限绑定：**Authority must be bound by the Runtime, never self-declared by the executor.**
+ * 子会话的权限绑定：**授权必须由运行时绑定，绝不由执行者自报。**
  *
  * 为什么这个文件存在
  * ------------------
