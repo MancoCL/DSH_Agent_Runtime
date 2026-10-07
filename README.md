@@ -26,20 +26,22 @@ GAC plugin      →  执行模式、写作用域、写占用声明、验证、�
 | 1 | `lib/prompt-section.js` —— 把 GAC 状态放进模型自己的系统提示 | 已完成，24 个测试，实测通过 |
 | 2 | `lib/claims.js` + `lib/claim-store.js` —— 写占用声明 | 已完成 |
 | 3 | `lib/coordinator.js` —— 任务 DAG、就绪节点、状态迁移 | 已完成（逻辑） |
-| 3 | `lib/child-executor.js` —— 节点由**原生子会话**承载（角色工具面、真并发、深度上限） | 已完成并**活体验收通过**：子会话 id 与父不同、子会话自己写的文件、结果回到 `applyResult`、父会话不自锁；三条残留见 [docs/ADR-0001-子会话执行载体.md](docs/ADR-0001-子会话执行载体.md) §10-§12 |
+| 3 | `lib/child-executor.js` —— 节点由**原生子会话**承载（语义角色工具面、真并发、深度上限） | 已完成并**活体验收通过**：子会话 id 与父不同、子会话自己写的文件、结果回到 `applyResult`、父会话不自锁；接缝缺席时按角色阻塞或显式降级（见下） |
 | 3 | `lib/task-store.js` + `lib/tool-task.js` —— 持久化任务记录、`gac_task` | 已完成 |
 | 3 | `lib/capability-router.js` + `lib/executor.js` —— 派遣会真正调用 | 已完成 |
 | 4 | `lib/verification.js` —— 计划、反例与可追溯性门禁 | 已完成 |
 | 4 | 计划与证据门禁已接进 `gac_task` | 已完成 |
 | 4 | `lib/review.js` + `assets/ENGINEERING_POLICY.md` —— 独立复核：六问与五个质量维度 | 已完成，24 个测试 |
-| 4 | `lib/role-guard.js` —— 只读角色的写入面收权（E2E-6） | 已完成；**已活体验证 6 轮**：`write`/`edit` 被守卫逐字拒绝、探针文件从未落地、回报后立刻恢复。收权本身在它自己那个作用域上生效（`write`/`edit` 已不在 `view(agent).visible` 里），但模型面清单依赖的**装配作用域是哪一个仍未查明**——见 [docs/CUTOVER.md](docs/CUTOVER.md) §3 E2E-6 |
+| 4 | `lib/role-guard.js` —— 只读角色的写入面收权（E2E-6） | 已完成；**已活体验证 6 轮**：`write`/`edit` 被守卫逐字拒绝、探针文件从未落地、回报后立刻生效与恢复。收权在**它自己那个作用域**上确实生效（`write`/`edit` 已不在 `view(agent).visible` 里）。判据的字面形态 `UNKNOWN_TOOL` **已作废**：`restrict` 只过滤该作用域**继承**来的工具，agent 自己那一层注册的工具不受管辖（这条豁免是刻意的，子会话的 `structured_output` 就靠它活），所以判据改为报告里的 `mode` 与 `presented`/`removed` 名单——见 [docs/CUTOVER.md](docs/CUTOVER.md) §3 E2E-6 |
+| 4 | `lib/role-tools.js` —— **语义角色工具策略**：每个角色一档，判据只有「这个角色该看到什么」 | 已完成，23 个测试。设计节点是纯推理节点（`read`/`grep`/`glob`/`shell`/`write`/`edit`/`run_code`/委派都不在它的工具面里）；委派与父会话协调类在任何角色下都拒（`GAC_CHILD_DELEGATION_DENIED`） |
+| 4 | `lib/child-surface.js` —— `start()` 之后用**子会话自己的视图**对账补收 + 单调守卫 | 已完成，11 个测试。收不掉就如实降级成 `guard-only` 并记 `child-surface-unverified`；拿不到 `localAgent` 记 `child-surface-unavailable`，不假装收过 |
 | 5 | `lib/grilling.js` —— 多轮需求精化 | 已完成 |
 | 5 | `lib/contract.js` —— 接口契约冻结 | 已完成 |
 | 6 | `lib/evidence.js` + `lib/evidence-store.js` —— 由运行时签发的证据 | 已完成 |
 | 6 | `lib/metrics.js` + `lib/tool-metrics.js` —— 带只读出口的指标 | 已完成 |
 | 6 | `lib/tool-evidence.js` —— 证据号可被发现，因而可以被引用 | 已完成 |
 | 5 | `lib/gac-events.js` + `lib/gac-event-log.js` —— GAC 审计事件（写工程自己的文件，**不**写会话日志） | 已完成（审计，不是状态权威） |
-| 6 | `lib/workspace-witness.js` —— 工作区差异观测（witness 的原生替代） | 已完成，55 个测试；本机 profile 未装配观测源，因此它是惰性的（服务与摘要形状已对着真包 `dsh-workspace-changes@0.2.0-rc.2` 的类型声明逐字段核实，见 ADR §17） |
+| 6 | `lib/workspace-witness.js` —— 工作区差异观测（witness 的原生替代） | 已完成，55 个测试；**日常 profile 已活体验证（2026-10-06，证据 `ev-1820`）**：`witness-turn listed=2 total=2 coverage=complete out_of_scope=1`，并生成了真实工作区证据；`maxFiles=500` 截断也实测过（505 个变更 → `listed=500 / total=505 / coverage=partial`）。服务与摘要形状已对着真包 `dsh-workspace-changes@0.2.0-rc.2` 的类型声明逐字段核实，见 ADR §17 |
 | 7 | 遗留系统切换 —— 处置与 E2E 状态已记录 | 记录在 [docs/CUTOVER.md](docs/CUTOVER.md) 中；本仓库之外的东西一律未动 |
 
 **在相信上面这张表之前，先读 [docs/CUTOVER.md](docs/CUTOVER.md)。** 它逐项记录了什么是真正验证过的、什么不是——包括大纲的**六条 E2E 判据里有四条跑过真实会话、两条与字面判据仍有差别**，以及阶段 1-3（节点由原生子会话承载）的实测结论与三条残留。这里的表说的是哪些东西有代码；那份文档说的是哪些东西有证据。
@@ -396,7 +398,13 @@ Provider 路由来自适配器的 `execution.provider_routes`（按执行者名�
 
 **返回文本里带子会话 id 与产物**（`advance` 返回「子会话 `<id>`」），任务记录里落 `result_ref: child-session:<id>`，将来要复核「是谁写的」从这个 id 追回去。
 
-**三条如实留下的残留**（都在 ADR 里）：① 设计节点的盲区只保证**启动时**没被推入实现信息，它完全可以自己去读——`read`/`grep`/`glob` 对它开着；② 子会话仍拿得到 `subagent`（它是 agent 自己那一层注册的，`restrict` 摘不掉）；③ 代码默认仍是 `false`，只有本工程适配器打开。
+**工具面按语义角色给，不给「有没有写范围」猜。** 每个角色一档（`lib/role-tools.js`）：实现节点拿仓库读写；设计节点是**纯推理节点**，`read`/`grep`/`glob`/`shell`/`write`/`edit`/`run_code`/委派**都不在**它的工具面里；验证执行与复核读得到仓库、写不了。判据只有一处——语义角色。设计节点与验证执行的写范围**都是空的**，读取能力却必须相反，所以「写范围为空就什么都能读」这条推导是错的。
+
+**设计节点的盲区覆盖整个生命周期，不只在启动时。** 真实 `high_risk_task` 里，设计子会话启动时确实没被推入实现信息，但它后来自己把实现产物读了过来（`read`/`grep`/`glob` 对它开着）。现在三层落地：创建期 `toolFilter`、`start()` 之后用**子会话自己的视图**对账补收（`lib/child-surface.js`）、全局门禁按会话读角色兜底（`lib/plugin.js`）。独立性因此是 **Runtime Fact**——工具面里没有检视工具，它就没有能力读实现；而且它与实现**并发**，只依据需求、验收标准与冻结契约推理。
+
+**编排权归 GAC，子会话不许自己再派人。** 委派类（`subagent`/`subagent_fork`/`workflow`/`spawn_teammate`/`send_message`/`team_task_*`）与父会话协调类（`gac_*`）在**任何**语义角色下都被拒，稳定码 `GAC_CHILD_DELEGATION_DENIED`，拒因带 `child_session_id`/`task_id`/`node_id`/`role`/`tool`。**一处平台限制照实说**：`ctx.subagents.start()` 只给 `run.id`，进程外 provider 拿不到 `localAgent`，那条路径上补收与守卫都装不上——此时记 `child-surface-unavailable`，并**按角色阻塞**（高风险任务 fail closed），不宣称委派已被封堵。
+
+**接缝缺席不静默退回主会话。** 原生子会话不可用时：高风险任务与含非实现节点的任务**阻塞**（`GAC_CHILD_SEAM_UNAVAILABLE`，不由主会话代跑），只有「全是实现节点且非高风险」才显式降级成 `in_progress` 并说明原因。`direct_edit` 永远不起子会话。`native_child_dispatch` 的代码默认值已改为**开**——默认关会让新纳管工程静默退回主会话自我验证。
 
 ---
 
@@ -653,7 +661,7 @@ outside_project   在工程根之外（它是 out_of_scope 的子集标记，不
 | 加载报告 | `witness-turn`；越界非空时另写 `witness-out-of-scope`；取不到摘要写 `witness-summary-missing`；异常写 `witness-failed` |
 | 指标 | `gac_metrics` 的 `evidence.witness`：观测轮数、越界总数、覆盖不完整的轮数 |
 
-**本机 profile 里这一层是惰性的。** `workspaceChanges` 服务由 `@deepseek-ai/dsh-workspace-changes` 提供，而该包**不在** `core-020` 的 bundles 里：事件类型 `workspace/changes` 是已知类型（`dsh-session` 声明了它），但没有任何东西会追加它。于是插件照常加载、照常订阅，只是没有事件到达；加载报告里那条 `witness-seam` 就是这条事实的痕迹。把该服务写进 `inject` 列表会让整个插件连同写作用域闸门一起不加载——那是拿一道强制执行去换一个可选的观测源。
+**这一层在日常 profile 里是活的（2026-10-06 活体验证）。** 此前的判断是「`@deepseek-ai/dsh-workspace-changes` 不在 `core-020` 的 bundles 里，没有任何东西会追加 `workspace/changes`」——**那是错的**：生产者由 `dsh-web-app` 的 bundle patch 插入（`cordis.patch.yml:339`），因此每个含 `dsh-web-app` 的 profile 都有它，事件一直在被追加。当时用的判据是**解析层**（profile 的 `package.json` 与提升 junction），正确的判据是**已加载树**：服务在不在（`witness-seam`）、事件来不来（`workspace/changes`）。**因此「把生产者装进日常 profile」这一步根本不需要**，临时验收 profile 也已删掉。实测读数与截断那一档见 [docs/CUTOVER.md](docs/CUTOVER.md) §5 与 [docs/WITNESS-LIVE-PROBE.md](docs/WITNESS-LIVE-PROBE.md)。
 
 ### 指标，以及算不出来的指标
 
@@ -752,7 +760,7 @@ node scripts/repair-session-events.js --apply    # 真的修：先备份再原�
 | 证据（运行时签发） | **必需** | 「每条用例都有证据」可以靠编造满足 |
 | GAC 审计日志（工程自己的追加文件） | **必需** | 复盘只能靠会话日志，而那是宿主拥有的格式 |
 | PTC / `run_code` | **已装载，非必需** | 正常：它是执行便利，不是权限原语。缺席**不产生**降级告警；在场时守卫**放行外层传输、按名字守卫内层子调用** |
-| Agent Teams / 任意委派 | **默认不支持** | 正常 |
+| Agent Teams / 任意委派 | **默认不支持（且被拒）** | 正常：GAC owns orchestration。委派类工具在任何语义角色下都返回 `GAC_CHILD_DELEGATION_DENIED` |
 | memory provider | **默认不支持** | 正常 |
 
 三条口径：
@@ -797,12 +805,18 @@ node scripts/repair-session-events.js --apply    # 真的修：先备份再原�
 
 6. **PTC（`run_code`）在场，但它的守护建立在一个内核保证上。** 外层传输被**放行**——它自己不碰文件；真正受管的是它派发的**内层子调用**，而它们之所以受得到管，是因为内核在 `ToolExecution.parent` 上标出子调用、并保证每一次都走 `tools/pre-execute`。这条保证原先只是内核契约，**2026-10-06 已在本机活体验收**：内层 `write` 越界写入被 `GAC_WRITE_SCOPE_DENIED` 拒、内层 `pwsh` 被 `GAC_SHELL_DENIED_UNDER_SCOPE` 拒，被拒的文件盘上确实不存在，而**同一段程序里的外层 `run_code` 照常跑完**——「放行外层传输、内层子调用按自己的名字受管」成立，PTC 因此不是绕过写作用域的通道。逐字证据与自包含配方见 [docs/PTC-LIVE-PROBE.md](docs/PTC-LIVE-PROBE.md) 与 [docs/CUTOVER.md](docs/CUTOVER.md)。**PTC 运行时在日常 profile 里是装载的**（`dsh-base/cordis.patch.yml` 插入 `ptc-runtime` 与 `workflow-ptc`），`run_code` 只是**只在 PTC 模式下**才被呈现给模型——所以「工具面里没有 `run_code`」**不等于**「PTC 不在场」。本轮曾据后者把它收缩为「明确拒绝」，那是**基于错误前提**的改动（它会打断 PTC 模式下声明了作用域的活能力），已撤回；决策记录与教训见 `docs/ADR-0001-子会话执行载体.md` §19。
 
+7. **子会话委派封堵在进程外 provider 上装不上。** 委派类与父会话协调类的判据、创建期 `toolFilter`、`start()` 之后的对账补收与守卫都已落地；但 `ctx.subagents.start()` 只返回 `run.id`，进程外 provider 拿不到 `localAgent`，那两层的容器就无从取得。此时记 `child-surface-unavailable` 并按角色阻塞（高风险任务 fail closed），**不宣称委派已被封堵**——这条限制是平台接缝的形状，不是本插件没做。
+
+8. **memory provider 暂不支持。** 适配器可以声明 `memory.allow` / `deny_as_project_fact`，但运行时没有 Memory Runtime：没有真实 consumer，且它会制造第二个事实源。当前定位是 unsupported / future，不是待办。
+
+9. **`checkpoint` 策略没有 Runtime enforcement。** 适配器里的 `checkpoint.policy = required_per_task` 只是声明，没有代码消费它；运行时**不会**自动 `git add` / `git commit`。提交纪律目前靠 `AGENTS.md` 的约定与人工自检（`git show --stat HEAD` / `git log -1 --format=%B` / `git status --porcelain`）。
+
 ---
 
 ## 开发
 
 ```bash
-npm test          # 910 个测试，不需要 DSH
+npm test          # 全部测试，不需要 DSH（以 `npm test` 的输出为权威，README 不写死数字）
 ```
 
 这些库模块是纯的、依赖注入的，正是为了让测试套件不需要 harness 就能跑。`test/entry.test.js` 另外断言了 Cordis 导出的形状，并断言没有任何模块在模块作用域里裸 import `@deepseek-ai/*` 包（那会在求值期间抛错，早于任何插件代码来得及报告原因）。
@@ -826,6 +840,8 @@ lib/
   grilling.js        多轮需求精化（纯函数）
   review.js          独立复核：六问与五个质量维度的门禁（纯函数）
   role-guard.js      只读角色的收权：把写入面从该角色自己的视野里拿掉
+  role-tools.js      语义角色工具策略：每个角色该看到什么、什么算委派（纯函数）
+  child-surface.js   子会话起好之后的对账补收与单调守卫
   task-store.js      持久化存储，一份任务一个文件，含计划与加载时重新校验
   tool-task.js       gac_task 工具
   tool-metrics.js    只读的 gac_metrics 工具
