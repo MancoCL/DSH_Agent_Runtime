@@ -18,6 +18,7 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 
 import { createGacCore } from '../lib/plugin.js'
+import { compileDesignArtifact, compileDesignPackage } from '../lib/design.js'
 import { ProjectState } from '../lib/project-state.js'
 import { importDshPackage } from '../lib/resolve-dsh.js'
 import { TaskStore } from '../lib/task-store.js'
@@ -223,6 +224,38 @@ describe('每个动作返回的字段都必须在 output schema 里声明', { sk
     }
   }
 
+  /**
+   * 一份四份产物齐全、追溯自洽的设计包。
+   *
+   * 四份产物都要在 `traceability` 里承诺 `AC1`：一致性核对是**逐条比对**架构与详设承诺过的
+   * criteria，少一条就会让设计包判为自相矛盾（而自相矛盾的设计包现在连批准都签不了）。
+   *
+   * @returns {object}
+   */
+  function designPackage() {
+    const artifact = (name) => compileDesignArtifact({
+      artifact: name,
+      content: `${name} 的正文`,
+      traceability: [{ criteria: 'AC1', where: '§1' }],
+    })
+    return compileDesignPackage({
+      task_id: 'R',
+      requirement_ref: 'requirement-abc',
+      artifacts: {
+        software_architecture: artifact('software_architecture'),
+        software_detail: artifact('software_detail'),
+        test_architecture: artifact('test_architecture'),
+        test_detail: artifact('test_detail'),
+      },
+      requirement_traceability: [
+        { criteria: 'AC1', artifact: 'software_architecture' },
+        { criteria: 'AC1', artifact: 'software_detail' },
+        { criteria: 'AC1', artifact: 'test_architecture' },
+        { criteria: 'AC1', artifact: 'test_detail' },
+      ],
+    }, { criteria: ['AC1'], requirementId: 'requirement-abc' })
+  }
+
   it('gac_task 的 create / status / list 都不带出未声明字段', async () => {
     const h = taskHarness()
     assertDeclared(h.tool, await h.tool.execute({ action: 'list' }, h.exec), 'list')
@@ -299,7 +332,32 @@ describe('每个动作返回的字段都必须在 output schema 里声明', { sk
     assertDeclared(h.tool, await h.tool.execute({ action: 'grill', task_id: 'R', grill_action: 'converge' }, h.exec), 'grill/converge')
     assertDeclared(h.tool, await h.tool.execute({
       action: 'grill', task_id: 'R', grill_action: 'confirm', confirmation: '可以',
+      requirement: '把配置字段删掉。',
     }, h.exec), 'grill/confirm')
+  })
+
+  it('gac_task 的 design 动作返回 design_id，且它已被声明', async () => {
+    // 这一条是「整条 design 动作在真实插件里不可达」那次事故的钉子：`design_id` 没被声明，
+    // 于是运行时的输出校验把**成功路径**整条拒掉——`"value.design_id" is not a declared
+    // property`，而单测全绿，因为那个桩 `defineTool` 不做输出校验。后果不是少一个字段：
+    // 设计裁决谁也签不了，高风险的设计门禁永远打不开。
+    const h = taskHarness()
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'R',
+      mode: 'high_risk_task',
+      plan: { nodes: [{ id: 'T1', objective: 'x', required_capabilities: ['implementation'], write_scope: [] }] },
+    }, h.exec)
+    h.store.saveDesign('R', designPackage())
+    const status = await h.tool.execute({ action: 'design', task_id: 'R' }, h.exec)
+    assert.equal(status.action, 'design_status')
+    assert.ok(status.design_id, 'design 的状态分支在设计包已冻结时必须返回 design_id')
+    assertDeclared(h.tool, status, 'design/status')
+    const approved = await h.tool.execute({
+      action: 'design', task_id: 'R', design_action: 'approve', reason: '四份产物齐全、追溯对得上',
+    }, h.exec)
+    assert.equal(approved.action, 'design_approved')
+    assertDeclared(h.tool, approved, 'design/approve')
   })
 
   it('gac_task 的 advance 与 complete 都不带出未声明字段', async () => {

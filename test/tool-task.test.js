@@ -828,6 +828,38 @@ describe('设计门禁 —— 未经批准的设计不能进入实施', () => {
     return frozen.design
   }
 
+  /**
+   * 造一份**自相矛盾**的设计包：架构承诺了 AC1 与 AC2，详设只提 AC1。
+   *
+   * 这正是活体验收里冻结下来的那一份的形状（14 条冲突里 6 条是空追溯表，其余是编号写成了长字符串）。
+   * 它四份产物齐全、内容非空、引用契约也对，只看「齐不齐」是看不出来的。
+   *
+   * @returns {object}
+   */
+  function inconsistentDesignFor() {
+    const artifact = (name, content, criteria) => compileDesignArtifact({
+      artifact: name,
+      content,
+      traceability: criteria.map((id) => ({ criteria: id, where: '§1' })),
+    })
+    return compileDesignPackage({
+      task_id: 'REQ-HR',
+      requirement_ref: 'requirement-test',
+      interface_contract_ref: 'contract-test',
+      artifacts: {
+        software_architecture: artifact('software_architecture', '架构：一个模块。', ['AC1', 'AC2']),
+        software_detail: artifact('software_detail', '详设：一个函数。', ['AC1']),
+        test_architecture: artifact('test_architecture', '测试架构：两条用例。', ['AC1', 'AC2']),
+        test_detail: artifact('test_detail', '测试详设：正例与反例各一。', ['AC1', 'AC2']),
+      },
+      requirement_traceability: [
+        { criteria: 'AC1', artifact: 'software_detail' },
+        { criteria: 'AC2', artifact: 'software_architecture' },
+      ],
+      unresolved_issues: [],
+    }, { criteria: ['AC1', 'AC2'], frozenAt: 1 })
+  }
+
   it('没有设计包时实现节点被拦下，并说清下一步做什么', async () => {
     const h = dispatchHarness()
     await createDesignless(h)
@@ -880,6 +912,31 @@ describe('设计门禁 —— 未经批准的设计不能进入实施', () => {
     const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
     assert.equal(value.action, 'dispatch')
     assert.deepEqual(h.calls.map((call) => call.node.id), ['T1'])
+  })
+
+  it('自相矛盾的设计包既签不了批准，也进不了实施', async () => {
+    // 活体验收里真实发生过：设计包以 `consistency_result.ok = false` 冻结（架构承诺的验收标准，
+    // 详设里根本没有），而批准只看裁决在不在、裁的是不是这一版——于是自相矛盾的设计可以被批准
+    // 并开工。一致性不是审核者的印象，它是「这份设计能不能被照着做」这件事本身。
+    const h = dispatchHarness()
+    await createDesignless(h)
+    h.store.saveDesign('REQ-HR', inconsistentDesignFor())
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
+    assert.equal(value.action, 'design_required')
+    assert.match(value.message, /设计包本身还不成立/u)
+    assert.match(value.message, /自相矛盾/u)
+    // 连批准也签不了：签下去的那一刻它就落盘了，而「报错的同时改动了治理状态」是最坏的一种失败。
+    await assert.rejects(
+      () => h.tool.execute({
+        action: 'design', task_id: 'REQ-HR', design_action: 'approve', reason: '看着没问题',
+      }, h.exec),
+      /设计包本身还不成立/u,
+    )
+    // 但「回去改」正是对一份还不成立的设计该说的话。
+    const revised = await h.tool.execute({
+      action: 'design', task_id: 'REQ-HR', design_action: 'revise', reason: '详设漏了 AC2',
+    }, h.exec)
+    assert.equal(revised.action, 'design_revision_requested')
   })
 
   it('请求修订之后实现节点仍不开工', async () => {
@@ -1491,9 +1548,30 @@ describe('访谈循环门禁 —— 需求必须以用户确认结束', () => {
       grill_action: 'confirm',
       confirmation: '可以，就按这个做',
       acceptance_criteria: ['AC1'],
+      requirement: '把配置字段删掉，删干净。',
     }, h.exec)
     assert.equal(value.action, 'requirement_frozen')
     assert.match(value.message, /AC1|1 条/u)
+  })
+
+  it('没有需求正文就不给冻结 —— 只存编号会让读不到实现的角色去猜', async () => {
+    // 活体验收里真实发生过：`requirement` 是空字符串，`acceptance_criteria` 只有 `AC1`…`AC6`
+    // 六个编号，于是不读实现的验证设计节点只能照契约里 operation 的顺序猜「编号↔口径」，
+    // 交回来的计划与任务书的编号整体错位，而且**没有任何门禁看得出来**——形状完全正常。
+    const h = dispatchHarness()
+    await createStandard(h)
+    await h.tool.execute({ action: 'grill', task_id: 'REQ-1', ...RECORD }, h.exec)
+    await h.tool.execute({ action: 'grill', task_id: 'REQ-1', grill_action: 'converge' }, h.exec)
+    await assert.rejects(
+      () => h.tool.execute({
+        action: 'grill',
+        task_id: 'REQ-1',
+        grill_action: 'confirm',
+        confirmation: '可以，就按这个做',
+        acceptance_criteria: ['AC1'],
+      }, h.exec),
+      (error) => error.code === 'GAC_GRILLING_MALFORMED' && /需求正文/u.test(error.message),
+    )
   })
 
   it('冻结之后不能再追加轮次', async () => {
@@ -1503,6 +1581,7 @@ describe('访谈循环门禁 —— 需求必须以用户确认结束', () => {
     await h.tool.execute({ action: 'grill', task_id: 'REQ-1', grill_action: 'converge' }, h.exec)
     await h.tool.execute({
       action: 'grill', task_id: 'REQ-1', grill_action: 'confirm', confirmation: '可以',
+      requirement: '把配置字段删掉。',
     }, h.exec)
     await assert.rejects(
       () => h.tool.execute({ action: 'grill', task_id: 'REQ-1', ...RECORD }, h.exec),
@@ -2560,6 +2639,7 @@ describe('时间戳不能是 0（活体验收的复核报告如实记过这条�
       grill_action: 'confirm',
       confirmation: '就按这个做',
       acceptance_criteria: ['AC1'],
+      requirement: '把配置字段删掉。',
     }, h.exec)
     await h.tool.execute({
       action: 'contract',
