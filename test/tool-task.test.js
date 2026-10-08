@@ -22,6 +22,8 @@ import {
   designId,
   freezeDesign,
 } from '../lib/design.js'
+import { BUILDER_CODES } from '../lib/builder-scope.js'
+import { DESIGN_CODES } from '../lib/design.js'
 import { TASK_TOOL_NAME, createTaskTool, taskToolOptions } from '../lib/tool-task.js'
 
 const identityDefineTool = (options) => options
@@ -3005,5 +3007,285 @@ describe('status 与 list', () => {
       () => h.tool.execute({ action: 'obliterate', task_id: 'REQ-1' }, h.exec),
       /未知动作/u,
     )
+  })
+})
+
+describe('构建者分类 —— 实现与测试不由同一个节点产出', () => {
+  /**
+   * 一个声明了测试路径的适配器。
+   *
+   * 分类的判据只有适配器声明的 `authority.test_paths` 一处：不声明就完全不分类，
+   * 于是已有工程的行为一个字节都不变。
+   *
+   * @param {readonly string[]} [testPaths]
+   * @returns {object}
+   */
+  function scopedHarness(testPaths) {
+    return dispatchHarness({
+      adapterExtras: testPaths === undefined ? {} : { authority: { test_paths: testPaths } },
+    })
+  }
+
+  /** 一条只含单个节点的计划。 */
+  function planWith(nodes) {
+    return { nodes }
+  }
+
+  it('一个节点同时写产品与测试时，任务根本建不起来', async () => {
+    // 拒的是「同一次推理既写实现又写测试」：测试会照着实现的形状写，于是它验证的只是
+    // 「实现和它自己一致」，而需求有没有被满足根本没被问到。给它挑一边等于把这个问题藏起来。
+    const h = scopedHarness(['test/'])
+    await assert.rejects(
+      () => h.tool.execute({
+        action: 'create',
+        task_id: 'REQ-1',
+        mode: 'standard_task',
+        plan: planWith([
+          {
+            id: 'T1',
+            objective: '把实现和它的测试一起写掉',
+            required_capabilities: ['implementation'],
+            write_scope: ['src/', 'test/'],
+          },
+        ]),
+      }, h.exec),
+      (error) => {
+        assert.equal(error.code, BUILDER_CODES.SCOPE_CLASS_MIXED)
+        assert.match(error.message, /T1/u)
+        // 跨类的两条来源措辞必须分开：这里是「一条测试加一条产品」，不是「某一条自己跨了」。
+        assert.match(error.message, /同时含产品路径 src\/ 与测试路径 test\//u)
+        assert.match(error.message, /任务未建立/u)
+        return true
+      },
+    )
+    // 拒绝要发生在落盘之前：半份任务比没有任务更难收拾。
+    assert.equal(h.store.load('REQ-1'), undefined)
+  })
+
+  it('整仓写范围（"."）也跨了两类', async () => {
+    const h = scopedHarness(['test/'])
+    await assert.rejects(
+      () => h.tool.execute({
+        action: 'create',
+        task_id: 'REQ-1',
+        mode: 'standard_task',
+        plan: planWith([
+          { id: 'T1', objective: '随便改', required_capabilities: ['implementation'], write_scope: ['.'] },
+        ]),
+      }, h.exec),
+      (error) => {
+        assert.equal(error.code, BUILDER_CODES.SCOPE_CLASS_MIXED)
+        // 这一条是「某一条路径自己跨了」：整仓写范围既在改产品、又在改测试。
+        assert.match(error.message, /既不在测试路径 \[test\/\] 之内、又与它相交/u)
+        return true
+      },
+    )
+  })
+
+  it('拆成两个节点之后通过，而且两个都进同一批', async () => {
+    const h = scopedHarness(['test/'])
+    const created = await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-1',
+      mode: 'standard_task',
+      plan: planWith([
+        { id: 'S1', objective: '写实现', required_capabilities: ['implementation'], write_scope: ['src/'] },
+        { id: 'T1', objective: '写测试', required_capabilities: ['implementation'], write_scope: ['test/'] },
+      ]),
+    }, h.exec)
+    assert.equal(created.action, 'created')
+    // 两个写者并行，于是还要先冻结接口契约（这一条是既有门禁，与本轮无关）。
+    await h.tool.execute({
+      action: 'contract',
+      contract_action: 'freeze',
+      task_id: 'REQ-1',
+      interface_contract: {
+        name: 'a',
+        operations: [{ name: 'a', signature: 'a(): void', behavior: '无副作用。' }],
+      },
+    }, h.exec)
+    // 分成两个节点之后，两个写范围不相交，于是它们**并行**而不是串行——这正是拆开的好处。
+    // 一批派遣完两个节点，`dispatchAndInvoke` 返回的是这一轮之后的下一个动作，所以这里看的是
+    // 「谁被真的调用了」而不是 `action`（两个都跑完之后它就是 `complete_task`）。
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    assert.deepEqual(h.calls.map((call) => call.node.id).sort(), ['S1', 'T1'])
+    assert.equal(value.classifications.length, 2)
+  })
+
+  it('适配器没声明测试路径时，同一份计划照旧通过', async () => {
+    // 「没声明就完全不分类」是这条判据的边界：不声明不是「没有测试」，而是「本工程不区分这两类」。
+    const h = dispatchHarness()
+    const created = await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-1',
+      mode: 'standard_task',
+      plan: planWith([
+        {
+          id: 'T1',
+          objective: '实现和测试一起写',
+          required_capabilities: ['implementation'],
+          write_scope: ['src/', 'test/'],
+        },
+      ]),
+    }, h.exec)
+    assert.equal(created.action, 'created')
+  })
+
+  it('非实现节点跨类不拦', async () => {
+    // 这条判据问的是「谁写产品、谁写测试」，所以它只审实现节点：设计节点写什么由它自己的
+    // 工具面决定，验证与复核节点压根不写。
+    const h = scopedHarness(['test/'])
+    const created = await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-1',
+      mode: 'standard_task',
+      plan: planWith([
+        {
+          id: 'D1',
+          objective: '出验证方案',
+          role: 'verification_design',
+          required_capabilities: ['verification'],
+          write_scope: ['src/', 'test/'],
+        },
+      ]),
+    }, h.exec)
+    assert.equal(created.action, 'created')
+  })
+})
+
+describe('设计换版 —— 照旧版做完的活儿不能算进新版名下', () => {
+  /** 一个高风险任务：T1 实现、T2 依赖它的独立验证。 */
+  function createHighRisk(h) {
+    return h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-HR',
+      mode: 'high_risk_task',
+      plan: {
+        nodes: [
+          { id: 'T1', objective: '实现', required_capabilities: ['implementation'], write_scope: ['src/'] },
+          { id: 'T2', objective: '独立验证', depends_on: ['T1'], required_capabilities: ['verification'], write_scope: [] },
+        ],
+      },
+    }, h.exec)
+  }
+
+  /**
+   * 把盘上的设计换成另一版，返回新版 id。
+   *
+   * 旧的那份必须显式删除：`saveDesign` 拒绝覆盖（设计是下游开工的输入，就地改写会让已经照它
+   * 开工的分支对着一份不存在的设计干活）。这与 `saveContract` / `savePlan` 是同一套语义。
+   *
+   * @param {object} h
+   * @param {readonly string[]} criteria
+   * @returns {string}
+   */
+  function replaceDesign(h, criteria) {
+    const frozen = freezeDesign(deepFreezeDesign(designPackageFor('REQ-HR', criteria)), undefined)
+    assert.equal(frozen.status, 'frozen')
+    rmSync(join(h.store.designDirectory, 'design-REQ-HR.json'), { force: true })
+    h.store.saveDesign('REQ-HR', frozen.design)
+    return designId(frozen.design)
+  }
+
+  it('交结果时设计已换版 → 结果作废，节点退回待派遣', async () => {
+    // 执行者报「还没做完」，于是节点停在 in_progress，可以手工交一份结果回来。
+    const h = dispatchHarness({
+      runtimeExecutors: [{
+        name: 'builder',
+        supports: () => true,
+        run: async () => ({ status: 'in_progress', summary: '还没做完' }),
+      }],
+    })
+    await createHighRisk(h)
+    const oldId = approveDesign(h, 'REQ-HR')
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
+
+    const dispatched = h.store.load('REQ-HR').nodes.get('T1')
+    assert.equal(dispatched.status, 'in_progress')
+    assert.equal(dispatched.execution.design_ref, oldId, '派遣时该把依据的那一版设计记下来')
+
+    replaceDesign(h, ['AC1', 'AC2'])
+
+    const value = await h.tool.execute({
+      action: 'advance',
+      task_id: 'REQ-HR',
+      report: {
+        node_id: 'T1',
+        dispatch_id: dispatched.execution.active_dispatch_id,
+        status: 'completed',
+      },
+    }, h.exec)
+
+    assert.match(value.message, /结果作废/u)
+    // 退回待派遣之后，新版设计还没被批准，于是这一轮先停在设计门禁上。
+    assert.equal(value.action, 'design_required')
+    const bounced = h.store.load('REQ-HR').nodes.get('T1')
+    assert.equal(bounced.status, 'pending')
+    assert.equal(bounced.execution.active_dispatch_id, null)
+  })
+
+  it('收口拦下依据旧版设计做完的活儿，并且排在证据门禁之前', async () => {
+    const h = dispatchHarness()
+    await createHighRisk(h)
+    const oldId = approveDesign(h, 'REQ-HR')
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
+    const t1 = h.store.load('REQ-HR').nodes.get('T1')
+    assert.equal(t1.status, 'completed')
+    assert.equal(t1.execution.design_ref, oldId)
+
+    replaceDesign(h, ['AC1', 'AC2'])
+
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-HR',
+      evidence: { all_criteria_covered: true },
+    }, h.exec)
+
+    assert.equal(value.action, 'complete_refused')
+    assert.deepEqual(value.blockers, [DESIGN_CODES.STALE_RESULT])
+    assert.match(value.message, /旧版设计/u)
+    // 排在证据门禁之前是有意的：设计换了版，下面那些验证证据与复核报告都是对着旧版实现做的，
+    // 这时报「证据不齐」会把调用方支去补一份马上要被作废的证据。
+    assert.equal(value.blockers.includes('GAC_VERIFICATION_PLAN_MISSING'), false)
+  })
+
+  it('只对实现节点生效：设计节点照旧版设计做完的活儿不算作废', async () => {
+    // 反例。设计角色的活儿就是产出设计，它开工时还没有设计包（`design_ref` 记的是当时那一版，
+    // 也可能是 null）；把「依据旧版」这套判据套到它头上，等于说「你自己交的设计过时了」。
+    const h = dispatchHarness()
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-HR',
+      mode: 'high_risk_task',
+      plan: {
+        nodes: [{
+          id: 'D1',
+          objective: '出验证方案',
+          role: 'verification_design',
+          required_capabilities: ['verification'],
+          write_scope: [],
+        }],
+      },
+    }, h.exec)
+    approveDesign(h, 'REQ-HR')
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
+    assert.equal(h.store.load('REQ-HR').nodes.get('D1').status, 'completed')
+
+    replaceDesign(h, ['AC1', 'AC2'])
+
+    const value = await h.tool.execute({
+      action: 'complete',
+      task_id: 'REQ-HR',
+      evidence: { all_criteria_covered: true },
+    }, h.exec)
+
+    assert.equal(value.action, 'complete_refused')
+    assert.equal(
+      value.blockers.includes(DESIGN_CODES.STALE_RESULT),
+      false,
+      '设计节点不该被「依据旧版设计」拦下',
+    )
+    // 它被拦在计划门禁上——高风险任务本来就要有验证计划。
+    assert.deepEqual(value.blockers, ['GAC_VERIFICATION_PLAN_MISSING'])
   })
 })

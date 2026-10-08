@@ -62,6 +62,42 @@ describe('validateProjectAdapter —— 接受形式正确的适配器', () => {
     assert.deepEqual([...parsed.memory.allow], ['current_project', 'global_reusable'])
     assert.deepEqual([...parsed.memory.deny_as_project_fact], ['foreign_project', 'unknown'])
   })
+
+  it('authority 一节：不认识的键被拒，而不是被悄悄收下', () => {
+    // 校验器不认识的字段，运行时也不该去读（与 `execution` 那一节同一条教训）。原样透传的
+    // 写法会让「项目声明了、但谁都没读」与「项目没声明」在表现上一模一样。
+    assert.throws(
+      () => adapter({ authority: { enforcement_mode: 'tool_guard', commit_automatically: true } }),
+      (error) => error instanceof ProjectAdapterError && /未知的 "authority" 键/u.test(error.message),
+    )
+    assert.throws(
+      () => adapter({ authority: ['tool_guard'] }),
+      (error) => error instanceof ProjectAdapterError && /"authority" 必须是一个对象/u.test(error.message),
+    )
+  })
+
+  it('authority.test_paths 默认为空数组，声明后归一成冻结的数组', () => {
+    // 默认空数组就是「这一层不管」：没声明测试路径的工程，行为一字不变。
+    assert.deepEqual([...adapter().authority.test_paths], [])
+    const parsed = adapter({ authority: { test_paths: ['test/', 'spec/'] } })
+    assert.deepEqual([...parsed.authority.test_paths], ['test/', 'spec/'])
+    assert.equal(Object.isFrozen(parsed.authority.test_paths), true)
+  })
+
+  it('authority.test_paths 必须是字符串数组，且每条非空', () => {
+    for (const value of ['test/', 1, {}, [''], [null], [1], ['test/', '']]) {
+      assert.throws(
+        () => adapter({ authority: { test_paths: value } }),
+        (error) => error instanceof ProjectAdapterError && /authority\.test_paths/u.test(error.message),
+        `应当拒绝 ${JSON.stringify(value)}`,
+      )
+    }
+  })
+
+  it('authority 归一之后仍带着原来的其他键', () => {
+    const parsed = adapter({ authority: { enforcement_mode: 'tool_guard', test_paths: ['test/'] } })
+    assert.equal(parsed.authority.enforcement_mode, 'tool_guard')
+  })
 })
 
 describe('execution 一节 —— 运行时真正读取的字段必须能通过校验', () => {
