@@ -13,13 +13,13 @@ DeepSeek Harness（DSH）中的通用 GAC（Governed Agent Collaboration）插�
 dsh plugin --profile web add dsh-gac-runtime
 # 中国镜像（npmmirror 会自动从官方源同步，通常数分钟内可见；--registry 也可用于安装瞬时加速）
 dsh plugin --profile web add dsh-gac-runtime --registry=https://registry.npmmirror.com
-# 固定版本
-dsh plugin --profile web add dsh-gac-runtime@0.1.0
+# 固定版本（把 0.1.1 换成要用的版本号）
+dsh plugin --profile web add dsh-gac-runtime@0.1.1
 ```
 
 - **版本来源区别**：GitHub 来源以具体提交写进 Profile 的 lockfile（因此必须显式带 `#<标签或提交>` 才会升级）；npm 来源以**版本号**固定，`add` 不带版本号时取该源上的最新版。
 - **`minimumReleaseAge` 与刚发布的版本**：部分 Profile（本机的 `core-020` 在桌面安装路径上就出现过）带 24 小时供应链策略。实测 pnpm 11.7 对 `add` 显式请求的直接依赖会自己补一条豁免并打印 `Added 1 entry to minimumReleaseAgeExclude in pnpm-workspace.yaml`，所以正常安装不会被悄悄降级；风险在别处：该 Profile 把 `minimumReleaseAgeStrict` 打开（改成弹提示）、或这个版本是被传递引入时，pnpm 可能**静默装回旧版并 exit 0**。这是 Profile 的策略而不是包的问题：一次性绕过用 `dsh plugin --profile <profile> add dsh-gac-runtime --config.minimum-release-age=0`（pnpm 10/11/12 通用，pnpm 12.3 原生 CLI 用 `--config.minimumReleaseAge=0`），长期放行则把 `dsh-gac-runtime@<版本>` 写进该 Profile 的 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude`。
-- **镜像同步**：npmmirror 是只读镜像，不接收发布；发布上游只有 npm 官方源。若镜像上还没有新版本，可用 `curl -X PUT https://registry.npmmirror.com/-/package/dsh-gac-runtime/sync` 手动触发同步，或等待自动同步。
+- **镜像同步**：npmmirror 是只读镜像，不接收发布；发布上游只有 npm 官方源。实测发布后镜像会在数十秒内自动同步出新版本；手动触发端点 `PUT https://registry.npmmirror.com/-/package/dsh-gac-runtime/sync` 对本包无效（本机实测：镜像已收录该包时仍返回 404），所以只以 `npm view dsh-gac-runtime version --registry=https://registry.npmmirror.com` 的结果为准。
 - 装完之后的行为（自动写入 `dsh.profile.bundles`、Desktop 界面、升级、卸载、每个工程仍需复制 `examples/gac-project.json` 选择加入、版本要求与排障）与下节完全相同，见下节。
 
 ## 从 GitHub 安装
@@ -132,13 +132,12 @@ npm run deploy:status
 
 ### 发布到 npm 与镜像
 
-npm 官方源是唯一发布上游；npmmirror 是只读镜像，只由它自动同步，不能作为发布目标。发布前必须：工作区干净、`npm test` 通过、`package.json` 的版本号在 Git 上有对应 tag（tag 一旦公开就不再移动，内容有变就换版本号）。
+npm 官方源是唯一发布上游；npmmirror 是只读镜像，只由它自动同步，不能作为发布目标。发布前必须：工作区干净、`npm test` 通过、`package.json` 的版本号在 Git 上有对应 tag（tag 一旦公开就不再移动，内容有变就换版本号）。**tag 必须指向实际发布的那次提交**：本仓库出现过 `v0.1.0` 指向的提交里 `package.json` 仍是 `private: true`、而 npm 上的 0.1.0 来自另一个无标签提交的情况；workflow 里的标签门禁就是为了拦住这种不一致。
 
 ```powershell
 npm login                                   # 首次需要；账号启用 2FA 时发布用 --otp
 npm publish                                 # 按 publishConfig 发到 https://registry.npmjs.org/
-# 触发镜像同步（不触发也会自动同步，通常数分钟内可见）
-curl.exe -X PUT https://registry.npmmirror.com/-/package/dsh-gac-runtime/sync
+# 镜像无需手动触发：npmmirror 会在数十秒内自动同步（其 PUT .../sync 端点实测对本包返回 404）
 ```
 
 - 发布物就是 `npm pack` 的产物（当前 52 个文件）。`test/install-surface.test.js` 会在上传前拦下四类错误：包名与 bundle 不同名、`private` 为真、`publishConfig` 指向镜像源、`files` 混入 `test/scripts/.dsh`。
