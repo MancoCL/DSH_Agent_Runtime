@@ -282,6 +282,32 @@ describe('提示词与人格段', () => {
     assert.ok(text.includes('需求正文（用户原话）：把配置字段删掉，删干净。'))
   })
 
+  it('提示词说清「编号↔含义」的对应写在正文里 —— 别自己另配一套', () => {
+    // 正文与编号是两样事实：只给编号，读不到实现的角色只能自己编一套对应，而编错是静默的
+    // （活体 REQ-DD-2 的 12 条用例里 AC2/AC3/AC6 整体移位）。对应关系在哪，必须在提示词里说清。
+    const text = buildChildPrompt({
+      node: node({ role: 'verification_design', write_scope: [] }),
+      task,
+      root: 'D:/proj',
+      dispatchId: 'REQ-1-T1-A1',
+      criteria: ['AC1'],
+      requirement: '把配置字段删掉，删干净。AC1：删掉之后配置解析不再接受这个字段。',
+    })
+    assert.ok(text.includes('一律以正文为准'))
+    assert.ok(text.includes('不要自己给编号另配一套含义'))
+  })
+
+  it('正文与编号都没有时，不提对应关系（没有可对应的东西）', () => {
+    const text = buildChildPrompt({
+      node: node({ role: 'verification_design', write_scope: [] }),
+      task: { task_id: 'REQ-1', mode: 'high_risk_task', acceptance_criteria: [] },
+      root: 'D:/proj',
+      dispatchId: 'REQ-1-T1-A1',
+      criteria: [],
+    })
+    assert.ok(!text.includes('一律以正文为准'))
+  })
+
   it('正文缺席时明说这是缺口，而不是让子会话照编号猜', () => {
     const text = buildChildPrompt({
       node: node({ role: 'verification_design', write_scope: [] }),
