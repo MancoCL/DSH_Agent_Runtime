@@ -1,7 +1,6 @@
 {
   "name": "dsh-gac-runtime",
   "version": "0.1.0",
-  "private": true,
   "description": "DeepSeek Harness 的 GAC（Governed Agent Collaboration）运行时：风险分级、严格写范围、独立验证与证据",
   "keywords": [
     "deepseek-harness",
@@ -22,6 +21,10 @@
   },
   "author": "MancoCL",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "type": "module",
   "main": "lib/index.js",
   "exports": {

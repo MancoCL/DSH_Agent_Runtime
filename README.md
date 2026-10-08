@@ -4,6 +4,23 @@ DeepSeek Harness（DSH）中的通用 GAC（Governed Agent Collaboration）插�
 
 > **阅读顺序**：本文件用于当前使用；[AGENTS.md](AGENTS.md) 是本仓库开发纪律；[docs/CUTOVER.md](docs/CUTOVER.md) 是真实验收与剩余缺口；[ADR-0001](docs/ADR-0001-子会话执行载体.md) 保留历史决策与事故细节。以代码、当前 Profile 和真实测试结果为最终依据，不以历史计划作为现状。
 
+## 从 npm 安装
+
+包同时发布在 npm 官方源与中国镜像（npmmirror）。两条 npm 来源装的是**同一个已发布快照**，只是下载地址不同；因为本包不含安装期脚本，npm 路径比 GitHub 路径少一层 git 与 allowBuilds 放行。
+
+```powershell
+# npm 官方源（默认）
+dsh plugin --profile web add dsh-gac-runtime
+# 中国镜像（npmmirror 会自动从官方源同步，通常数分钟内可见；--registry 也可用于安装瞬时加速）
+dsh plugin --profile web add dsh-gac-runtime --registry=https://registry.npmmirror.com
+# 固定版本
+dsh plugin --profile web add dsh-gac-runtime@0.1.0
+```
+
+- **版本来源区别**：GitHub 来源以具体提交写进 Profile 的 lockfile（因此必须显式带 `#<标签或提交>` 才会升级）；npm 来源以**版本号**固定，`add` 不带版本号时取该源上的最新版。
+- **镜像同步**：npmmirror 是只读镜像，不接收发布；发布上游只有 npm 官方源。若镜像上还没有新版本，可用 `curl -X PUT https://registry.npmmirror.com/-/package/dsh-gac-runtime/sync` 手动触发同步，或等待自动同步。
+- 装完之后的行为（自动写入 `dsh.profile.bundles`、Desktop 界面、升级、卸载、每个工程仍需复制 `examples/gac-project.json` 选择加入、版本要求与排障）与下节完全相同，见下节。
+
 ## 从 GitHub 安装
 
 本包是纯 ESM JavaScript，没有构建步骤、也没有 npm 运行时依赖，装上即可用。DSH 的 `plugin` 命令就是 Profile 目录里的 pnpm：`add` 在安装完成后还会自动把本包写进该 Profile 的 `dsh.profile.bundles`，所以不需要再手工编辑启用配置。**安装或升级后必须完全退出并重启 DSH，新版本才会被加载。**

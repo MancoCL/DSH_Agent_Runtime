@@ -13,6 +13,9 @@
  *  - `evaluatePluginCompatibility` 是硬门槛：peer 声明不满足时 DSH 会拒绝安装并回滚，
  *    或在启动时把整个 bundle 跳进 skippedBundles。因此 peer 只能限定在宿主自带的
  *    `@deepseek-ai/dsh*` 包上，并标记 optional，避免 pnpm 去公网拉宿主包。
+ *  - npm 与 GitHub 两条路径共用同一份清单，但 npm 发布多三道门：`private` 为真会被
+ *    `npm publish` 直接拒绝、包名与 bundle 名不一致会让 Profile 解析不到要加载的层、
+ *    `publishConfig` 指向镜像源则根本发布不上去（npmmirror 是只读镜像）。下面单独断言。
  */
 import assert from 'node:assert/strict'
 import { existsSync, statSync } from 'node:fs'
@@ -98,5 +101,32 @@ describe('第三方安装面', () => {
     assert.equal(typeof manifest.version, 'string')
     assert.match(manifest.repository?.url ?? '', /MancoCL\/DSH_Agent_Runtime/u)
     assert.equal(manifest.dsh?.bundle !== undefined, true)
+  })
+
+  it('npm 发布面：包名与 bundle 同名、公开指向官方源', () => {
+    assert.equal(
+      manifest.name,
+      'dsh-gac-runtime',
+      'npm 包名必须与 bundle 名一致，Profile 依赖、cordis.patch.yml 与卸载命令都按它解析',
+    )
+    assert.notEqual(manifest.private, true, 'private 为真时 npm publish 会被直接拒绝，别人也就装不到')
+    assert.match(manifest.version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u, `版本号 ${manifest.version} 必须能被 npm 作为正式版本发布`)
+    assert.equal(manifest.publishConfig?.access, 'public', '非 scope 包也必须显式公开，避免发布成受限包')
+    assert.equal(
+      manifest.publishConfig?.registry,
+      'https://registry.npmjs.org/',
+      '发布上游只能是 npm 官方源；npmmirror 是只读镜像，由它自动同步',
+    )
+  })
+
+  it('npm 发布面：只发布运行时需要的文件', () => {
+    const entries = manifest.files ?? []
+    for (const directory of ['test', 'scripts', '.dsh', 'examples']) {
+      assert.equal(
+        entries.some((entry) => entry === directory || entry.startsWith(`${directory}/`)),
+        directory === 'examples',
+        `${directory} 进发布包会改变别人安装到的内容，必须显式决定`,
+      )
+    }
   })
 })

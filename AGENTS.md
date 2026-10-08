@@ -56,7 +56,7 @@ npm run deploy:status
 - 只修改当前任务所属文件；不操作历史任务证据、不伪造 E2E、不要擅自改变运行时现有安全语义。
 - 代码、测试、脚本的新注释使用中文，保留标识符、JSDoc 类型和工具名原文。
 - 核心边界改动应配真实反例与单元测试，执行 `npm test`。
-- 第三方安装面与运行时同等重要：`package.json` 里的 `files`、`dsh.bundle.patch`、`peerDependencies` 和安装期脚本决定别人能否从 GitHub 装上本插件，改动必须让 `test/install-surface.test.js` 通过。**不得新增 `prepare`/`postinstall` 等安装期脚本**（会让安装方被迫放行 `allowBuilds`），**不得去掉 peer 的 `optional` 标记**，也不得把 peer 指向宿主之外的包。
+- 第三方安装面与运行时同等重要：`package.json` 里的 `files`、`dsh.bundle.patch`、`peerDependencies` 和安装期脚本决定别人能否从 GitHub 或 npm 装上本插件，改动必须让 `test/install-surface.test.js` 通过。**不得新增 `prepare`/`postinstall` 等安装期脚本**（会让安装方被迫放行 `allowBuilds`），**不得去掉 peer 的 `optional` 标记**，也不得把 peer 指向宿主之外的包。包名必须保持 `dsh-gac-runtime`（Profile 依赖、`cordis.patch.yml` 与卸载命令都按它解析），**不得加回 `private: true`**（`npm publish` 会直接拒绝），`publishConfig.registry` 只能指向 npm 官方源——npmmirror 是只读镜像，只能被同步，不能作为发布上游。
 
 ## 2. Git 纪律
 
