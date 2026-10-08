@@ -3,6 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "description": "DeepSeek Harness 的 GAC（Governed Agent Collaboration）运行时：风险分级、严格写范围、独立验证与证据",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "plugin",
+    "governed-agent-collaboration",
+    "agent-runtime"
+  ],
+  "homepage": "https://github.com/MancoCL/DSH_Agent_Runtime#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MancoCL/DSH_Agent_Runtime.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MancoCL/DSH_Agent_Runtime/issues"
+  },
+  "author": "MancoCL",
+  "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -15,10 +34,28 @@
   "files": [
     "lib",
     "assets",
-    "cordis.patch.yml"
+    "examples",
+    "docs",
+    "cordis.patch.yml",
+    "README.md",
+    "AGENTS.md",
+    "LICENSE"
   ],
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=22.19.0",
+    "dsh": ">=0.2.0-rc.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-llm": ">=0.2.0-rc.1",
+    "@deepseek-ai/dsh-tools": ">=0.2.0-rc.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
   },
   "scripts": {
     "test": "node --test test/*.test.js",
@@ -33,7 +70,6 @@
     "profile:use": "node scripts/profile-switch.js use",
     "profile:restore": "node scripts/profile-switch.js restore"
   },
-  "license": "MIT",
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

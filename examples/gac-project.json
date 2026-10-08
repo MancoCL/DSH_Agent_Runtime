@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "project": {
+    "id": "my-project",
+    "title": "把这里改成你的工程名"
+  },
+  "capabilities": [
+    "implementation",
+    "verification",
+    "review"
+  ],
+  "executors": {
+    "implementation": ["builder"],
+    "verification": ["verifier"],
+    "review": ["reviewer"]
+  },
+  "execution": {
+    "require_contract": ["high_risk_task"],
+    "provider_routes": {},
+    "native_child_dispatch": true
+  },
+  "risk": {
+    "high_risk_paths": [
+      "src/core/",
+      "src/auth/"
+    ],
+    "default_level": "low"
+  },
+  "memory": {
+    "allow": ["current_project", "global_reusable"],
+    "deny_as_project_fact": ["foreign_project", "unknown"]
+  },
+  "authority": {
+    "enforcement_mode": "tool_guard",
+    "test_paths": ["test/"],
+    "coordinator_write": "protected",
+    "protected_paths": ["src/"]
+  }
+}
