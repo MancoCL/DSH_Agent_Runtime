@@ -2,7 +2,7 @@
 
 DeepSeek Harness（DSH）中的通用 GAC（Governed Agent Collaboration）插件。**DSH 提供会话、子代理与工具执行内核；GAC 提供需求分级、设计与实施治理、写权限、独立验证、证据和任务收口。** 不在插件内重建第二套 Agent Runtime。
 
-> **阅读顺序**：本文件用于当前使用；[AGENTS.md](AGENTS.md) 是本仓库开发纪律；[docs/CUTOVER.md](docs/CUTOVER.md) 是真实验收与剩余缺口；[ADR-0001](docs/ADR-0001-子会话执行载体.md) 保留历史决策与事故细节。以代码、当前 Profile 和真实测试结果为最终依据，不以历史计划作为现状。
+> **阅读顺序**：本文件用于当前使用；[AGENTS.md](https://github.com/MancoCL/DSH_Agent_Runtime/blob/main/AGENTS.md) 是本仓库开发纪律；[docs/CUTOVER.md](https://github.com/MancoCL/DSH_Agent_Runtime/blob/main/docs/CUTOVER.md) 是真实验收与剩余缺口；[ADR-0001](https://github.com/MancoCL/DSH_Agent_Runtime/blob/main/docs/ADR-0001-子会话执行载体.md) 保留历史决策与事故细节。以代码、当前 Profile 和真实测试结果为最终依据，不以历史计划作为现状。
 
 ## 从 npm 安装
 
@@ -89,8 +89,8 @@ Builder / Test Builder（分别实施产品代码与测试代码）
 - **调度**：DAG 依赖、写范围与独占资源决定当前安全批次；冲突节点串行，不是先派遣再争锁。每次派遣有 `attempt/dispatch_id`，过时结果不得覆盖新尝试。
 - **主会话最小化**：`gac_task advance` 默认一波，可用 `max_waves` 受限连续推进；失败、阻塞或需要批准时停下。
 - **验证**：冻结 VerificationPlan（含 positive/falsification）→ Runtime 签发 Evidence → VerificationReport → ReviewReport → 证据与 AC 覆盖门禁。角色结构化结果由 Runtime 自动登记，不能只信 Agent 的 “PASS”。
-- **Workspace Witness**：订阅 `workspace/changes` 做事后变化分类，不能代替前置 Guard；对 Git 忽略路径不可见，截断时 `coverage=partial`。生产日常 Profile 已活体验证，复验配方见 [Witness 探针](docs/WITNESS-LIVE-PROBE.md)。
-- **PTC**：存在时允许外层 `run_code` 传输；内层工具仍接受权限审查。它是可选执行能力，不是 GAC 必需能力。复验配方见 [PTC 探针](docs/PTC-LIVE-PROBE.md)。
+- **Workspace Witness**：订阅 `workspace/changes` 做事后变化分类，不能代替前置 Guard；对 Git 忽略路径不可见，截断时 `coverage=partial`。生产日常 Profile 已活体验证，复验配方见 [Witness 探针](https://github.com/MancoCL/DSH_Agent_Runtime/blob/main/docs/WITNESS-LIVE-PROBE.md)。
+- **PTC**：存在时允许外层 `run_code` 传输；内层工具仍接受权限审查。它是可选执行能力，不是 GAC 必需能力。复验配方见 [PTC 探针](https://github.com/MancoCL/DSH_Agent_Runtime/blob/main/docs/PTC-LIVE-PROBE.md)。
 
 ### 生产能力契约
 
@@ -105,10 +105,12 @@ PTC、任意子 Agent 委派、Memory Provider 不属于默认必需能力。缺
 
 ## 开发、验收与本地发布隔离
 
+**公开与本地边界**：GitHub 只跟踪插件源码、测试、示例和维护文档；每台机器的 `.dsh/` 适配器、任务、设计、证据、审计与验收状态均只保留本地，不进入 Git 或 npm 包。新工程应复制 `examples/gac-project.json` 生成本地 `.dsh/gac/project.json`，不应把真实项目配置提交到插件仓库。推送与 PR 会触发 GitHub Gitleaks 凭据扫描；发布前仍应人工检查暂存差异与 `npm pack --dry-run --json` 清单。
+
 **日常 DSH 必须使用从本地 `.tgz` 安装的插件；工作区不是生产插件目录。** 只有源码完成、测试通过且明确开始真实 E2E 时，才允许临时把目标 Profile 指向当前 Git 工作树。发布需要真实验收结论，发布后由 `pnpm` 同时更新 Profile 依赖、锁文件与实际 `node_modules`，而不只是替换一段配置字符串。
 
 ```powershell
-$env:DSH_PROFILE_DIR = "$env:USERPROFILE\.dsh\profiles\core-020" # 仅本机示例，须核实
+$env:DSH_PROFILE_DIR = "$env:USERPROFILE\.dsh\profiles\<实际Profile名>" # 请按真实环境设置
 npm run deploy:status         # 检查 package.json 与 node_modules 真实落点
 npm test                      # 日常在独立工作区开发
 
@@ -128,7 +130,7 @@ npm run deploy:status
 
 **本机检查曾发现三处不一致：** Profile `package.json` 指向 DSH 安装目录、`pnpm-lock.yaml` 指向旧的 `.tgz`、实际 `node_modules/dsh-gac-runtime` 却指向本工作区。此类状态不得视为已隔离生产环境；修复必须在宿主退出且源码验收完成后按上述受控流程进行。普通 `plugin:on/off` 只控制启停，不能代替版本切换。
 
-详见 [AGENTS.md](AGENTS.md) 的开发和 Git 纪律。
+详见 [AGENTS.md](https://github.com/MancoCL/DSH_Agent_Runtime/blob/main/AGENTS.md) 的开发和 Git 纪律。
 
 ### 发布到 npm 与镜像
 
@@ -141,7 +143,7 @@ npm publish                                 # 按 publishConfig 发到 https://r
 #   curl.exe -X PUT https://registry.npmmirror.com/dsh-gac-runtime/sync   # 返回 201 {"ok":true,...}
 ```
 
-- 发布物就是 `npm pack` 的产物（当前 52 个文件）。`test/install-surface.test.js` 会在上传前拦下四类错误：包名与 bundle 不同名、`private` 为真、`publishConfig` 指向镜像源、`files` 混入 `test/scripts/.dsh`。
+- 发布物就是 `npm pack` 的产物（实际文件数以 npm pack --dry-run --json 为准）。`test/install-surface.test.js` 会在上传前拦下四类错误：包名与 bundle 不同名、`private` 为真、`publishConfig` 指向镜像源、`files` 混入 `test/scripts/.dsh`。
 - 发布后核对两个源：`npm view dsh-gac-runtime version --prefer-online` 与 `npm view dsh-gac-runtime version --registry=https://registry.npmmirror.com --prefer-online` 都应给出刚发布的版本（不加 `--prefer-online` 可能读到缓存里的旧结果）；随后在一个隔离 `DSH_HOME` 的沙箱 Profile 里真装一次（`dsh plugin --profile <p> add dsh-gac-runtime@<版本>`）。
 - **刚发布几分钟内出现 404 不等于失败**：注册表 CDN 对 packument 与 tarball 都有约 5 分钟的负缓存（0.1.1 实测：发布后 3 分钟内直连 tarball 仍 404，约 3.5 分钟后恢复 200，字节与本地 `npm pack` 产物一致）。要立刻验证可在 URL 后加时间戳查询串，或先 `--prefer-online` 读 packument，不要据此重发同一个版本号。
 - 同一版本号不能覆盖发布，只能发新版本号；**刚发布的版本可能被 Profile 的 `minimumReleaseAge` 策略影响**（pnpm 11.7 对显式 `add` 的依赖会自动补豁免并打印提示，不会降级），见上文。
@@ -161,13 +163,13 @@ npm trust list dsh-gac-runtime          # 核对已登记的发布者（GitHub A
 
 ## 当前限制与验收边界
 
-1. **尚未用一个真实外部业务需求完成新的设计驱动 HIGH_RISK 全流程 E2E**；参见 [CUTOVER](docs/CUTOVER.md)。旧的 `REQ-HR-5` 验证了四子会话的语义结果链，不等于新的设计驱动流程已经验收。
+1. **尚未用一个真实外部业务需求完成新的设计驱动 HIGH_RISK 全流程 E2E**；参见 [CUTOVER](https://github.com/MancoCL/DSH_Agent_Runtime/blob/main/docs/CUTOVER.md)。旧的 `REQ-HR-5` 验证了四子会话的语义结果链，不等于新的设计驱动流程已经验收。
 2. 多 Session / 工具与上下文隔离已实现，但**异模型/异作者独立性不是默认硬保证**；角色路由可以配置，结论要以实际子会话头和证据为准。
-3. DSH 子会话 **own-layer 委派工具可能仍显示在模型面**；GAC 的执行前 Guard 已验证按工具族拒绝。宿主事件时序根因见 [ADR §23](docs/ADR-0001-子会话执行载体.md)，不要在插件里重新造执行器。
+3. DSH 子会话 **own-layer 委派工具可能仍显示在模型面**；GAC 的执行前 Guard 已验证按工具族拒绝。宿主事件时序根因见 [ADR §23](https://github.com/MancoCL/DSH_Agent_Runtime/blob/main/docs/ADR-0001-子会话执行载体.md)，不要在插件里重新造执行器。
 4. 只读角色可根据策略保留测试 Shell；它不等于操作系统级只读沙箱。GAC 结构化写拦截不保证发现所有间接文件修改，Witness 也不观察 Git 忽略路径。
 5. 子会话创建到权限绑定之间可能有平台时序窗口；不可凭成功样例宣布任意调度时序下完全安全。
 6. `memory` 与 `checkpoint` 的部分字段目前只是项目策略声明，**没有对应完整 Runtime enforcement**；不会自动 Git commit。GAC 审计文件也不是任务状态的权威来源。
-7. 具体剩余项、历史真 E2E 与切换条件见 [CUTOVER](docs/CUTOVER.md)。历史执行接缝、宿主事故与版本判据见 [ADR](docs/ADR-0001-子会话执行载体.md)。
+7. 具体剩余项、历史真 E2E 与切换条件见 [CUTOVER](https://github.com/MancoCL/DSH_Agent_Runtime/blob/main/docs/CUTOVER.md)。历史执行接缝、宿主事故与版本判据见 [ADR](https://github.com/MancoCL/DSH_Agent_Runtime/blob/main/docs/ADR-0001-子会话执行载体.md)。
 8. 从 GitHub 安装取的是**源码快照**：宿主安装时不会运行本仓库的测试，任何提交都能被装上。请固定到已通过 `npm test` 的标签或提交，而不是长期跟随 `main`。
 
 ## 文档职责
@@ -175,11 +177,11 @@ npm trust list dsh-gac-runtime          # 核对已登记的发布者（GitHub A
 | 文档 | 用途 |
 | --- | --- |
 | 本 README | 当前能力、使用方式及限制 |
-| [AGENTS.md](AGENTS.md) | 在本仓库开发时的安全和提交规则 |
-| [CUTOVER](docs/CUTOVER.md) | 当前未闭合条件与已验证证据索引 |
-| [ADR-0001](docs/ADR-0001-子会话执行载体.md) | 原生执行载体、宿主兼容性与历史事故依据 |
+| [AGENTS.md](https://github.com/MancoCL/DSH_Agent_Runtime/blob/main/AGENTS.md) | 在本仓库开发时的安全和提交规则 |
+| [CUTOVER](https://github.com/MancoCL/DSH_Agent_Runtime/blob/main/docs/CUTOVER.md) | 当前未闭合条件与已验证证据索引 |
+| [ADR-0001](https://github.com/MancoCL/DSH_Agent_Runtime/blob/main/docs/ADR-0001-子会话执行载体.md) | 原生执行载体、宿主兼容性与历史事故依据 |
 | [ENGINEERING_POLICY](assets/ENGINEERING_POLICY.md) | Reviewer 真实读取的工程质量策略 |
-| [Witness 探针](docs/WITNESS-LIVE-PROBE.md) / [PTC 探针](docs/PTC-LIVE-PROBE.md) | 未来升级后的复验步骤 |
+| [Witness 探针](https://github.com/MancoCL/DSH_Agent_Runtime/blob/main/docs/WITNESS-LIVE-PROBE.md) / [PTC 探针](https://github.com/MancoCL/DSH_Agent_Runtime/blob/main/docs/PTC-LIVE-PROBE.md) | 未来升级后的复验步骤 |
 
 ## 许可证
 

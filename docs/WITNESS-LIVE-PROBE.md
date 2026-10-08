@@ -2,7 +2,7 @@
 
 目的：在**将要实际使用的 DSH Profile** 验证 `Workspace Changes Producer → workspace/changes → GAC Witness → EvidenceLog`，不能只凭 `witness-seam available=true` 宣称通过。
 
-历史：2026-10-06 的临时 `gac-verify` Profile 已删除；它曾因误判生产者缺席而建立。实际生产者由 `dsh-web-app` 的 bundle patch 加载，日常 `core-020` 已有 live 证据 `ev-1820`。不再重建第二套长期 Profile。原事故与判断更正见 [ADR-0001](ADR-0001-子会话执行载体.md)，当前门槛见 [CUTOVER](CUTOVER.md)。
+历史：2026-10-06 曾因误判生产者缺席而创建临时验证 Profile，随后已撤销。实际生产者由 `dsh-web-app` 的 bundle patch 加载，已有 live 证据 `ev-1820`；各机器必须在自己的目标 Profile 重新核实，勿照搬测试 Profile 名称。原事故与判断更正见 [ADR-0001](ADR-0001-子会话执行载体.md)，当前门槛见 [CUTOVER](CUTOVER.md)。
 
 ## 前置检查
 

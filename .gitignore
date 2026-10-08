@@ -1,48 +1,40 @@
-# 依赖与日志
+# 依赖、日志和生成物
 node_modules/
 *.log
+coverage/
+dist/
+tmp/
+temp/
+.cache/
+*.tgz
 
-# 一次性沙箱修复留下的 ACL 恢复产物（不属于插件）
+# 本机工程适配器、任务、证据、会话和验收状态均不属于插件源码
+# 公开的可复用适配器示例只放在 examples/，不要对 .dsh/ 做例外放行
+.dsh/
+
+# 一次性 ACL 修复与文件备份（本机专属）
 .acl-recovery/
+*.bak
+*.bak-*
+*.repairing-*
 
-# 每工程的适配器是工程数据，不是插件源码
-.dsh/gac/local/
+# 环境变量、认证凭据和私钥
+.env
+.env.*
+!.env.example
+.npmrc
+.pypirc
+*.pem
+*.key
+id_rsa
+id_ed25519
+**/credentials.json
+**/service-account*.json
 
-# 运行时的写占用是临时协调状态
-.dsh/gac/claims/
-
-# 任务记录是运行时状态，不是插件源码
-.dsh/gac/tasks/
-
-# 已冻结的验证计划同样是运行时状态
-.dsh/gac/plans/
-
-# 访谈记录与已冻结的接口契约是运行时状态
-.dsh/gac/grilling/
-.dsh/gac/contracts/
-
-# 只追加的证据日志是运行时状态
-.dsh/gac/evidence/
-
-# 独立复核报告同样是运行时状态；漏掉这一条时它会以未跟踪文件的形式出现，
-# 而一次 `git add -A` 就会把运行时的复核结论当成源码提交进去
-.dsh/gac/reviews/
-
-# GAC 审计事件（只追加）。写在这里而不是写进会话日志——见 README 那一节与 ADR §13：
-# 会话日志的事件词表是宿主构建期生成的，外部插件写进去会让整份日志被拒读。
-.dsh/gac/events/
-
-# 验证报告（逐条用例的执行结论与证据引用）同样是运行时状态
-.dsh/gac/verifications/
-
-# 设计草稿、冻结的设计包与主会话对它的裁决都是运行时状态：设计是下游开工的输入，
-# 它按任务存在，不是这个插件的源码
-.dsh/gac/designs/
-
-# 操作系统噪音文件
+# 操作系统噪音
 Thumbs.db
 .DS_Store
 
-# 提交信息临时文件（每任务一个，永不提交）
+# 每任务唯一的临时提交信息（永不提交）
 .commitmsg
 .commitmsg-*

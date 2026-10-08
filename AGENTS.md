@@ -18,7 +18,7 @@
 在本机目标 Profile 下（路径按环境核实，不要猜）：
 
 ```powershell
-$env:DSH_PROFILE_DIR = "$env:USERPROFILE\.dsh\profiles\core-020"
+$env:DSH_PROFILE_DIR = "$env:USERPROFILE\.dsh\profiles\<实际Profile名>"
 
 # 日常开发：只改仓库源码，绝不将 Profile 指向工作区。
 npm run deploy:status
@@ -62,8 +62,8 @@ npm run deploy:status
 ## 2. Git 纪律
 
 - 只显式暂存本任务文件，禁止 `git add .`、`git add -A`、`git add --all`。
-- 不推送、不 amend、不改历史、不提交其他会话的修改；用户未要求提交时不自行提交。
+- 默认不推送、不 amend、不改历史、不提交其他会话的修改；只有用户明确要求时才可提交或推送。
 - 用户要求提交时，主题为 `type(scope): 中文简述`，空行后单行正文说明行为、原因和影响；不添加自动署名。
-- 临时提交信息文件用任务唯一、受忽略保护的路径，提交后清理；不把密钥、发布包、机器路径下的会话数据提交到仓库。
+- 临时提交信息文件用任务唯一、受忽略保护的路径，提交后清理；不把密钥、发布包、机器路径下的会话数据提交到仓库。`.dsh/` 是本地运行数据，工程模板只存 `examples/`，不得用 `git add -f` 绕过忽略规则。GitHub 上的 Gitleaks 扫描不代替人工检查。
 - 提交后核对 `git show --stat HEAD`、`git log -1 --format=%B`、`git status --porcelain`。只要求本轮负责的路径干净。
 - 适配器 `checkpoint` 目前只有声明，没有 Runtime 自动提交的机制。

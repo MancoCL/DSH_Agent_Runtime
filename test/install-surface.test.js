@@ -130,6 +130,16 @@ describe('第三方安装面', () => {
     }
   })
 
+  it('npm 发布面：不包含本机数据或内部开发文档', () => {
+    const entries = manifest.files ?? []
+    for (const denied of ['.dsh', '.acl-recovery', 'docs', 'AGENTS.md', 'test', 'scripts']) {
+      assert.equal(isCovered(denied, entries), false, `不应将 ${denied} 放入 npm 安装包`)
+    }
+    for (const required of ['lib/index.js', 'assets/ENGINEERING_POLICY.md', 'examples/gac-project.json', 'README.md']) {
+      assert.equal(isCovered(required, entries), true, `npm 包缺少 ${required}`)
+    }
+  })
+
   it('npm 发布面：OIDC workflow 不带凭据，且强制版本号与标签一致', async () => {
     const workflowPath = join(root, '.github', 'workflows', 'publish-npm.yml')
     assert.equal(
