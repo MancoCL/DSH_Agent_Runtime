@@ -2,7 +2,7 @@
   "name": "dsh-gac-runtime",
   "version": "0.1.0",
   "private": true,
-  "description": "DeepSeek Harness 的 GAC（Governed Agent Collaboration）运行时：按风险分级的执行模式、严格的写作用域、写占用与独立验证。",
+  "description": "DeepSeek Harness 的 GAC（Governed Agent Collaboration）运行时：风险分级、严格写范围、独立验证与证据",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -25,6 +25,10 @@
     "plugin:status": "node scripts/plugin-switch.js status",
     "plugin:on": "node scripts/plugin-switch.js on",
     "plugin:off": "node scripts/plugin-switch.js off",
+    "deploy:status": "node scripts/plugin-deploy.js status",
+    "deploy:validate": "node scripts/plugin-deploy.js validate",
+    "deploy:publish": "node scripts/plugin-deploy.js publish",
+    "deploy:restore": "node scripts/plugin-deploy.js restore",
     "profile:status": "node scripts/profile-switch.js status",
     "profile:use": "node scripts/profile-switch.js use",
     "profile:restore": "node scripts/profile-switch.js restore"
