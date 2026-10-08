@@ -74,6 +74,75 @@ describe('语义角色：能力名不是角色', () => {
   })
 })
 
+/**
+ * 宿主 `child:spawn` 认得的**约束**关键字（`@deepseek-ai/dsh-tools` 的 `CONSTRAINT_KEYWORDS`）。
+ *
+ * 这份名单必须与宿主逐字一致：写多一个关键字不是「校验更严」，而是**子会话根本建不起来**。
+ */
+const HOST_CONSTRAINT_KEYWORDS = new Set([
+  'type',
+  'oneOf',
+  'properties',
+  'required',
+  'additionalProperties',
+  'items',
+  'enum',
+  'const',
+])
+
+/** 宿主额外容忍的注解关键字（`ANNOTATION_KEYWORDS`）——只影响文档，不参与校验。 */
+const HOST_ANNOTATION_KEYWORDS = new Set(['description', 'title', 'default', 'examples'])
+
+/**
+ * 递归收集一份 schema 里宿主会拒的东西。
+ *
+ * 为什么要递归而不是只看顶层：真实事故（2026-10-08，活体 `REQ-DD-2`）里出事的 `minItems` 埋在
+ * `design.properties.traceability` 第四层，顶层断言 `type`/`additionalProperties`/`required` 全绿，
+ * 而四个设计节点在第一波里全部于**建子会话之前**失败——`verification_design` 因为没有这个关键字
+ * 照常成功，差别只在这一处。浅层断言抓不到它，所以这里按结构逐层走一遍。
+ *
+ * 三类判据都取自宿主的 `json-schema` 校验：① 关键字必须在白名单里；② 对象层 `required` 点名的
+ * 属性必须真的在 `properties` 里；③ `additionalProperties` 只接受布尔量。
+ *
+ * @param {unknown} schema 待检查的 schema 片段
+ * @param {string} [path] 出错时用于定位的路径
+ * @returns {string[]} 违反项，空数组表示干净
+ */
+function schemaViolations(schema, path = 'schema') {
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return []
+  const found = []
+  for (const [key, value] of Object.entries(schema)) {
+    if (!HOST_CONSTRAINT_KEYWORDS.has(key) && !HOST_ANNOTATION_KEYWORDS.has(key)) {
+      found.push(`${path}.${key} 不是宿主认得的 schema 关键字`)
+      continue
+    }
+    if (key === 'additionalProperties' && typeof value !== 'boolean') {
+      found.push(`${path}.additionalProperties 只能是布尔量`)
+    }
+    if (key === 'required') {
+      if (!Array.isArray(value)) {
+        found.push(`${path}.required 应当是数组`)
+      } else {
+        for (const name of value) {
+          if (!Object.hasOwn(schema.properties ?? {}, name)) {
+            found.push(`${path}.required 里的 ${name} 没有在 properties 里声明`)
+          }
+        }
+      }
+    }
+    if (key === 'properties' && value !== null && typeof value === 'object') {
+      for (const [name, sub] of Object.entries(value)) {
+        found.push(...schemaViolations(sub, `${path}.properties.${name}`))
+      }
+    }
+    if (key === 'items') found.push(...schemaViolations(value, `${path}.items`))
+    if (key === 'oneOf' && Array.isArray(value)) {
+      value.forEach((sub, index) => found.push(...schemaViolations(sub, `${path}.oneOf[${index}]`)))
+    }
+  }
+  return found
+}
+
 describe('按角色挑产出契约', () => {
   it('四个角色各有一份，且都是标准 JSON Schema', () => {
     assert.deepEqual(Object.keys(CHILD_OUTPUT_SCHEMAS).sort(), [...NODE_ROLES].sort())
@@ -83,6 +152,12 @@ describe('按角色挑产出契约', () => {
       // `required` 在**对象层**：写成工具创作 DSL 那种「属性内部 required」会被宿主直接拒
       // （ADR §9 记着这次实测）。
       assert.ok(Array.isArray(schema.required), `${role} 的契约应当在对象层声明 required`)
+    }
+  })
+
+  it('每个角色的契约逐层都只用宿主认得的关键字 —— 多一个就建不起子会话', () => {
+    for (const [role, schema] of Object.entries(CHILD_OUTPUT_SCHEMAS)) {
+      assert.deepEqual(schemaViolations(schema), [], `${role} 的契约会被宿主拒`)
     }
   })
 
