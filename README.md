@@ -102,3 +102,6 @@ Profile 路径只作本机示例，应实际核对；启停是否热应用以 `p
 | [ADR-0001](docs/ADR-0001-子会话执行载体.md) | 原生执行载体、宿主兼容性与历史事故依据 |
 | [ENGINEERING_POLICY](assets/ENGINEERING_POLICY.md) | Reviewer 真实读取的工程质量策略 |
 | [Witness 探针](docs/WITNESS-LIVE-PROBE.md) / [PTC 探针](docs/PTC-LIVE-PROBE.md) | 未来升级后的复验步骤 |
+
+## 许可证
+
