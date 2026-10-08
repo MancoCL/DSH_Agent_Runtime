@@ -28,13 +28,57 @@
  *     node scripts/plugin-switch.js off
  */
 
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join as pathJoin, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { execSync } from 'node:child_process'
+import { lockSpecifier } from './plugin-deploy.js'
 
 /** 本插件在 patch 里的 id。 */
 export const PLUGIN_ID = 'gac-runtime'
 
 /** patch 文件名。 */
 export const PATCH_FILE = 'cordis.patch.yml'
+
+/**
+ * 只有经过显式的源码验收，才允许旧 plugin:on 启用工作树版本。
+ * 使用实际 node_modules 落点核验；声明与落点漂移时拒绝开启。
+ */
+function assertVerifiedSource(file) {
+  const profile = dirname(file)
+  if (!existsSync(pathJoin(profile, 'package.json'))) return // 纯 patch 测试，不是完整 Profile
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+  const pkg = JSON.parse(readFileSync(pathJoin(profile, 'package.json'), 'utf8'))
+  const spec = pkg.dependencies?.['dsh-gac-runtime']
+  const modulePath = pathJoin(profile, 'node_modules', 'dsh-gac-runtime')
+  let actual
+  try { actual = realpathSync(modulePath) } catch { /* 缺失仍要拒绝 */ }
+  const source = actual && resolve(actual).toLowerCase() === root.toLowerCase()
+  // 本地 tarball 必须被包管理器安装在 Profile 的 node_modules 内，
+  // 而非以 Junction 链到任何工程目录。
+  const modules = resolve(profile, 'node_modules').toLowerCase()
+  const actualLocal = actual && (resolve(actual).toLowerCase().startsWith(modules + '\\')
+    || resolve(actual).toLowerCase().startsWith(modules + '/'))
+  const locked = lockSpecifier(profile)
+  if (!source && actualLocal && typeof spec === 'string' && spec.startsWith('file:')
+    && (locked === undefined || locked === spec)) return
+
+  const home = resolve(profile, '..', '..')
+  const stateFile = pathJoin(home, 'gac-runtime-releases', basename(profile), 'validation.json')
+  if (source && existsSync(stateFile)
+    && spec === 'link:' + root.replace(/\\/gu, '/')) {
+    const state = JSON.parse(readFileSync(stateFile, 'utf8'))
+    const commit = execSync('git rev-parse HEAD', { cwd: root, encoding: 'utf8' }).trim()
+    const dirty = execSync('git status --porcelain --untracked-files=normal', {
+      cwd: root, encoding: 'utf8',
+    }).trim()
+    if (state.mode === 'validation' && state.commit === commit && !dirty) return
+  }
+  throw new SwitchError(
+    '实际插件来源未经发布或验收，禁止开启。请先运行 deploy:status、deploy:validate 或 deploy:publish。',
+    'GAC_SWITCH_UNVERIFIED_SOURCE',
+  )
+}
 
 /** 结构化错误码，便于调用方与测试分支。 */
 export const SWITCH_CODES = Object.freeze({
@@ -320,6 +364,7 @@ export function runSwitch(argv, io = {}) {
       out(describe('status', readPluginState(text), file))
       return 0
     }
+    if (action === 'on') assertVerifiedSource(file)
     const result = setPluginDisabled(text, action === 'off')
     if (result.changed) writeFileSync(file, result.text, 'utf8')
     out(describe(action, readPluginState(result.text), file))

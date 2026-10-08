@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, it } from 'node:test'
 import { DeployError, inspectDeployment, runDeployment } from '../scripts/plugin-deploy.js'
+import { runSwitch } from '../scripts/plugin-switch.js'
 
 const dirs = []
 const sha = 'abcdef1234567890abcdef1234567890abcdef12'
@@ -35,6 +36,8 @@ function fixture() {
     dependencies: { 'dsh-gac-runtime': 'file:old-release.tgz', another: '^1.0.0' },
     dsh: { profile: { bundles: ['dsh-gac-runtime', 'another'] } },
   }, null, 2))
+  writeFileSync(join(profile, 'pnpm-lock.yaml'),
+    'importers:\\n  .:\\n    dependencies:\\n      dsh-gac-runtime:\\n        specifier: file:old-release.tgz\\n')
   // 刻意模拟本机遇到的漂移：package.json 写 tarball，但真实 node_modules 仍指向源码。
   symlinkSync(root, modulePath, 'junction')
 
@@ -46,9 +49,10 @@ function fixture() {
     if (cmd.startsWith('git rev-parse')) return sha + '\n'
     if (cmd === 'npm test') return 'test PASS'
     if (cmd.startsWith('npm pack')) {
-      const packages = join(dshHome, 'packages')
-      mkdirSync(packages, { recursive: true })
-      writeFileSync(join(packages, 'dsh-gac-runtime-0.1.0.tgz'), 'fake-archive')
+      const destination = /--pack-destination "([^"]+)"/u.exec(cmd)?.[1]
+      assert.ok(destination, '打包必须使用独立 staging 目录')
+      mkdirSync(destination, { recursive: true })
+      writeFileSync(join(destination, 'dsh-gac-runtime-0.1.0.tgz'), 'fake-archive')
       return JSON.stringify([{
         filename: 'dsh-gac-runtime-0.1.0.tgz', version: '0.1.0',
         files: [{ path: 'lib/index.js' }, { path: 'assets/ENGINEERING_POLICY.md' },
@@ -59,6 +63,8 @@ function fixture() {
       const spec = JSON.parse(readFileSync(join(profile, 'package.json'), 'utf8'))
         .dependencies['dsh-gac-runtime']
       rmSync(modulePath, { recursive: true, force: true })
+      writeFileSync(join(profile, 'pnpm-lock.yaml'),
+        'importers:\n  .:\n    dependencies:\n      dsh-gac-runtime:\n        specifier: ' + spec + '\n')
       if (spec.startsWith('link:')) {
         symlinkSync(root, modulePath, 'junction')
       } else {
@@ -154,4 +160,49 @@ describe('本地插件开发/验收/发布隔离', () => {
     writeFileSync(path, JSON.stringify(pkg))
     checkCode('GAC_DEPLOY_NOT_INSTALLED', () => runDeployment(['status'], f.opts))
   })
+})
+
+
+it('旧 plugin:on 不得在依赖声明与真实工作区 Junction 冲突时启用', () => {
+  const f = fixture()
+  const patchFile = join(f.profile, 'cordis.patch.yml')
+  const text = '- id: gac-runtime\n  disabled: true\n'
+  writeFileSync(patchFile, text)
+  const errors = []
+  const args = ['on', '--file', patchFile]
+  assert.equal(runSwitch(args, {
+    env: { DSH_PROFILE_DIR: f.profile }, out: () => {},
+    err: (s) => errors.push(s),
+  }), 1)
+  assert.match(errors.join('\n'), /禁止开启/u)
+  assert.equal(readFileSync(patchFile, 'utf8'), text)
+
+  // 安装成功的本地包在 Profile 内，才允许独立的 enable 开关。
+  runDeployment(['validate', '--apply', '--confirm-verify'], f.opts)
+  runDeployment(['publish', '--apply', '--confirmed-pass', '--evidence', 'ev-123'], f.opts)
+  assert.equal(runSwitch(args, {
+    env: { DSH_PROFILE_DIR: f.profile }, out: () => {}, err: (s) => errors.push(s),
+  }), 0)
+  assert.match(readFileSync(patchFile, 'utf8'), /disabled: false/u)
+})
+
+
+it('已安装的本地包若锁文件漂移，旧 plugin:on 也必须拒绝启用', () => {
+  const f = fixture()
+  runDeployment(['validate', '--apply', '--confirm-verify'], f.opts)
+  runDeployment(['publish', '--apply', '--confirmed-pass', '--evidence', 'ev-456'], f.opts)
+  const patchFile = join(f.profile, 'cordis.patch.yml')
+  writeFileSync(patchFile, '- id: gac-runtime\n  disabled: true\n')
+  writeFileSync(join(f.profile, 'pnpm-lock.yaml'),
+    'importers:\n  .:\n    dependencies:\n      dsh-gac-runtime:\n        specifier: file:wrong.tgz\n')
+  const errors = []
+  assert.equal(runSwitch(['on', '--file', patchFile], {
+    env: { DSH_PROFILE_DIR: f.profile }, out: () => {},
+    err: (s) => errors.push(s),
+  }), 1)
+  assert.match(errors.join('\n'), /禁止开启/u)
+  assert.match(readFileSync(patchFile, 'utf8'), /disabled: true/u)
+  const state = runDeployment(['status'], f.opts)
+  assert.notEqual(state.lockSpec, state.spec)
+  assert.match(f.lines.join('\n'), /锁文件不一致/u)
 })
