@@ -105,7 +105,7 @@ describe('设计产物：身份从正文算出来', () => {
     )
   })
 
-  it('空正文与缺 where 的追溯项都被拒', () => {
+  it('空正文、空追溯表与缺 where 的追溯项都被拒', () => {
     assert.throws(
       () => compileDesignArtifact({ artifact: 'software_detail', content: '   ' }),
       (error) => error.code === DESIGN_CODES.MALFORMED,
@@ -118,11 +118,22 @@ describe('设计产物：身份从正文算出来', () => {
       }),
       (error) => error.code === DESIGN_CODES.MALFORMED,
     )
+    // 空追溯表不是「没填」：一致性核对是拿架构承诺过的 criteria 去详设里逐条找，空表会让
+    // 「找不到」变成必然——于是「没填」与「真的不一致」在下游长得一模一样。活体上正是如此：
+    // 14 条冲突里有 6 条来自一份空追溯表。
+    assert.throws(
+      () => compileDesignArtifact({ artifact: 'software_detail', content: '正文' }),
+      (error) => error.code === DESIGN_CODES.MALFORMED && /traceability/u.test(error.message),
+    )
+    assert.throws(
+      () => compileDesignArtifact({ artifact: 'software_detail', content: '正文', traceability: [] }),
+      (error) => error.code === DESIGN_CODES.MALFORMED,
+    )
   })
 
   it('产出它的子会话由运行时盖章，不是自报', () => {
     const stamped = compileDesignArtifact(
-      { artifact: 'software_detail', content: '正文' },
+      { artifact: 'software_detail', content: '正文', traceability: [{ criteria: 'AC1', where: '§1' }] },
       { childSessionId: 'child-session-9' },
     )
     assert.equal(stamped.author_child_session_id, 'child-session-9')
@@ -400,6 +411,29 @@ describe('设计裁决：批准是主会话的一次判断，不是设计自报'
     const design = build()
     const approval = compileDesignApproval({ decision: 'approved', reason: 'r' }, { designId: designId(design) })
     assert.deepEqual(evaluateDesignApproval(approval, design), { ok: true, violations: [] })
+  })
+
+  it('自相矛盾的设计包连批准都签不了 —— 先修设计，再谈批准', () => {
+    // 活体验收里真实发生过：设计包以 `consistency_result.ok = false` 冻结（14 条冲突），
+    // 而批准当时只看三件事——裁决在不在、裁决的是不是这一版、决定是不是 approved。于是
+    // **一份自相矛盾的设计可以被批准并开工**：架构承诺的验收标准，详设里根本没有。
+    // 一致性不是审核者的印象，它是「这份设计能不能被照着做」这件事本身，所以它得在裁决之前。
+    const contradictory = build({
+      artifacts: fourArtifacts({
+        software_detail: artifact('software_detail', '详设正文', [{ criteria: 'AC2', where: '§1' }]),
+      }),
+    })
+    assert.equal(contradictory.consistency_result.ok, false, '这份设计必须是自相矛盾的')
+    const approval = compileDesignApproval(
+      { decision: 'approved', reason: '看着没问题' },
+      { designId: designId(contradictory) },
+    )
+    const result = evaluateDesignApproval(approval, contradictory)
+    assert.equal(result.ok, false)
+    assert.ok(
+      result.violations.some((entry) => entry.code === DESIGN_CODES.INCONSISTENT),
+      '违规里必须包含一致性那条，而不是被笼统地判成「没批准」',
+    )
   })
 })
 

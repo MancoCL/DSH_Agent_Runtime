@@ -266,6 +266,49 @@ describe('提示词与人格段', () => {
   it('写范围为空的节点，人格段明说不得写文件', () => {
     assert.ok(buildChildPersona(node({ write_scope: [] })).includes('不得写任何文件'))
   })
+
+  it('需求正文原样进提示词 —— 验收标准只存编号，编号不表达意思', () => {
+    // 活体验收里真实发生过：`requirement` 是空字符串，只有 `AC1`…`AC6` 六个编号，于是不读实现的
+    // 验证设计节点只能照契约里 operation 的顺序猜「编号↔口径」，交回来的计划与任务书的编号整体
+    // 错位——而形状完全正常，没有任何门禁看得出来。正文是那些读不到实现的角色唯一的依据来源。
+    const text = buildChildPrompt({
+      node: node({ role: 'verification_design', write_scope: [] }),
+      task,
+      root: 'D:/proj',
+      dispatchId: 'REQ-1-T1-A1',
+      criteria: ['AC1'],
+      requirement: '把配置字段删掉，删干净。',
+    })
+    assert.ok(text.includes('需求正文（用户原话）：把配置字段删掉，删干净。'))
+  })
+
+  it('正文缺席时明说这是缺口，而不是让子会话照编号猜', () => {
+    const text = buildChildPrompt({
+      node: node({ role: 'verification_design', write_scope: [] }),
+      task: { task_id: 'REQ-1', mode: 'high_risk_task', acceptance_criteria: ['AC1'] },
+      root: 'D:/proj',
+      dispatchId: 'REQ-1-T1-A1',
+      criteria: ['AC1'],
+    })
+    assert.ok(text.includes('没有记下需求正文'))
+    assert.ok(text.includes('不要照编号猜'))
+  })
+
+  it('设计角色的提示词讲清一致性规则，否则它会撞上自己的门禁', () => {
+    // 一致性核对是运行时逐条比对的：架构在 `traceability` 里承诺过的 criteria，详设必须原样
+    // 出现同一条。规则不写进提示词，设计角色只能靠猜——而猜错的代价是整份设计包判为自相矛盾，
+    // 连批准都签不了（见 `evaluateDesignApproval`）。
+    const text = buildChildPrompt({
+      node: node({ role: 'software_design', write_scope: [] }),
+      task,
+      root: 'D:/proj',
+      dispatchId: 'REQ-1-T1-A1',
+      criteria: ['AC1'],
+      requirement: '把配置字段删掉。',
+    })
+    assert.ok(text.includes('裸编号'))
+    assert.ok(text.includes('详设产物必须原样出现同一条'))
+  })
 })
 
 describe('接缝可用性', () => {
