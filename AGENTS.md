@@ -56,6 +56,7 @@ npm run deploy:status
 - 只修改当前任务所属文件；不操作历史任务证据、不伪造 E2E、不要擅自改变运行时现有安全语义。
 - 代码、测试、脚本的新注释使用中文，保留标识符、JSDoc 类型和工具名原文。
 - 核心边界改动应配真实反例与单元测试，执行 `npm test`。
+- 第三方安装面与运行时同等重要：`package.json` 里的 `files`、`dsh.bundle.patch`、`peerDependencies` 和安装期脚本决定别人能否从 GitHub 装上本插件，改动必须让 `test/install-surface.test.js` 通过。**不得新增 `prepare`/`postinstall` 等安装期脚本**（会让安装方被迫放行 `allowBuilds`），**不得去掉 peer 的 `optional` 标记**，也不得把 peer 指向宿主之外的包。
 
 ## 2. Git 纪律
 

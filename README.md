@@ -6,7 +6,7 @@ DeepSeek Harness（DSH）中的通用 GAC（Governed Agent Collaboration）插�
 
 ## 从 GitHub 安装
 
-本包是纯 ESM JavaScript，没有构建步骤、也没有 npm 运行时依赖，装上即可用。DSH 的 `plugin` 命令就是 Profile 目录里的 pnpm：`add` 在安装完成后还会自动把本包写进该 Profile 的 `dsh.profile.bundles`，所以不需要再手工编辑启用配置。
+本包是纯 ESM JavaScript，没有构建步骤、也没有 npm 运行时依赖，装上即可用。DSH 的 `plugin` 命令就是 Profile 目录里的 pnpm：`add` 在安装完成后还会自动把本包写进该 Profile 的 `dsh.profile.bundles`，所以不需要再手工编辑启用配置。**安装或升级后必须完全退出并重启 DSH，新版本才会被加载。**
 
 ```powershell
 # 装进指定 Profile（web / headless / acp / sdk / desktop，或你自己的 Profile 名）
@@ -121,6 +121,7 @@ npm run deploy:status
 5. 子会话创建到权限绑定之间可能有平台时序窗口；不可凭成功样例宣布任意调度时序下完全安全。
 6. `memory` 与 `checkpoint` 的部分字段目前只是项目策略声明，**没有对应完整 Runtime enforcement**；不会自动 Git commit。GAC 审计文件也不是任务状态的权威来源。
 7. 具体剩余项、历史真 E2E 与切换条件见 [CUTOVER](docs/CUTOVER.md)。历史执行接缝、宿主事故与版本判据见 [ADR](docs/ADR-0001-子会话执行载体.md)。
+8. 从 GitHub 安装取的是**源码快照**：宿主安装时不会运行本仓库的测试，任何提交都能被装上。请固定到已通过 `npm test` 的标签或提交，而不是长期跟随 `main`。
 
 ## 文档职责
 
