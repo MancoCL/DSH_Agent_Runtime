@@ -97,6 +97,23 @@ describe('按角色挑产出契约', () => {
       CHILD_OUTPUT_SCHEMAS.review.required,
       ['status', 'summary', 'verification_independence', 'engineering_quality'],
     )
+    assert.deepEqual(
+      CHILD_OUTPUT_SCHEMAS.software_design.required,
+      ['status', 'summary', 'design'],
+    )
+    assert.deepEqual(
+      CHILD_OUTPUT_SCHEMAS.test_design.required,
+      ['status', 'summary', 'design'],
+    )
+    // 设计角色交的**是一份产物**，不是一段散文：产物名取自闭集，正文与追溯表分开。
+    assert.deepEqual(
+      CHILD_OUTPUT_SCHEMAS.software_design.properties.design.properties.artifact.enum,
+      ['software_architecture', 'software_detail'],
+    )
+    assert.deepEqual(
+      CHILD_OUTPUT_SCHEMAS.test_design.properties.design.properties.artifact.enum,
+      ['test_architecture', 'test_detail'],
+    )
     // 六问与五维都要有：缺一项就不该被当成一份复核报告。
     assert.equal(CHILD_OUTPUT_SCHEMAS.review.properties.verification_independence.required.length, 6)
     assert.equal(CHILD_OUTPUT_SCHEMAS.review.properties.engineering_quality.required.length, 5)
@@ -176,6 +193,56 @@ describe('验证执行节点的提示词 —— 活体第一次跑漏报之后�
       dispatchId: 'REQ-1-V1-A1',
     })
     assert.match(prompt, /还没有冻结的验证计划/u)
+  })
+})
+
+describe('设计专家的提示词：产物名说死，测试设计明说它看不到仓库', () => {
+  const task = { task_id: 'REQ-1', mode: 'high_risk_task' }
+
+  /**
+   * @param {string} role
+   * @param {string[]} artifacts
+   * @returns {string}
+   */
+  function promptFor(role, artifacts) {
+    return buildChildPrompt({
+      node: node({
+        id: 'A1',
+        role,
+        required_capabilities: ['architecture'],
+        write_scope: [],
+        expected_artifacts: artifacts,
+      }),
+      task,
+      root: 'D:/proj',
+      dispatchId: 'REQ-1-A1-A1',
+      criteria: ['AC1'],
+      contract: { name: 'parseConfig', operations: [{ name: 'parseConfig', signature: 'parseConfig(text: string): Config' }] },
+    })
+  }
+
+  it('产物名取自节点声明的期望产物，不是让它猜', () => {
+    const prompt = promptFor('software_design', ['software_architecture'])
+    assert.match(prompt, /你要交的是设计产物 `software_architecture`/u)
+    assert.match(prompt, /`design\.content`/u)
+    assert.match(prompt, /parseConfig\(text: string\): Config/u)
+  })
+
+  it('没声明期望产物时给出它那两份的闭集，而不是留空', () => {
+    const prompt = promptFor('test_design', [])
+    assert.match(prompt, /test_architecture 或 test_detail/u)
+  })
+
+  it('测试设计明说「你没有读仓库的工具，这是刻意的」', () => {
+    // 测试设计的预期必须从需求推导；读本次实现会让预期照着实现写。
+    assert.match(promptFor('test_design', ['test_detail']), /你没有读仓库的工具，这是刻意的/u)
+    assert.doesNotMatch(promptFor('software_design', ['software_detail']), /你没有读仓库的工具/u)
+  })
+
+  it('软件设计能读仓库（不读代码就谈不上设计），因此不出现那句禁令', () => {
+    const prompt = promptFor('software_design', ['software_detail'])
+    assert.match(prompt, /写到\*\*另一个人能照着做\*\*的程度/u)
+    assert.match(prompt, /design\.unresolved_issues/u)
   })
 })
 

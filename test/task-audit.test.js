@@ -12,6 +12,14 @@ import { describe, it } from 'node:test'
 
 import { composeTaskAudit } from '../lib/task-audit.js'
 import { compileTask, deserializeTask, serializeTask } from '../lib/coordinator.js'
+import {
+  compileDesignApproval,
+  compileDesignArtifact,
+  compileDesignPackage,
+  deepFreezeDesign,
+  designId,
+  freezeDesign,
+} from '../lib/design.js'
 import { planId } from '../lib/verification.js'
 
 /**
@@ -85,6 +93,47 @@ const PLAN = {
   ],
 }
 
+/**
+ * 一份四份产物齐、追溯覆盖 AC1 的设计包。
+ *
+ * @param {readonly string[]} [criteria]
+ * @returns {object}
+ */
+function designPackage(criteria = ['AC1']) {
+  const artifact = (name, content) => compileDesignArtifact(
+    { artifact: name, content, traceability: criteria.map((id) => ({ criteria: id, where: '§1' })) },
+    { childSessionId: `design-child-${name}`, createdAt: 1 },
+  )
+  return compileDesignPackage({
+    task_id: 'REQ-AUDIT',
+    requirement_ref: 'requirement-abc',
+    interface_contract_ref: 'contract-abc',
+    artifacts: {
+      software_architecture: artifact('software_architecture', '架构：一个模块。'),
+      software_detail: artifact('software_detail', '详设：一个函数。'),
+      test_architecture: artifact('test_architecture', '测试架构：两条用例。'),
+      test_detail: artifact('test_detail', '测试详设：正例与反例各一。'),
+    },
+    requirement_traceability: criteria.map((id) => ({ criteria: id, artifact: 'software_detail' })),
+    consistency_result: { ok: true, conflicts: [] },
+    unresolved_issues: [],
+  }, { criteria, frozenAt: 1 })
+}
+
+/** 冻好的设计包（盘上那一份的样子）。 */
+const DESIGN = deepFreezeDesign(designPackage())
+
+/**
+ * 一份针对某份设计作出的裁决。
+ *
+ * @param {string} [decision]
+ * @param {string} [against] - 裁决挂在哪一份设计上（默认当前这一份）。
+ * @returns {object}
+ */
+function approvalFor(decision = 'approved', against = designId(DESIGN)) {
+  return compileDesignApproval({ decision, reason: '审计用例' }, { designId: against, sessionId: 'session-1', at: 2 })
+}
+
 /** 一份齐备的输入。 */
 function complete() {
   return {
@@ -114,6 +163,9 @@ function complete() {
     planIdOf: planId,
     contractRequired: true,
     reviewRequired: true,
+    designRequired: true,
+    design: DESIGN,
+    designApproval: approvalFor(),
   }
 }
 
@@ -131,6 +183,8 @@ describe('审计视图：齐全的链条', () => {
     assert.equal(audit.artifacts.verification_executions, 2)
     assert.equal(audit.artifacts.review, planId(PLAN))
     assert.equal(audit.artifacts.evidence_issued, 3)
+    assert.equal(audit.artifacts.design, designId(DESIGN))
+    assert.equal(audit.artifacts.design_approved, true)
     assert.equal(audit.nodes.length, 4)
   })
 
@@ -219,6 +273,49 @@ describe('审计视图：缺口必须说出来', () => {
     const audit = composeTaskAudit({ ...complete(), task: task() })
 
     assert.equal(audit.gaps.some((gap) => /这些节点没有完成/u.test(gap)), true)
+  })
+})
+
+describe('审计视图：设计门禁的缺口要分辨「没做出来」与「做出来没人批」', () => {
+  it('要求设计却没有设计包，点名', () => {
+    const audit = composeTaskAudit({ ...complete(), design: undefined, designApproval: undefined })
+    assert.equal(audit.ok, false)
+    assert.equal(audit.gaps.some((gap) => /没有冻结的设计包/u.test(gap)), true)
+    assert.equal(audit.artifacts.design, null)
+    assert.equal(audit.artifacts.design_approved, null)
+  })
+
+  it('设计冻了但没有裁决，与「没有设计包」是两条不同的缺口', () => {
+    const audit = composeTaskAudit({ ...complete(), designApproval: undefined })
+    assert.equal(audit.gaps.some((gap) => /已冻结但还没有任何裁决/u.test(gap)), true)
+    assert.equal(audit.gaps.some((gap) => /没有冻结的设计包/u.test(gap)), false)
+  })
+
+  it('裁决是「请求修订」时如实记下决定与理由', () => {
+    const audit = composeTaskAudit({ ...complete(), designApproval: approvalFor('revision_requested') })
+    assert.equal(audit.gaps.some((gap) => /裁决是 revision_requested/u.test(gap)), true)
+    assert.equal(audit.artifacts.design_approved, false)
+  })
+
+  it('批准挂在另一版设计上时算失效，而不是算批准', () => {
+    const other = deepFreezeDesign(designPackage(['AC1', 'AC2']))
+    const audit = composeTaskAudit({
+      ...complete(),
+      designApproval: approvalFor('approved', designId(other)),
+    })
+    assert.equal(audit.gaps.some((gap) => /设计批准已失效/u.test(gap)), true)
+  })
+
+  it('不要求设计的模式不报设计缺口', () => {
+    const audit = composeTaskAudit({ ...complete(), designRequired: false, design: undefined, designApproval: undefined })
+    assert.equal(audit.gaps.some((gap) => /设计/u.test(gap)), false)
+  })
+
+  it('复核对象进链条：缺省是实现，也可以记成设计', () => {
+    assert.equal(composeTaskAudit(complete()).artifacts.review_subject, 'implementation')
+    const input = complete()
+    const audit = composeTaskAudit({ ...input, review: { ...input.review, subject: 'design' } })
+    assert.equal(audit.artifacts.review_subject, 'design')
   })
 })
 

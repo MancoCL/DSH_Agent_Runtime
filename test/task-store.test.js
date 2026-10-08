@@ -297,6 +297,63 @@ describe('TaskStore', () => {
     )
   })
 
+  it('设计草稿可覆盖，冻结后的设计包拒绝覆盖', () => {
+    // 四份产物由不同的节点陆续交回来，中间态可覆盖；定稿是下游开工的输入，就地改写会让已经照它
+    // 开工的分支对着一份不存在的设计干活——所以一个可覆盖、一个拒绝覆盖。
+    const root = scratch()
+    const store = new TaskStore({ root })
+    assert.equal(store.loadDesignDraft('REQ-1'), undefined)
+    store.saveDesignDraft('REQ-1', { task_id: 'REQ-1', artifacts: { software_architecture: { ref: 'artifact-1' } } })
+    store.saveDesignDraft('REQ-1', {
+      task_id: 'REQ-1',
+      artifacts: { software_architecture: { ref: 'artifact-1' }, software_detail: { ref: 'artifact-2' } },
+    })
+    assert.equal(Object.keys(store.loadDesignDraft('REQ-1').artifacts).length, 2)
+
+    assert.equal(store.hasDesign('REQ-1'), false)
+    store.saveDesign('REQ-1', { schema_version: 1, task_id: 'REQ-1' })
+    assert.equal(store.hasDesign('REQ-1'), true)
+    assert.throws(
+      () => store.saveDesign('REQ-1', { schema_version: 1, task_id: 'REQ-1', 另一版: true }),
+      (error) => error.code === TASK_STORE_CODES.EXISTS,
+    )
+  })
+
+  it('草稿与定稿同目录不同前缀，一眼能看出手上这份是不是定稿', () => {
+    const root = scratch()
+    const store = new TaskStore({ root })
+    store.saveDesignDraft('REQ-1', { task_id: 'REQ-1', artifacts: {} })
+    store.saveDesign('REQ-1', { schema_version: 1, task_id: 'REQ-1' })
+    const files = readdirSync(join(root, '.dsh', 'gac', 'designs')).sort()
+    assert.deepEqual(files, ['design-REQ-1.json', 'draft-REQ-1.json'])
+  })
+
+  it('设计裁决可覆盖：后来的判断取代先前的', () => {
+    // 与设计包相反。裁决会变（先请求修订、改完再批准），而设计包一经冻结就不变；若这里也拒绝覆盖，
+    // 唯一出路是删掉请求修订那条记录再写一条批准——那正是门禁要防的。
+    const root = scratch()
+    const store = new TaskStore({ root })
+    assert.equal(store.loadDesignApproval('REQ-1'), undefined)
+    store.saveDesignApproval('REQ-1', { design_id: 'design-1', decision: 'revision_requested', reason: '改详设' })
+    store.saveDesignApproval('REQ-1', { design_id: 'design-1', decision: 'approved', reason: '改完了' })
+    assert.equal(store.loadDesignApproval('REQ-1').decision, 'approved')
+    assert.deepEqual(readdirSync(join(root, '.dsh', 'gac', 'designs')), ['approval-REQ-1.json'])
+  })
+
+  it('设计包不是一个对象时拒绝写入，而不是落下一份读不回来的文件', () => {
+    // 实际踩过的坑：把 `freezeDesign()` 的整个返回值传进来（它的设计包在 `design` 字段上），于是盘上
+    // 留下内容为 `undefined` 的文件——`hasDesign` 看见文件在、`loadDesign` 读不出来，这个名字就废了。
+    const root = scratch()
+    const store = new TaskStore({ root })
+    for (const bad of [undefined, null, 'design-1', 7]) {
+      assert.throws(
+        () => store.saveDesign('REQ-1', bad),
+        (error) => error.code === TASK_STORE_CODES.MALFORMED,
+      )
+    }
+    assert.equal(store.hasDesign('REQ-1'), false)
+  })
+
   it('需要项目根', () => {
     assert.throws(() => new TaskStore({}), TypeError)
   })

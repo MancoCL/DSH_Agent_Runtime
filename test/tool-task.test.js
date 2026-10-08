@@ -15,6 +15,13 @@ import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
 
 import { TaskStore } from '../lib/task-store.js'
+import {
+  compileDesignArtifact,
+  compileDesignPackage,
+  deepFreezeDesign,
+  designId,
+  freezeDesign,
+} from '../lib/design.js'
 import { TASK_TOOL_NAME, createTaskTool, taskToolOptions } from '../lib/tool-task.js'
 
 const identityDefineTool = (options) => options
@@ -32,7 +39,9 @@ function scratch() {
   return root
 }
 
-/** 一份两节点的标准计划：实现随后验证。 */
+/**
+ * 一份两节点的标准计划：实现随后验证。
+ */
 function standardPlan() {
   return {
     nodes: [
@@ -51,6 +60,73 @@ function standardPlan() {
       },
     ],
   }
+}
+
+/**
+ * 造一份内容合法的设计包，四份产物齐、追溯覆盖给定验收标准。
+ *
+ * 直接写盘而不是走派遣：本套件测的是**门禁**，让四份产物真的由子会话产出来会把每个用例都变成一次
+ * 端到端演练，而这里要验的是「门禁看不看设计、看的是不是批准」。设计包自己的编译与冻结另有
+ * `test/design.test.js` 覆盖。
+ *
+ * @param {string} taskId
+ * @param {readonly string[]} criteria
+ * @returns {object}
+ */
+function designPackageFor(taskId, criteria) {
+  const artifact = (name, content) => compileDesignArtifact(
+    {
+      artifact: name,
+      content,
+      traceability: criteria.map((id) => ({ criteria: id, where: '§1' })),
+    },
+    { childSessionId: `design-child-${name}`, createdAt: 1 },
+  )
+  return compileDesignPackage(
+    {
+      task_id: taskId,
+      requirement_ref: 'requirement-test',
+      interface_contract_ref: 'contract-test',
+      artifacts: {
+        software_architecture: artifact('software_architecture', '架构：一个模块。'),
+        software_detail: artifact('software_detail', '详设：一个函数。'),
+        test_architecture: artifact('test_architecture', '测试架构：两条用例。'),
+        test_detail: artifact('test_detail', '测试详设：正例与反例各一。'),
+      },
+      requirement_traceability: criteria.map((id) => ({ criteria: id, artifact: 'software_detail' })),
+      consistency_result: { ok: true, conflicts: [] },
+      unresolved_issues: [],
+    },
+    { criteria, frozenAt: 1 },
+  )
+}
+
+/**
+ * 给一个高风险任务冻上一份设计并作出批准。
+ *
+ * 这道门禁的**存在**由「设计门禁」那个 describe 单独验；其余高风险用例关心的是计划、证据、复核
+ * 这些更下游的门禁，所以它们只需要先越过设计这一关。
+ *
+ * @param {object} h
+ * @param {string} taskId
+ * @param {readonly string[]} [criteria]
+ * @returns {string} 设计 id
+ */
+function approveDesign(h, taskId, criteria = ['AC1']) {
+  const pkg = deepFreezeDesign(designPackageFor(taskId, criteria))
+  const frozen = freezeDesign(pkg, undefined)
+  assert.equal(frozen.status, 'frozen')
+  const design = frozen.design
+  h.store.saveDesign(taskId, design)
+  h.store.saveDesignApproval(taskId, {
+    schema_version: 1,
+    design_id: designId(design),
+    decision: 'approved',
+    reason: '测试替身：设计已核对',
+    decided_by_session_id: 'session-1',
+    decided_at: 1,
+  })
+  return designId(design)
 }
 
 /**
@@ -245,7 +321,8 @@ describe('工具形状', () => {
     const store = new TaskStore({ root: scratch() })
     const options = taskToolOptions({ taskStoreFor: () => store, sessionRootFor: () => store.root })
     assert.deepEqual([...options.parameters.action.enum], [
-      'create', 'grill', 'contract', 'plan', 'advance', 'reopen', 'review', 'status', 'list', 'complete',
+      'create', 'grill', 'contract', 'plan', 'design', 'advance', 'reopen', 'review', 'status', 'list',
+      'complete',
       // 只读审计：把链条从已落盘的产物与追加日志里派生出来（不新增存储）。
       'audit',
     ])
@@ -712,14 +789,16 @@ describe('complete — 收口必须过证据判定', () => {
   })
 })
 
-describe('验证计划门禁 —— 计划必须在实现之前', () => {
+describe('设计门禁 —— 未经批准的设计不能进入实施', () => {
   /**
-   * 一个高风险任务，含实现与验证两个节点。
+   * 一个高风险任务，含实现与验证两个节点，**不带设计**。
+   *
+   * 这一组用例测的正是「没有设计时会发生什么」，所以这里刻意不预先批准设计。
    *
    * @param {object} h
    * @returns {Promise<object>}
    */
-  async function createHighRisk(h) {
+  function createDesignless(h) {
     return h.tool.execute({
       action: 'create',
       task_id: 'REQ-HR',
@@ -731,6 +810,209 @@ describe('验证计划门禁 —— 计划必须在实现之前', () => {
         ],
       },
     }, h.exec)
+  }
+
+  /**
+   * 冻一份设计在盘上，返回它。
+   *
+   * @param {object} h
+   * @param {readonly string[]} [criteria]
+   * @returns {object}
+   */
+  function freezeOnDisk(h, criteria = ['AC1']) {
+    const frozen = freezeDesign(deepFreezeDesign(designPackageFor('REQ-HR', criteria)), undefined)
+    assert.equal(frozen.status, 'frozen')
+    h.store.saveDesign('REQ-HR', frozen.design)
+    return frozen.design
+  }
+
+  it('没有设计包时实现节点被拦下，并说清下一步做什么', async () => {
+    const h = dispatchHarness()
+    await createDesignless(h)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
+    assert.equal(value.action, 'design_required')
+    assert.deepEqual(value.nodes, ['T1'])
+    assert.match(value.message, /还没有冻结的设计包/u)
+    assert.equal(h.calls.length, 0)
+  })
+
+  it('设计冻了但没人裁决时仍然拦下，并指向裁决', async () => {
+    const h = dispatchHarness()
+    await createDesignless(h)
+    freezeOnDisk(h)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
+    assert.equal(value.action, 'design_required')
+    assert.match(value.message, /请由主会话作出裁决/u)
+  })
+
+  it('裁决挂在另一版设计上时算过期，不算批准', async () => {
+    // 设计被修订后身份就变了，而旧裁决仍然躺在盘上、字段齐全、看起来完全正常。不比对身份，
+    // 「改完设计再直接开工」就是一条不需要任何人批准的路。
+    const h = dispatchHarness()
+    await createDesignless(h)
+    const design = freezeOnDisk(h)
+    const other = designPackageFor('REQ-HR', ['AC1', 'AC2'])
+    assert.notEqual(designId(other), designId(design))
+    h.store.saveDesignApproval('REQ-HR', {
+      schema_version: 1,
+      design_id: designId(other),
+      decision: 'approved',
+      reason: '批准的是上一版',
+    })
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
+    assert.equal(value.action, 'design_required')
+    assert.match(value.message, /已被修订/u)
+  })
+
+  it('批准之后实现节点才开工', async () => {
+    const h = dispatchHarness()
+    await createDesignless(h)
+    freezeOnDisk(h)
+    const approved = await h.tool.execute({
+      action: 'design',
+      task_id: 'REQ-HR',
+      design_action: 'approve',
+      reason: '四份产物齐、追溯无缺口',
+    }, h.exec)
+    assert.equal(approved.action, 'design_approved')
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
+    assert.equal(value.action, 'dispatch')
+    assert.deepEqual(h.calls.map((call) => call.node.id), ['T1'])
+  })
+
+  it('请求修订之后实现节点仍不开工', async () => {
+    const h = dispatchHarness()
+    await createDesignless(h)
+    freezeOnDisk(h)
+    const revised = await h.tool.execute({
+      action: 'design',
+      task_id: 'REQ-HR',
+      design_action: 'revise',
+      reason: '详设没有写清并发写怎么定序',
+    }, h.exec)
+    assert.equal(revised.action, 'design_revision_requested')
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
+    assert.equal(value.action, 'design_required')
+    assert.match(value.message, /请由主会话作出裁决/u)
+  })
+
+  it('设计门禁只拦实现节点：盲的验证设计节点照常派遣', async () => {
+    // 把验证设计一起拦住，等于把「设计与验证设计并行」这条已验收的性质换回串行。
+    const h = dispatchHarness()
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-HR',
+      mode: 'high_risk_task',
+      plan: {
+        nodes: [
+          { id: 'D1', objective: '从需求推导验证方案', role: 'verification_design', required_capabilities: ['verification'], write_scope: [] },
+          { id: 'T1', objective: '实现', required_capabilities: ['implementation'], write_scope: ['src/'] },
+        ],
+      },
+    }, h.exec)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
+    assert.equal(value.action, 'dispatch')
+    assert.deepEqual(h.calls.map((call) => call.node.id), ['D1'])
+  })
+
+  it('标准任务不需要设计', async () => {
+    const h = dispatchHarness()
+    await createStandard(h)
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    assert.equal(value.action, 'dispatch')
+  })
+
+  it('status 子动作在有没有设计时都给出可读的现状', async () => {
+    const h = dispatchHarness()
+    await createDesignless(h)
+    const empty = await h.tool.execute({ action: 'design', task_id: 'REQ-HR' }, h.exec)
+    assert.equal(empty.action, 'design_status')
+    assert.equal(empty.design_id, undefined)
+    assert.match(empty.message, /还没有冻结的设计包/u)
+
+    const design = freezeOnDisk(h)
+    const frozen = await h.tool.execute({ action: 'design', task_id: 'REQ-HR' }, h.exec)
+    assert.equal(frozen.design_id, designId(design))
+    assert.match(frozen.message, /还没有人对这份设计作出裁决/u)
+  })
+
+  it('裁决必须写明理由', async () => {
+    const h = dispatchHarness()
+    await createDesignless(h)
+    freezeOnDisk(h)
+    await assert.rejects(
+      () => h.tool.execute({ action: 'design', task_id: 'REQ-HR', design_action: 'approve' }, h.exec),
+      /必须写明 reason/u,
+    )
+    assert.equal(h.store.loadDesignApproval('REQ-HR'), undefined)
+  })
+
+  it('未知的 design 子动作被拒，而不是当成 status 悄悄过去', async () => {
+    const h = dispatchHarness()
+    await createDesignless(h)
+    await assert.rejects(
+      () => h.tool.execute({ action: 'design', task_id: 'REQ-HR', design_action: 'looks_good' }, h.exec),
+      /未知的 design 子动作/u,
+    )
+  })
+
+  it('子会话不能签发裁决：批准必须来自主会话', async () => {
+    // 让派出设计的人自己批准它，等于让同一次推理既当作者又当审稿人。
+    const h = dispatchHarness()
+    await createDesignless(h)
+    freezeOnDisk(h)
+    const child = { agent: { session: { id: 'child-1', header: { parentSession: 'session-1' } } } }
+    await assert.rejects(
+      () => h.tool.execute({
+        action: 'design',
+        task_id: 'REQ-HR',
+        design_action: 'approve',
+        reason: '我自己批的',
+      }, child),
+      /必须由主会话签发/u,
+    )
+    assert.equal(h.store.loadDesignApproval('REQ-HR'), undefined)
+  })
+
+  it('还没有设计包时裁决被拒，而不是落下一份悬空的批准', async () => {
+    const h = dispatchHarness()
+    await createDesignless(h)
+    await assert.rejects(
+      () => h.tool.execute({
+        action: 'design',
+        task_id: 'REQ-HR',
+        design_action: 'approve',
+        reason: '批一下',
+      }, h.exec),
+      /没有可裁决的对象/u,
+    )
+  })
+})
+
+describe('验证计划门禁 —— 计划必须在实现之前', () => {
+  /**
+   * 一个高风险任务，含实现与验证两个节点。
+   *
+   * 这里先冻上一份设计并批准：本组用例测的是**计划**门禁，而高风险任务的实现节点在计划门禁之前
+   * 还要过设计门禁（设计门禁自己有一组用例）。不先越过它，这些用例测到的会是一道与它们无关的门。
+   *
+   * @param {object} h
+   * @returns {Promise<object>}
+   */
+  async function createHighRisk(h) {
+    const created = await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-HR',
+      mode: 'high_risk_task',
+      plan: {
+        nodes: [
+          { id: 'T1', objective: '实现', required_capabilities: ['implementation'], write_scope: ['src/'] },
+          { id: 'T2', objective: '独立验证', depends_on: ['T1'], required_capabilities: ['verification'], write_scope: [] },
+        ],
+      },
+    }, h.exec)
+    approveDesign(h, 'REQ-HR')
+    return created
   }
 
   /** 一份覆盖 AC1 的完整计划参数。 */
@@ -867,6 +1149,9 @@ describe('验证证据门禁 —— 收口要看证据', () => {
         ],
       },
     }, h.exec)
+    // 本组测的是**验证证据**那一关：先越过设计门禁（它自己有一组用例），否则这些用例停在一道
+    // 与它们无关的门上。
+    approveDesign(h, 'REQ-HR')
     await h.tool.execute({
       action: 'plan',
       task_id: 'REQ-HR',
@@ -901,6 +1186,7 @@ describe('验证证据门禁 —— 收口要看证据', () => {
         { id: 'T1', objective: '实现', required_capabilities: ['implementation'], write_scope: ['src/'] },
       ] },
     }, h.exec)
+    approveDesign(h, 'REQ-HR')
     await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
     const value = await h.tool.execute({
       action: 'complete',
@@ -1527,6 +1813,7 @@ describe('验证证据门禁 —— 触发条件是「计划在不在」，不�
         { id: 'T1', objective: '实现', required_capabilities: ['implementation'], write_scope: [] },
       ] },
     }, h.exec)
+    approveDesign(h, 'REQ-HR')
     await h.tool.execute({ action: 'advance', task_id: 'REQ-HR' }, h.exec)
     const value = await h.tool.execute({
       action: 'complete',
@@ -1562,6 +1849,7 @@ describe('独立复核门禁 —— 六问齐备才能收口', () => {
         ],
       },
     }, h.exec)
+    approveDesign(h, 'REQ-R')
     await h.tool.execute({
       action: 'plan',
       task_id: 'REQ-R',
