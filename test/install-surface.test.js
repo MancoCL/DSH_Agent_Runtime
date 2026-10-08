@@ -129,4 +129,23 @@ describe('第三方安装面', () => {
       )
     }
   })
+
+  it('npm 发布面：OIDC workflow 不带凭据，且强制版本号与标签一致', async () => {
+    const workflowPath = join(root, '.github', 'workflows', 'publish-npm.yml')
+    assert.equal(
+      existsSync(workflowPath),
+      true,
+      '缺少 .github/workflows/publish-npm.yml：npm trust github 登记的就是这个文件名',
+    )
+    const text = await readFile(workflowPath, 'utf8')
+    assert.match(text, /workflow_dispatch/u, '发布必须手动触发，不能在每次 push 时发布')
+    assert.match(text, /id-token:\s*write/u, 'OIDC 发布必须声明 id-token: write，否则 npm 会退回要求 token/OTP')
+    assert.match(
+      text,
+      /registry-url:\s*'?https:\/\/registry\.npmjs\.org'?/u,
+      '发布上游只能是 npm 官方源；npmmirror 是只读镜像',
+    )
+    assert.match(text, /npm trust github/u, '注释里要留维护者登记 Trusted Publisher 的命令，否则没人知道怎么配')
+    assert.doesNotMatch(text, /_authToken|NODE_AUTH_TOKEN|secrets\./u, '发布凭据不得进入仓库或 CI 变量')
+  })
 })

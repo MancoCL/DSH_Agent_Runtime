@@ -57,6 +57,7 @@ npm run deploy:status
 - 代码、测试、脚本的新注释使用中文，保留标识符、JSDoc 类型和工具名原文。
 - 核心边界改动应配真实反例与单元测试，执行 `npm test`。
 - 第三方安装面与运行时同等重要：`package.json` 里的 `files`、`dsh.bundle.patch`、`peerDependencies` 和安装期脚本决定别人能否从 GitHub 或 npm 装上本插件，改动必须让 `test/install-surface.test.js` 通过。**不得新增 `prepare`/`postinstall` 等安装期脚本**（会让安装方被迫放行 `allowBuilds`），**不得去掉 peer 的 `optional` 标记**，也不得把 peer 指向宿主之外的包。包名必须保持 `dsh-gac-runtime`（Profile 依赖、`cordis.patch.yml` 与卸载命令都按它解析），**不得加回 `private: true`**（`npm publish` 会直接拒绝），`publishConfig.registry` 只能指向 npm 官方源——npmmirror 是只读镜像，只能被同步，不能作为发布上游。
+- npm 发布优先走仓库内 [.github/workflows/publish-npm.yml](.github/workflows/publish-npm.yml) 的 OIDC（Trusted Publisher）路径：**不得把 npm token、OTP 或含凭据的 `.npmrc` 提交进仓库，也不写进 CI 变量**。workflow 文件名是 trust 配置的一部分（`npm trust github dsh-gac-runtime --file publish-npm.yml --repo MancoCL/DSH_Agent_Runtime --allow-publish`），改名即失效；它发布前会重跑 `npm test`，并要求 `package.json` 版本号与指向该提交的 `v<版本>` 标签一致。同一版本号不可覆盖，内容有变就换版本号。
 
 ## 2. Git 纪律
 
