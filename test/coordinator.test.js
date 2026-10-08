@@ -15,10 +15,12 @@ import {
   applyResult,
   checkCompletion,
   compileTask,
+  deserializeTask,
   dispatch,
   nextAction,
   reopen,
   resolveReady,
+  serializeTask,
 } from '../lib/coordinator.js'
 
 /**
@@ -292,6 +294,35 @@ describe('dispatch — 执行身份', () => {
       () => dispatch(task, ['T1']),
       (error) => error.code === COORDINATOR_CODES.INVALID_TRANSITION,
     )
+  })
+
+  it('派遣时盖章「依据哪一版设计」，没给就是 null', () => {
+    // 设计包按内容寻址，所以「依据哪一版」不必另存版本号：记下当时的 id 即可，交结果时再算一次
+    // 现在的 id，不同就是换过版了。
+    assert.equal(dispatch(standardPlan(), ['T1']).nodes.get('T1').execution.design_ref, null)
+    assert.equal(
+      dispatch(standardPlan(), ['T1'], undefined, 'design-abcd1234')
+        .nodes.get('T1').execution.design_ref,
+      'design-abcd1234',
+    )
+  })
+
+  it('重新派遣会重铸设计依据，而不是留着上一次的', () => {
+    let task = dispatch(standardPlan(), ['T1'], undefined, 'design-old00000')
+    const first = task.nodes.get('T1').execution.active_dispatch_id
+    task = applyResult(task, { node_id: 'T1', dispatch_id: first, status: 'failed' }).task
+    task = reopen(task, 'T1', '照新版设计重做')
+    task = dispatch(task, ['T1'], undefined, 'design-new11111')
+    assert.equal(task.nodes.get('T1').execution.design_ref, 'design-new11111')
+  })
+
+  it('序列化往返保留设计依据', () => {
+    // `deserializeTask` 的 `execution` 是逐字段重建的：漏一个键就等于那次派遣的依据被静默丢弃，
+    // 恢复之后节点看起来「没有依据任何设计」。`role` 当初就是这样丢的。
+    const task = dispatch(standardPlan(), ['T1'], undefined, 'design-abcd1234')
+    const restored = deserializeTask(serializeTask(task))
+    assert.equal(restored.nodes.get('T1').execution.design_ref, 'design-abcd1234')
+    assert.equal(restored.nodes.get('T2').execution.design_ref, null)
   })
 })
 

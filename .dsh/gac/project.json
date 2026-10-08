@@ -44,7 +44,8 @@
     "deny_as_project_fact": ["foreign_project", "unknown"]
   },
   "authority": {
-    "enforcement_mode": "tool_guard"
+    "enforcement_mode": "tool_guard",
+    "test_paths": ["test/"]
   },
   "checkpoint": {
     "provider": "git",
