@@ -440,3 +440,188 @@ describe('守卫自身的说明', () => {
     }
   })
 })
+
+/**
+ * 一个声明了协调者写保护的工程：主会话不得直接改 `lib/` 与 `test/`。
+ *
+ * 注意这里**没有**声明任何作用域——协调者通常根本没有作用域（它不推进某个节点，它推进整个
+ * 任务），而这正是这条门禁要拦的那种情形。
+ *
+ * @param {object} [options]
+ * @returns {ReturnType<typeof createGacCore>}
+ */
+function coordinatorCore(options = {}) {
+  return createGacCore({
+    resolveRoot: () => ROOT,
+    coordinatorWriteFor: () => ({ protected_paths: ['lib/', 'test/'] }),
+    ...options,
+  })
+}
+
+describe('协调者写保护：主会话不得直接改产品与测试代码', () => {
+  it('拒绝主会话直接写产品文件', () => {
+    const core = coordinatorCore()
+    const verdict = core.preExecute(exec('write', { file_path: 'lib/plugin.js' }))
+    assert.equal(verdict.kind, 'deny')
+    assert.equal(verdict.info.code, GAC_CODES.COORDINATOR_WRITE_DENIED)
+    assert.equal(verdict.info.name, 'GacScopeDenied')
+    assert.equal(verdict.info.tool, 'write')
+  })
+
+  it('拒绝主会话直接写测试文件', () => {
+    const core = coordinatorCore()
+    const verdict = core.preExecute(exec('edit', { file_path: 'test/plugin.test.js' }))
+    assert.equal(verdict.kind, 'deny')
+    assert.equal(verdict.info.code, GAC_CODES.COORDINATOR_WRITE_DENIED)
+  })
+
+  it('原因里点名那条路径与那类工具，并给出两条出路', () => {
+    const core = coordinatorCore()
+    const verdict = core.preExecute(exec('write', { file_path: 'lib/plugin.js' }))
+    assert.match(verdict.reason, /lib\/plugin\.js/u)
+    assert.match(verdict.reason, /lib\//u)
+    assert.match(verdict.reason, /独立子会话/u)
+    assert.match(verdict.reason, /gac_task/u)
+    assert.match(verdict.reason, /gac_scope/u)
+    assert.match(verdict.reason, /override/u)
+  })
+
+  it('受保护路径之外的写入照旧放行', () => {
+    const core = coordinatorCore()
+    assert.equal(core.preExecute(exec('write', { file_path: 'docs/CUTOVER.md' })).kind, 'allow')
+    assert.equal(core.preExecute(exec('write', { file_path: 'scripts/probe.js' })).kind, 'allow')
+  })
+
+  it('路径写法不同也照样落进受保护路径', () => {
+    const core = coordinatorCore()
+    for (const path of ['./lib/a.js', 'lib/sub/deep/a.js', 'LIB/A.JS', 'test/../lib/a.js']) {
+      assert.equal(
+        core.preExecute(exec('write', { file_path: path })).kind,
+        'deny',
+        `${path} 应当落进受保护路径`,
+      )
+    }
+  })
+
+  it('同名但不同目录的文件不受影响 —— 判定看的是路径，不是文件名', () => {
+    const core = coordinatorCore()
+    assert.equal(core.preExecute(exec('write', { file_path: 'src/lib/a.js' })).kind, 'allow')
+    assert.equal(core.preExecute(exec('write', { file_path: 'libs/a.js' })).kind, 'allow')
+  })
+
+  it('拿不到路径参数的写工具失败即拒绝 —— 读不出目标不等于没目标', () => {
+    const core = coordinatorCore()
+    const verdict = core.preExecute(exec('write', {}))
+    assert.equal(verdict.kind, 'deny')
+    assert.equal(verdict.info.code, GAC_CODES.COORDINATOR_WRITE_DENIED)
+    assert.match(verdict.reason, /没有携带可读的路径参数/u)
+  })
+
+  it('读工具与运行时工具照常放行 —— 拦的是「自己动手写」', () => {
+    const core = coordinatorCore()
+    for (const name of ['read', 'grep', 'glob', 'gac_task', 'gac_scope', 'gac_evidence']) {
+      assert.equal(core.preExecute(exec(name, {})).kind, 'allow', `${name} 必须仍可用`)
+    }
+  })
+
+  it('shell 照常放行 —— 协调者要能跑 npm test 做最终验收', () => {
+    const core = coordinatorCore()
+    assert.equal(core.preExecute(exec('pwsh', { command: 'npm test' })).kind, 'allow')
+  })
+
+  it('PTC 内层子调用按同一张表拒绝', () => {
+    const core = coordinatorCore()
+    const verdict = core.preExecute(nested('write', { file_path: 'lib/a.js' }))
+    assert.equal(verdict.kind, 'deny')
+    assert.equal(verdict.info.code, GAC_CODES.COORDINATOR_WRITE_DENIED)
+  })
+
+  it('工程没声明 protected 时这一层完全不管', () => {
+    const core = createGacCore({
+      resolveRoot: () => ROOT,
+      coordinatorWriteFor: () => undefined,
+    })
+    assert.equal(core.preExecute(exec('write', { file_path: 'lib/plugin.js' })).kind, 'allow')
+  })
+
+  it('声明了 protected 却一条路径都没给时也不拦 —— 空清单不是「什么都不能写」', () => {
+    // 这一档在适配器那一侧就会被判非法（`lib/project.js`），所以到不了这里；这条用例钉的是
+    // 守卫自己的行为：它不该把一份空清单解释成「全部受保护」。
+    const core = createGacCore({
+      resolveRoot: () => ROOT,
+      coordinatorWriteFor: () => ({ protected_paths: [] }),
+    })
+    assert.equal(core.preExecute(exec('write', { file_path: 'lib/plugin.js' })).kind, 'allow')
+  })
+})
+
+describe('协调者写保护的一次性豁免', () => {
+  it('没有豁免时拒绝', () => {
+    const core = coordinatorCore()
+    assert.equal(core.preExecute(exec('write', { file_path: 'lib/a.js' })).kind, 'deny')
+  })
+
+  it('签发之后放行一次，第二次重新拒绝', () => {
+    const core = coordinatorCore()
+    const granted = core.grantOverride({ session_id: SESSION, reason: '紧急修复线上问题' })
+    assert.equal(granted.session_id, SESSION)
+    assert.equal(granted.reason, '紧急修复线上问题')
+    assert.equal(core.preExecute(exec('write', { file_path: 'lib/a.js' })).kind, 'allow')
+    // 一次性：豁免说的是「这一次」。写失败也要重新声明。
+    assert.equal(core.preExecute(exec('write', { file_path: 'lib/b.js' })).kind, 'deny')
+  })
+
+  it('豁免只对签发给它的那个会话有效', () => {
+    const core = coordinatorCore()
+    core.grantOverride({ session_id: SESSION, reason: '本地调试' })
+    const other = core.preExecute(exec('write', { file_path: 'lib/a.js' }, 'session-2'))
+    assert.equal(other.kind, 'deny')
+    // 而且它没有被别的会话用掉。
+    assert.equal(core.preExecute(exec('write', { file_path: 'lib/a.js' })).kind, 'allow')
+  })
+
+  it('豁免只免掉受保护路径那一条，别的拒绝照旧', () => {
+    // 同一个核心上两层都在：协调者保护 + 一份写作用域。豁免让协调者那一层放行，而作用域那一层
+    // 与它毫无关系，照样按自己的判据拒绝——两层各管各的。
+    const core = coordinatorCore()
+    core.declareScope({
+      session_id: SESSION,
+      task_id: 'REQ-1',
+      node_id: 'T1',
+      write_scope: ['src/'],
+      root: ROOT,
+    })
+    core.grantOverride({ session_id: SESSION, reason: '本地调试' })
+    const verdict = core.preExecute(exec('write', { file_path: 'lib/a.js' }))
+    assert.equal(verdict.kind, 'deny')
+    assert.equal(verdict.info.code, GAC_CODES.WRITE_SCOPE_DENIED)
+  })
+
+  it('没写理由时拒绝签发', () => {
+    const core = coordinatorCore()
+    assert.throws(() => core.grantOverride({ session_id: SESSION }), /理由/u)
+    assert.throws(() => core.grantOverride({ session_id: SESSION, reason: '   ' }), /理由/u)
+    assert.throws(() => core.grantOverride({ session_id: SESSION, reason: 42 }), /理由/u)
+  })
+
+  it('没有会话标识时拒绝签发', () => {
+    const core = coordinatorCore()
+    assert.throws(() => core.grantOverride({ reason: '随便' }), /会话标识/u)
+    assert.throws(() => core.grantOverride(undefined), /会话标识/u)
+  })
+
+  it('能查到尚未使用的豁免，也能主动收回', () => {
+    const core = coordinatorCore()
+    assert.equal(core.overrideFor(SESSION), undefined)
+    core.grantOverride({ session_id: SESSION, reason: '本地调试' })
+    assert.equal(core.overrideFor(SESSION).reason, '本地调试')
+    assert.equal(core.clearOverride(SESSION), true)
+    assert.equal(core.overrideFor(SESSION), undefined)
+    assert.equal(core.preExecute(exec('write', { file_path: 'lib/a.js' })).kind, 'deny')
+  })
+
+  it('收回一个不存在的豁免返回 false，而不是抛错', () => {
+    const core = coordinatorCore()
+    assert.equal(core.clearOverride('session-nowhere'), false)
+  })
+})

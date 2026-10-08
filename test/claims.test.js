@@ -11,6 +11,7 @@ import { describe, it } from 'node:test'
 
 import {
   CLAIM_CODES,
+  containedIn,
   describeConflict,
   findClaimConflict,
   findScopeOverlap,
@@ -132,6 +133,53 @@ describe('findScopeOverlap — 上报内容', () => {
     const overlap = findScopeOverlap(['src/deep/a.c'], ['src/'])
     assert.equal(overlap.scope, 'src/deep/a.c')
     assert.equal(overlap.claimed, 'src/')
+  })
+})
+
+describe('containedIn —— 有方向的包含判定', () => {
+  it('目录之内的条目落在目录之内', () => {
+    assert.equal(containedIn('lib/a.js', ['lib/']), true)
+    assert.equal(containedIn('lib/deep/nested/a.js', ['lib/']), true)
+    assert.equal(containedIn('./lib/a.js', ['lib/']), true)
+    assert.equal(containedIn('LIB/A.JS', ['lib/']), true)
+  })
+
+  it('目录之外的条目不在之内 —— 这一条与重叠判定不同，方向是有意义的', () => {
+    // 重叠是双向的：`lib/` 与 `src/` 不相撞。包含是单向的：`src/a.js` 不在 `lib/` 之内，
+    // 而 `lib/a.js` 也不在 `src/` 之内。把它写成重叠判定，受保护路径那一层就永远不生效。
+    assert.equal(containedIn('src/a.js', ['lib/']), false)
+    assert.equal(containedIn('libs/a.js', ['lib/']), false)
+    assert.equal(containedIn('src/lib/a.js', ['lib/']), false)
+  })
+
+  it('完全相同的条目落在之内', () => {
+    assert.equal(containedIn('lib/a.js', ['lib/a.js']), true)
+    assert.equal(containedIn('lib/', ['lib/']), true)
+  })
+
+  it('覆盖根目录的条目什么都在之内', () => {
+    assert.equal(containedIn('anything/at/all.js', ['**']), true)
+    assert.equal(containedIn('lib/a.js', ['.']), true)
+  })
+
+  it('条目落在清单里任意一条之内即可', () => {
+    assert.equal(containedIn('test/a.test.js', ['lib/', 'test/']), true)
+    assert.equal(containedIn('docs/a.md', ['lib/', 'test/']), false)
+  })
+
+  it('空清单里什么都不在之内', () => {
+    assert.equal(containedIn('lib/a.js', []), false)
+  })
+
+  it('条目非法时抛错，而不是静默判成「不在之内」', () => {
+    // 失败方向必须是拒绝：静默返回 false 会把一次本该发生的拒绝变成一次放行。
+    // 调用方要么先自己筛掉非法条目，要么接住这个错误并按「在之内」处理——协调者写保护
+    // 那一层就是这么做的。
+    assert.throws(() => containedIn(undefined, ['lib/']))
+    assert.throws(() => containedIn(1, ['lib/']))
+    assert.throws(() => containedIn('', ['lib/']))
+    assert.throws(() => containedIn('lib/a.js', ['']))
+    assert.throws(() => containedIn('lib/a.js', undefined))
   })
 })
 

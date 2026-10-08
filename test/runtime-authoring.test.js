@@ -369,7 +369,7 @@ describe('defineTool 拒绝创作错误：让它在这里响，而不是在加�
 })
 
 describe('作用域工具能过运行时那套编写辅助函数', { skip: !canRun }, () => {
-  it('让每一个可选参数都保持可选，因为四个重载共用同一个工具', () => {
+  it('让每一个可选参数都保持可选，因为几个重载共用同一个工具', () => {
     const core = createGacCore()
     const tool = createScopeTool({ core, defineTool: toolsPackage.defineTool })
     // 把其中任何一个声明为必填都会破坏 inspect 与 clear，它们只发送其中一部分
@@ -381,7 +381,7 @@ describe('作用域工具能过运行时那套编写辅助函数', { skip: !canR
     )
     assert.deepEqual(
       Object.keys(tool.parameters.properties).sort(),
-      ['clear', 'node_id', 'scope', 'task_id'],
+      ['clear', 'node_id', 'override', 'reason', 'scope', 'task_id'],
     )
   })
 
@@ -396,11 +396,11 @@ describe('作用域工具能过运行时那套编写辅助函数', { skip: !canR
 })
 
 describe('不依赖运行时的 scopeToolOptions', () => {
-  it('声明全部四个参数，且没有一个是必填的', () => {
+  it('声明全部六个参数，且没有一个是必填的', () => {
     const options = scopeToolOptions({ core: createGacCore() })
     assert.deepEqual(
       Object.keys(options.parameters).sort(),
-      ['clear', 'node_id', 'scope', 'task_id'],
+      ['clear', 'node_id', 'override', 'reason', 'scope', 'task_id'],
     )
     for (const [name, spec] of Object.entries(options.parameters)) {
       assert.notEqual(spec.required, true, `${name} 必须保持可选`)

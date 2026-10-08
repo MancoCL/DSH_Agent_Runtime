@@ -15,7 +15,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { createRuntime } from '../lib/index.js'
+import { coordinatorWritePolicy, createRuntime } from '../lib/index.js'
 
 /** 本文件里所有用例共用的会话 id。 */
 const SESSION = 'session-live-e2e'
@@ -101,5 +101,71 @@ describe('createRuntime —— 收权器必须真的接在核心上', () => {
       agent: { session: { id: 'session-other' } },
     }
     assert.equal(runtime.core.preExecute(other).kind, 'allow')
+  })
+})
+
+describe('createRuntime —— 协调者写保护也必须真的接在核心上', () => {
+  it('声明了 protected 的工程，主会话直接写产品文件会被拒', () => {
+    // 这一层的判据来自适配器，而适配器只在 `apply` 里才有；接线断掉的表现是「声明了保护，
+    // 主会话照样把实现写了」——而且不会有任何东西报错。
+    const runtime = createRuntime({
+      rootOf: () => 'D:/work/proj',
+      toolsFor: () => ({ schemas: () => [], restrict: () => () => {} }),
+      coordinatorWriteFor: () => ({ protected_paths: ['lib/'] }),
+    })
+    const verdict = runtime.core.preExecute(exec('write', { file_path: 'lib/plugin.js' }))
+    assert.equal(verdict.kind, 'deny')
+    assert.equal(verdict.info.code, 'GAC_COORDINATOR_WRITE_DENIED')
+  })
+
+  it('没有协调者策略时核心完全不干预', () => {
+    const { runtime } = runtimeOf()
+    assert.equal(runtime.core.preExecute(exec('write', { file_path: 'lib/plugin.js' })).kind, 'allow')
+  })
+})
+
+describe('coordinatorWritePolicy —— 谁算协调者、工程要不要拦', () => {
+  /** 一份声明了保护的适配器 authority。 */
+  const AUTHORITY = { coordinator_write: 'protected', protected_paths: ['lib/', 'test/'] }
+
+  it('主会话在声明了保护的工程里要拦', () => {
+    const policy = coordinatorWritePolicy({ authority: AUTHORITY, agent: { session: { header: {} } } })
+    assert.deepEqual(policy, { protected_paths: ['lib/', 'test/'] })
+  })
+
+  it('没有会话头的 agent 也按协调者对待', () => {
+    // 拿不到会话头时不能反过来当成子会话：那会让这道门禁在最需要它的会话里静默失效。
+    assert.deepEqual(
+      coordinatorWritePolicy({ authority: AUTHORITY, agent: undefined }),
+      { protected_paths: ['lib/', 'test/'] },
+    )
+  })
+
+  it('带 parentSession 的子会话不是协调者', () => {
+    const policy = coordinatorWritePolicy({
+      authority: AUTHORITY,
+      agent: { session: { header: { parentSession: 'parent-1' } } },
+    })
+    assert.equal(policy, undefined)
+  })
+
+  it('origin 为 subagent 的子会话不是协调者', () => {
+    const policy = coordinatorWritePolicy({
+      authority: AUTHORITY,
+      agent: { session: { header: { origin: 'subagent' } } },
+    })
+    assert.equal(policy, undefined)
+  })
+
+  it('工程没声明 protected 时不管', () => {
+    const policy = coordinatorWritePolicy({
+      authority: { coordinator_write: 'allow' },
+      agent: { session: { header: {} } },
+    })
+    assert.equal(policy, undefined)
+  })
+
+  it('工程根本没有 authority 节时不管', () => {
+    assert.equal(coordinatorWritePolicy({ authority: undefined, agent: undefined }), undefined)
   })
 })
