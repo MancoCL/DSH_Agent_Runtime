@@ -29,14 +29,21 @@ GAC plugin      →  执行模式、写作用域、写占用声明、验证、�
 | 3 | `lib/child-executor.js` —— 节点由**原生子会话**承载（语义角色工具面、真并发、深度上限） | 已完成并**活体验收通过**：子会话 id 与父不同、子会话自己写的文件、结果回到 `applyResult`、父会话不自锁；接缝缺席时按角色阻塞或显式降级（见下） |
 | 3 | `lib/task-store.js` + `lib/tool-task.js` —— 持久化任务记录、`gac_task` | 已完成 |
 | 3 | `lib/capability-router.js` + `lib/executor.js` —— 派遣会真正调用 | 已完成 |
+| 3 | 受控自动推进（`gac_task` 的 `max_waves`） | 已完成。缺省 1 波，与从前一字不差；出现需要裁决的事、有节点失败或阻塞、走满波数，三条停止条件写死；上界 20，超限抛错而不是截断 |
 | 4 | `lib/verification.js` —— 计划、反例与可追溯性门禁 | 已完成 |
 | 4 | 计划与证据门禁已接进 `gac_task` | 已完成 |
 | 4 | `lib/review.js` + `assets/ENGINEERING_POLICY.md` —— 独立复核：六问与五个质量维度 | 已完成 |
 | 4 | `lib/role-guard.js` —— 只读角色的写入面收权（E2E-6） | 已完成；**已活体验证 6 轮**：`write`/`edit` 被守卫逐字拒绝、探针文件从未落地、回报后立刻生效与恢复。收权在**它自己那个作用域**上确实生效（`write`/`edit` 已不在 `view(agent).visible` 里）。判据的字面形态 `UNKNOWN_TOOL` **已作废**：`restrict` 只过滤该作用域**继承**来的工具，agent 自己那一层注册的工具不受管辖（这条豁免是刻意的，子会话的 `structured_output` 就靠它活），所以判据改为报告里的 `mode` 与 `presented`/`removed` 名单——见 [docs/CUTOVER.md](docs/CUTOVER.md) §3 E2E-6 |
 | 4 | `lib/role-tools.js` —— **语义角色工具策略**：每个角色一档，判据只有「这个角色该看到什么」 | 已完成。设计节点是纯推理节点（`read`/`grep`/`glob`/`shell`/`write`/`edit`/`run_code`/委派都不在它的工具面里）；委派与父会话协调类在任何角色下都拒（`GAC_CHILD_DELEGATION_DENIED`） |
 | 4 | `lib/child-surface.js` —— `start()` 之后用**子会话自己的视图**对账补收 + 单调守卫 | 已完成。收不掉就如实降级成 `guard-only` 并记 `child-surface-unverified`；拿不到 `localAgent` 记 `child-surface-unavailable`，不假装收过 |
+| 4 | 主 Agent 的职责边界（`authority.coordinator_write`） | 已完成（默认 `allow`，本工程显式开 `protected`）。`standard_task`/`high_risk_task` 下主会话不得直接改产品与测试代码；破例只有一条路——一次性、必填理由、进审计的豁免 |
 | 5 | `lib/grilling.js` —— 多轮需求精化 | 已完成 |
 | 5 | `lib/contract.js` —— 接口契约冻结 | 已完成 |
+| 5 | `lib/design.js` —— 设计产物与设计包：内容寻址、冻结、一致性核对 | 已完成（28 条单测）。四份产物（软件架构 / 软件详设 / 测试架构 / 测试详设）各有身份 `artifact-<hash>`，设计包有 `design-<hash>`；正文改一个字就换身份，因此「下游依据的是哪一版」可以被发现，而不是只能靠自述 |
+| 5 | `lib/grilling.js` 的**需求身份** | 已完成。已冻结的需求有 `requirement-<hash>`，于是「这份设计推导自哪一份需求」不再是一句自述 |
+| 5 | 两个设计角色 `software_design` / `test_design`，以及设计门禁已接进 `gac_task` | 已完成。`high_risk_task` 的实现节点在被派遣之前必须先有一份**被批准**的设计；批准只能由主会话签发，专家不得自己声明 `approved = true` |
+| 5 | `lib/builder-scope.js` —— 实现与测试不由同一个节点产出 | 已完成。一个节点的写范围同时跨产品路径与测试路径时，任务根本建不起来；测试代码的写权限只属于测试节点 |
+| 5 | 设计换版作废旧结果 | 已完成。照旧版设计做完的活儿不算进新版名下，节点退回待派遣 |
 | 6 | `lib/evidence.js` + `lib/evidence-store.js` —— 由运行时签发的证据 | 已完成 |
 | 6 | `lib/metrics.js` + `lib/tool-metrics.js` —— 带只读出口的指标 | 已完成 |
 | 6 | `lib/tool-evidence.js` —— 证据号可被发现，因而可以被引用 | 已完成 |
@@ -44,7 +51,7 @@ GAC plugin      →  执行模式、写作用域、写占用声明、验证、�
 | 6 | `lib/workspace-witness.js` —— 工作区差异观测（witness 的原生替代） | 已完成；**日常 profile 已活体验证（2026-10-06，证据 `ev-1820`）**：`witness-turn listed=2 total=2 coverage=complete out_of_scope=1`，并生成了真实工作区证据；`maxFiles=500` 截断也实测过（505 个变更 → `listed=500 / total=505 / coverage=partial`）。服务与摘要形状已对着真包 `dsh-workspace-changes@0.2.0-rc.2` 的类型声明逐字段核实，见 ADR §17 |
 | 7 | 遗留系统切换 —— 处置与 E2E 状态已记录 | 记录在 [docs/CUTOVER.md](docs/CUTOVER.md) 中；本仓库之外的东西一律未动 |
 
-**在相信上面这张表之前，先读 [docs/CUTOVER.md](docs/CUTOVER.md)。** 它逐项记录了什么是真正验证过的、什么不是——包括大纲的**六条 E2E 判据里有四条跑过真实会话、两条与字面判据仍有差别**，以及阶段 1-3（节点由原生子会话承载）的实测结论与三条残留。这里的表说的是哪些东西有代码；那份文档说的是哪些东西有证据。
+**在相信上面这张表之前，先读 [docs/CUTOVER.md](docs/CUTOVER.md)。** 它逐项记录了什么是真正验证过的、什么不是——包括大纲的**六条 E2E 判据都跑过真实会话，其中两条与字面判据仍有差别、一条的判据本身已被替换**，以及阶段 1-3（节点由原生子会话承载）的实测结论与三条残留。这里的表说的是哪些东西有代码；那份文档说的是哪些东西有证据。
 
 **阶段 0 是验证过的，不只是测过。** 在一次作用域为 `scope: ["docs/scratch.md"]` 的真实会话里：
 
@@ -341,6 +348,49 @@ gac_task { action: "advance", task_id: "REQ-1",
 任务记录存放在 `<project>/.dsh/gac/tasks/`，一个任务一个文件，并在加载时由校验新计划的那同一份代码重新校验。这是刻意的：否则一份手工编辑过的记录就能绕过 `compileTask`，引入一个有环或没有能力的 DAG。加载时会检查两条一致性规则——处于 `in_progress` 的节点必须持有派遣身份，而不处于 `in_progress` 的节点必须没有——因为任何一种倒置都会留下一个再也无法推进的任务。
 
 任务按**工程**存放，而不是按会话：同一个需求的多个节点由不同执行者推进，而一份按会话存放的记录对接手下一个节点的人来说是不可见的。
+
+默认一次 `advance` 只走一波。这不是省事，而是设计：每一波之间调用者还在回路里，才能看到上一波的真实产出再决定下一步。确实无须决策时可以用 `max_waves` 声明连走几波，但三条停止条件写死且与声明的波数无关——出现需要裁决的事（设计、计划、契约、收口）、这一波里有节点失败或阻塞、走满波数。失败与阻塞**一定**停：自动再推一波只会把坏消息往后挪，而「阻塞与异常如实报告」要防的正是这个。
+
+### 设计驱动：先有一份被批准的设计，再动代码
+
+高风险改动里最贵的错误不是「代码写错了」，而是**设计错了**——而设计错误无法靠「测试都过了」发现：测试验证的是实现符合预期，设计错误会让预期本身错掉，两边一起绿。所以 `high_risk_task` 的实现节点在被派遣之前，必须先有一份被批准的设计。
+
+设计由两个**语义专家**产出，不是两个新的执行模式：
+
+```text
+software_design  → software_architecture（架构）/ software_detail（详设）
+test_design      → test_architecture（测试架构）/ test_detail（测试详设）
+```
+
+角色必须用 `role` 显式声明，**不会**由能力推断出来：这两个角色都带「可以先开工」的豁免，靠推断给出豁免等于让没声明角色的节点悄悄绕过设计门禁。它们跑在独立子会话里，与验证设计专家一样受 `lib/role-tools.js` 的语义角色工具面约束——软件设计专家**读得到**现有工程（它必须照着现有代码做设计），测试设计专家**读不到**（它的预期必须从需求与冻结契约推导，不能靠读本次 Builder 的实现生成）。
+
+四份产物与它们组成的**设计包**都是**引用式**的，不重复存正文：
+
+```text
+artifact-<hash>     一份设计正文的身份：正文改一个字就换身份
+design-<hash>       一份设计包的身份：由四份产物引用、契约引用与追溯关系算出
+requirement-<hash>  一份已冻结需求的身份
+```
+
+三样用的是同一套**内容寻址**，与 `contract-<hash>` / `plan-<hash>` 是同一个机制，不是第二套版本管理。设计包冻结后**拒绝覆盖**——就地改写会让已经照它开工的分支对着一份不存在的设计干活；要修订就显式删除重建，并把下游作废：照旧版设计做完的活儿不算进新版名下，节点退回待派遣。
+
+**批准由主会话签发，专家不得自己声明 `approved = true`。** 一份设计可以编译、冻结、通过一致性核对，但「可以照它开工了」这个判断不在产出它的人手里。主会话只能作三种裁决：`approve` / `revise` / `escalate`。
+
+### 主 Agent 的职责边界：它调度，不亲自改代码
+
+`standard_task` 与 `high_risk_task` 下，主会话（协调者）**不得直接改产品代码或测试代码**——它能读、能跑 `npm test`、能派遣，但产品与测试的改动只能由子会话里的节点去做。理由不是权限洁癖：主会话自己动手时，写作用域、角色工具面、独立验证这些保证全都不在场。
+
+这条边界由工程适配器声明，默认**不生效**：
+
+```json
+{ "authority": { "coordinator_write": "protected", "protected_paths": ["lib/", "test/"] } }
+```
+
+判据是**路径**，而 `tools.restrict` 按名字收权、表达不了「只禁产品路径」，所以它落在 `tools/pre-execute` 这一层——唯一看得见路径的地方。只管**结构化的写工具**，不管 shell：协调者必须能跑 `npm test` 做最终验收，而 shell 重定向的目标在这里根本读不出来；这条边界与写作用域那一层的 shell 边界是同一条。
+
+一条禁令如果没有出口，要么被关掉、要么被绕过，而隐式绕过没有任何东西能说明它发生过。所以留了一条**显式豁免**：`gac_scope` 的 `override: true` 加上必填的 `reason`，只对签发它的会话生效、**只用一次**、并记进 `.dsh/gac/events/`。它只免掉「受保护路径」这一条——会话若另外声明了写作用域，那道门禁照旧生效，于是豁免不等于放开写入。
+
+`direct_edit` 不受影响：它永远由主会话直接改，不建任务记录、不派子会话。
 
 ### 派遣会真正调用
 
@@ -803,6 +853,8 @@ node scripts/repair-session-events.js --apply    # 真的修：先备份再原�
 
 9. **`checkpoint` 策略没有 Runtime enforcement。** 适配器里的 `checkpoint.policy = required_per_task` 只是声明，没有代码消费它；运行时**不会**自动 `git add` / `git commit`。提交纪律目前靠 `AGENTS.md` 的约定与人工自检（`git show --stat HEAD` / `git log -1 --format=%B` / `git status --porcelain`）。
 
+10. **设计驱动的完整链路还没跑过一次真实 E2E。** 两个设计角色、四份设计产物、设计包的内容寻址与冻结、设计门禁与批准、实现与测试分属不同节点、设计换版作废旧结果、主 Agent 职责隔离、受控自动推进——每一条都有单测（`npm test` 全绿），但**没有一次真实的 `high_risk_task` 从需求走到「设计被批准 → 两类 Builder 并行 → 独立验证 → 独立复核 → 主会话验收」**。设计与实现分离的意义恰恰在于真并发与信息边界，而这两件事只有真实子会话才能验。所以当前定位是「代码与门禁已就位、活体待跑」，不是「已验证」。
+
 ---
 
 ## 开发
@@ -832,6 +884,8 @@ lib/
   engineering-policy.js  把 assets/ENGINEERING_POLICY.md 原文读给审查者
   metrics.js         对证据与任务做归约（纯函数）
   coordinator.js     任务 DAG、就绪判定、状态迁移（纯函数）
+  builder-scope.js   把写范围分成产品与测试两类：实现与测试不由同一个节点产出（纯函数）
+  design.js          设计产物与设计包：内容寻址、冻结、一致性核对（纯函数）
   grilling.js        多轮需求精化（纯函数）
   review.js          独立复核：六问与五个质量维度的门禁（纯函数）
   role-guard.js      只读角色的收权：把写入面从该角色自己的视野里拿掉
