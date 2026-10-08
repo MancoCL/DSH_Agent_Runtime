@@ -18,7 +18,7 @@ dsh plugin --profile web add dsh-gac-runtime@0.1.0
 ```
 
 - **版本来源区别**：GitHub 来源以具体提交写进 Profile 的 lockfile（因此必须显式带 `#<标签或提交>` 才会升级）；npm 来源以**版本号**固定，`add` 不带版本号时取该源上的最新版。
-- **`minimumReleaseAge` 可能压住刚发布的版本**：部分 Profile（本机的 `core-020` 在桌面安装路径上就出现过）执行 24 小时的供应链策略，比 `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` 更隐蔽的情况是 pnpm 直接装回旧版并 exit 0。这是 Profile 的策略而不是包的问题：一次性绕过用 `dsh plugin --profile <profile> add dsh-gac-runtime --config.minimum-release-age=0`（pnpm 10/11/12 通用，pnpm 12.3 原生 CLI 用 `--config.minimumReleaseAge=0`），长期放行则把 `dsh-gac-runtime@<版本>` 写进该 Profile 的 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude`。
+- **`minimumReleaseAge` 与刚发布的版本**：部分 Profile（本机的 `core-020` 在桌面安装路径上就出现过）带 24 小时供应链策略。实测 pnpm 11.7 对 `add` 显式请求的直接依赖会自己补一条豁免并打印 `Added 1 entry to minimumReleaseAgeExclude in pnpm-workspace.yaml`，所以正常安装不会被悄悄降级；风险在别处：该 Profile 把 `minimumReleaseAgeStrict` 打开（改成弹提示）、或这个版本是被传递引入时，pnpm 可能**静默装回旧版并 exit 0**。这是 Profile 的策略而不是包的问题：一次性绕过用 `dsh plugin --profile <profile> add dsh-gac-runtime --config.minimum-release-age=0`（pnpm 10/11/12 通用，pnpm 12.3 原生 CLI 用 `--config.minimumReleaseAge=0`），长期放行则把 `dsh-gac-runtime@<版本>` 写进该 Profile 的 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude`。
 - **镜像同步**：npmmirror 是只读镜像，不接收发布；发布上游只有 npm 官方源。若镜像上还没有新版本，可用 `curl -X PUT https://registry.npmmirror.com/-/package/dsh-gac-runtime/sync` 手动触发同步，或等待自动同步。
 - 装完之后的行为（自动写入 `dsh.profile.bundles`、Desktop 界面、升级、卸载、每个工程仍需复制 `examples/gac-project.json` 选择加入、版本要求与排障）与下节完全相同，见下节。
 
@@ -143,7 +143,20 @@ curl.exe -X PUT https://registry.npmmirror.com/-/package/dsh-gac-runtime/sync
 
 - 发布物就是 `npm pack` 的产物（当前 52 个文件）。`test/install-surface.test.js` 会在上传前拦下四类错误：包名与 bundle 不同名、`private` 为真、`publishConfig` 指向镜像源、`files` 混入 `test/scripts/.dsh`。
 - 发布后核对两个源：`npm view dsh-gac-runtime version` 与 `npm view dsh-gac-runtime version --registry=https://registry.npmmirror.com` 都应给出刚发布的版本；随后在一个隔离 `DSH_HOME` 的沙箱 Profile 里真装一次（`dsh plugin --profile <p> add dsh-gac-runtime`）。
-- 同一版本号不能覆盖发布，只能发新版本号；**刚发布的版本在 24 小时内可能被 Profile 的 `minimumReleaseAge` 压住**，见上文。
+- 同一版本号不能覆盖发布，只能发新版本号；**刚发布的版本可能被 Profile 的 `minimumReleaseAge` 策略影响**（pnpm 11.7 对显式 `add` 的依赖会自动补豁免并打印提示，不会降级），见上文。
+
+#### 用 GitHub Actions + Trusted Publisher 发布（推荐，免 token 与 OTP）
+
+npm 已经提示 bypass-2FA 的 granular token 正在被限制用于直接发布，官方推荐的长期方案是 Trusted Publisher（OIDC）：仓库内 [.github/workflows/publish-npm.yml](.github/workflows/publish-npm.yml) 只声明 `id-token: write`，**不保存任何 npm 凭据**（`test/install-surface.test.js` 会拦下把 token 写进去的改动）。
+
+首次由包维护者在本机执行一次（会提示 OTP）：
+
+```powershell
+npm trust github dsh-gac-runtime --file publish-npm.yml --repo MancoCL/DSH_Agent_Runtime --allow-publish
+npm trust list dsh-gac-runtime          # 核对已登记的发布者（GitHub Actions / 仓库 / workflow 文件名）
+```
+
+之后发版：改 `package.json` 版本号 → `npm test` → 提交 → `git tag -a v<版本>` 并推送 → 在 Actions 页面 Run workflow（可选 dry run）。workflow 会在发布前重跑 `npm test`，并强制版本号与 `v<版本>` 标签指向同一提交，不满足就直接失败。`--file` 只接受工作流文件名，改名会让已登记的 trust 失效。
 
 ## 当前限制与验收边界
 

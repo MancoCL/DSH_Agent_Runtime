@@ -1,0 +1,69 @@
+# 发布到 npm 官方源：通过 Trusted Publisher（OIDC）发布，仓库里不保存任何 npm token，也不需要 OTP。
+#
+# 首次配置（由包维护者在本地执行一次，会要 OTP）：
+#   npm trust github dsh-gac-runtime --file publish-npm.yml --repo MancoCL/DSH_Agent_Runtime --allow-publish
+# 之后每次发版：改版本号 → npm test → 提交 → git tag -a v<版本> → 推送 → 在 Actions 页面手动 Run workflow。
+#
+# 注意：workflow 文件名是 trust 配置的一部分，改名会让已登记的发布者失效。
+name: publish-npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 只跑 npm publish --dry-run，不真正发布
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write # OIDC 换发布令牌的前提；缺了它 npm 会退回要求 token 或 OTP
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出代码与标签
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 准备 Node 24 与官方源
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      # OIDC 发布需要 npm >= 11.5.1，用最新 npm 避免 runner 预装版本过旧
+      - name: 升级 npm
+        run: npm install --global npm@latest
+
+      - name: 单元测试
+        run: npm test
+
+      - name: 版本号与 Git 标签必须指向同一提交
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          echo "package.json version = $version"
+          echo "HEAD = $(git rev-parse HEAD)"
+          if ! git tag --points-at HEAD | grep -qx "v$version"; then
+            echo "::error::当前提交没有 v$version 标签；npm 上的发布物必须能对应到唯一提交，请先打标签再发布。"
+            exit 1
+          fi
+
+      - name: 发布到 npm 官方源（OIDC，无需 token/OTP）
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          args=(--provenance --access public)
+          if [ "$DRY_RUN" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          npm publish "${args[@]}"
