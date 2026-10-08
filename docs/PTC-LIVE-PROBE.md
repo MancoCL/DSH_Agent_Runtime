@@ -1,85 +1,23 @@
-# PTC 内层调用验收配方（自包含，任何会话可执行）
+# PTC 内层调用真实验收配方
 
-**这份文档是可执行的验收依据**，不是说明文。目标：证明**「放行外层传输 + 内层子调用按自己的名字受管」**
-在真实 PTC 模式下成立。**2026-10-06 已按本配方活体验收通过**，逐字证据记在 `docs/CUTOVER.md` 的 §4 PTC 行；
-下面的步骤保留，供换机器或换宿主版本时重跑。
+用途：在 DSH 的实际 PTC 模式下验证**外层 `run_code` 传输放行，内层每次工具调用仍受 GAC Guard**。PTC 是可选执行方式，不是切旧 Runtime 的必需条件；本机 2026-10-06 曾真实通过，升级内核后应重新测，而不是默认照搬旧结论。
 
-**为什么必须验**：这条路径曾经被错误地收缩成「明确拒绝」（依据是一个假前提：以为日常 profile 不装 PTC
-运行时），而 `dsh-base/cordis.patch.yml:390-391` 明确插入 `ptc-runtime` 与 `workflow-ptc`——**PTC 一直在场**，
-`run_code` 只是只在 PTC 模式下才呈现给模型。那次收缩会打断 PTC 模式下声明了作用域的活能力，已撤回
-（`docs/ADR-0001-子会话执行载体.md` §19）。**撤回之后它到底还能不能跑，只能由这份配方来回答。**
+## 前提
 
-## 0. 前提（先确认，不确认就不要往下做）
+- 当前会话呈现的工具面应是 `run_code` + 生成 SDK。若仍看到原生 `write`、`pwsh`、`read` 等，不要把原生工具测试当作 PTC 内层测试。
+- DSH Profile 加载了 GAC 且报告有 `plugin-loaded`；实际 SDK 调用形状以**当前模型提示里的 SDK** 为准，下例仅示意。
+- 使用专用测试项目的未占用路径，确认 `ptc-probe-ok.txt` 和 `ptc-probe-bad.txt` 原先均不存在。
 
-| 检查 | 通过的样子 |
-| --- | --- |
-| 会话的 preset 是 `ptc` | 工具面里**只有 `run_code` 加一份生成的 SDK**（这是 PTC 模式的形状：`dsh-tools/README.md:64` 写着 `ptc` 模式下模型「only `run_code` plus a generated SDK」） |
-| 若还看得到 `write`/`pwsh`/`read` 等**原生**工具 | **preset 没生效**：停下，如实报告，不要把原生工具的调用当成 PTC 的内层子调用（那是两件事） |
-| SDK 的调用形态 | **以提示里那份生成的 SDK 为准**——下面的 `tools.<名字>(参数)` 只是占位写法，实际形态照它给的来 |
-| 本插件处于启用状态 | 加载报告里有 `plugin-loaded`；`gac_scope` 能被 SDK 调到（它已注册） |
+## 真实验证步骤
 
-## 1. 五步
+1. **声明范围**：通过 PTC 内层 `gac_scope` 为测试会话声明 `["ptc-probe-ok.txt"]`，预期允许。
+2. **范围内写入**：内层 `write({file_path:"ptc-probe-ok.txt",content:"ok"})`，预期允许，文件确实存在。
+3. **范围外写入**：内层 `write({file_path:"ptc-probe-bad.txt",content:"bad"})`，预期 `GAC_WRITE_SCOPE_DENIED`，文件确实不存在；**外层 `run_code` 不应因此被整体拒绝**。
+4. **内层 Shell**：作用域仍在时调用 `pwsh`，预期按当前 Shell 策略返回 `GAC_SHELL_DENIED_UNDER_SCOPE`。
+5. **释放与清理**：内层 `gac_scope({task_id:"REQ-PTC-PROBE",clear:true})`，确认释放；之后再安全删除范围内测试文件。
 
-**第 1 步：声明写作用域**（只允许一个探针文件）。在代码里调：
+## 通过标准
 
-```js
-await tools.gac_scope({ task_id: 'REQ-PTC-PROBE', node_id: 'REQ-PTC-PROBE', scope: ['ptc-probe-ok.txt'] })
-```
+必须有真实的 `run_code` 外层返回、每次内层工具结果、两个稳定拒绝码、scope 声明/释放响应和磁盘上的存在/不存在检查。至少证明**每个内层原生调用均走了 pre-execute**，而非仅看到代码执行完成。
 
-预期：返回「现在可以写入 [ptc-probe-ok.txt]」。**这一步本身就是一次内层子调用**，而 `gac_scope` 属于
-运行时自己的记账工具（不碰产品文件），所以它**必须被放行**——否则作用域会变成一个自己解不开的陷阱
-（本仓库在 `gac_scope` 上踩过这个形状）。
-
-**第 2 步：范围内写入**（预期**放行**）：
-
-```js
-await tools.write({ file_path: 'ptc-probe-ok.txt', content: 'ok' })
-```
-
-**第 3 步：范围外写入**（预期**内层被拒**）：
-
-```js
-await tools.write({ file_path: 'ptc-probe-bad.txt', content: 'bad' })
-```
-
-预期：抛错或返回拒绝，原文含 `GAC_WRITE_SCOPE_DENIED` 与「只能写入 [ptc-probe-ok.txt]」。**关键**：被拒的是
-**内层这一次子调用**，不是外层的 `run_code`——外层如果被拒，整段代码根本不会开始跑，那是「把通道关掉」，
-不是更严的守卫。
-
-**第 4 步：内层 shell**（预期**按 shell 拒**）：
-
-```js
-await tools.pwsh({ command: 'echo hi' })
-```
-
-预期：`GAC_SHELL_DENIED_UNDER_SCOPE`——作用域生效期间 shell 被整体拒绝，因为命令字符串里的重定向与生成
-目标无法对照作用域检查。
-
-**第 5 步：释放作用域并清理**：
-
-```js
-await tools.gac_scope({ task_id: 'REQ-PTC-PROBE', clear: true })
-await tools.pwsh({ command: 'Remove-Item ptc-probe-ok.txt -ErrorAction SilentlyContinue' })
-```
-
-（清理必须在**释放作用域之后**：作用域还在时 shell 是被拒的。）
-
-## 2. 必须记下来的东西（否则这轮验收等于没做）
-
-- **外层 `run_code` 每次调用的返回**（逐字）——它必须是被**放行**的；
-- **内层被拒的原文**（逐字），尤其是拒因里的工具名与作用域；
-- 第 1 步与第 5 步 `gac_scope` 的返回（逐字）：它证明「运行时工具在内层也被放行」；
-- 盘上事实：第 2 步的文件**存在**、第 3 步的文件**不存在**（用 SDK 里的读/探测工具确认）；
-- 你的工具面里到底有哪些工具（这决定上面 §0 的前提成立与否）。
-
-## 3. 通过之后（三条都已执行完毕）
-
-- `docs/CUTOVER.md` §4 的 PTC 那一行已改成「已活体验收（2026-10-06）」并附逐字证据；
-- `README.md` 已知局限第 6 条已按实测结果改写；
-- `docs/ADR-0001-子会话执行载体.md` §19 已补上实测结论。
-
-## 4. 做不到就如实停下
-
-任何一步与预期不符（尤其：**外层 `run_code` 被拒**、或**内层子调用根本没被检查**），都说明这条路径有
-真问题。**不要**用「契约已核实 + 单测过了」把这一格写成已验——本轮已经反复吃过这个形状的亏：
-`witness-seam available=true` 与「订阅接通」是两件事，`run_code` 不在工具面里与「PTC 不在场」也是两件事。
+若 PTC Provider 或实际模式缺席，标记 **Not applicable**，不算 GAC 缺失；如果在场却发生越界放行，按真实安全失败处理。历史误判（“run_code 没显示所以 PTC 没安装”）已被宿主实际加载结构否定，详见 ADR §19 和 [CUTOVER](CUTOVER.md)。
