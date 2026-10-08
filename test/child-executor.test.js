@@ -335,6 +335,56 @@ describe('提示词与人格段', () => {
     assert.ok(text.includes('裸编号'))
     assert.ok(text.includes('详设产物必须原样出现同一条'))
   })
+
+  it('契约的名字、签名与行为都进提示词 —— 只给签名等于把形状藏起来', () => {
+    // 载荷形状写在 `behavior` 里。只注入 name + signature 时它对设计角色完全不可见，于是设计自己
+    // 发明字段名：2026-10-08 活体 `REQ-DD-3` 里两份设计写 `claim_released`、冻结契约与冻结验证计划
+    // 都写 `released`，而设计包的一致性核对查的是追溯编号、查不出键名对不上——冲突直到主会话裁决
+    // 才被发现，那时设计已经冻结、计划已经冻结，两边不可能同时满足。
+    const text = buildChildPrompt({
+      node: node({ role: 'software_design', write_scope: [] }),
+      task,
+      root: 'D:/proj',
+      dispatchId: 'REQ-1-T1-A1',
+      criteria: ['AC1'],
+      contract: {
+        name: '审计契约',
+        operations: [{
+          name: '审计事件词表',
+          signature: '两个事件类型',
+          behavior: '载荷形状 { session_id, root, released }',
+        }],
+      },
+    })
+    assert.ok(text.includes('已冻结的接口契约：审计契约，1 个操作。'))
+    assert.ok(text.includes('载荷形状 { session_id, root, released }'))
+    assert.ok(text.includes('硬约束'), '名字与形状是硬约束这句话必须说出口')
+  })
+
+  it('契约缺席时不提契约 —— 不能凭空写一句「没有契约」让子会话以为没有约束', () => {
+    const text = buildChildPrompt({
+      node: node({ role: 'software_design', write_scope: [] }),
+      task,
+      root: 'D:/proj',
+      dispatchId: 'REQ-1-T1-A1',
+      criteria: ['AC1'],
+    })
+    assert.ok(!text.includes('已冻结的接口契约'))
+  })
+
+  it('设计角色被告知不得规定新增或删除文件 —— 写范围由任务图给定', () => {
+    // 活体 `REQ-DD-3` 里软件架构的追溯要求新增 `test/scope-audit.test.js`，而测试架构明确说不新增
+    // 测试文件、任务图里实现节点的写范围也不含它：两份已冻结的设计互相打架，实现节点两边都满足不了。
+    const text = buildChildPrompt({
+      node: node({ role: 'software_design', write_scope: [] }),
+      task,
+      root: 'D:/proj',
+      dispatchId: 'REQ-1-T1-A1',
+      criteria: ['AC1'],
+    })
+    assert.ok(text.includes('不要在设计里规定**新增或删除哪些文件**'))
+    assert.ok(text.includes('由任务图给定'))
+  })
 })
 
 describe('接缝可用性', () => {
@@ -382,6 +432,30 @@ describe('真的起一个子会话', () => {
     assert.match(outcome.summary, /child-session-1/u)
     assert.equal(outcome.artifact, 'child-session:child-session-1')
     assert.deepEqual(disposed, ['child-session-1'], '子会话必须被收掉')
+  })
+
+  it('软件设计与测试设计也拿得到冻结契约 —— 只在验证设计那一支取，另外两个设计角色只能自己发明约定', async () => {
+    for (const role of ['software_design', 'test_design']) {
+      const { service, starts } = fakeSubagents()
+      const asked = []
+      const executor = createChildExecutor({
+        subagentsFor: () => service,
+        contractFor: (taskId) => {
+          asked.push(taskId)
+          return {
+            name: '审计契约',
+            operations: [{ name: '审计事件词表', behavior: '载荷形状 { released }' }],
+          }
+        },
+      })
+      await executor.run(runInput({
+        node: node({ role, write_scope: [], required_capabilities: ['documentation'] }),
+      }))
+
+      assert.deepEqual(asked, ['REQ-1'], `${role} 必须去取冻结契约`)
+      assert.ok(starts[0].request.prompt[0].text.includes('载荷形状 { released }'),
+        `${role} 的提示词里必须真的出现契约内容`)
+    }
   })
 
   it('子会话报 failed / blocked 时如实透传，不当成完成', async () => {
