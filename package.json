@@ -38,10 +38,8 @@
     "lib",
     "assets",
     "examples",
-    "docs",
     "cordis.patch.yml",
     "README.md",
-    "AGENTS.md",
     "LICENSE"
   ],
   "engines": {

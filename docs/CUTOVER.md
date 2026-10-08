@@ -5,7 +5,7 @@
 ## 1. 当前边界
 
 - 新系统是 DSH 插件；旧系统在 `~/.claude/workflow`，属于另一宿主。**本仓库未迁移、删除或修改旧 Runtime**，也不能因为 DSH 一侧通过测试就宣称旧系统已经退役。
-- 本机日常 Profile 为 `core-020`（切换机器或 Profile 后须重新核实），插件可通过稳定副本安装；当前 Git 工作树不一定与日常加载字节一致。
+- 日常使用的 Profile 因机器而异，应通过真实加载报告核实插件来源与版本；稳定副本不应直接指向源码工作树。
 - 自开发时，改 `lib/*.js` 前应关闭加载工作树的插件实例；生产稳定副本是否开启以实际 Profile 和加载报告为准，不照搬“本仓库开发默认关闭”的语句。
 - GAC 的 TaskStore 是任务现态，GAC Event Log 是追加审计；**Host Session Log 属于 DSH，禁止写插件自定义事件**。
 - `execution.required_capabilities` 是可执行门禁，不只是声明。高风险完成时发现必需能力缺失，按 `GAC_COMPLETION_CAPABILITY_MISSING` 拒绝；PTC 不属于必需项。
