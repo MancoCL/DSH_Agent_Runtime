@@ -18,6 +18,7 @@ dsh plugin --profile web add dsh-gac-runtime@0.1.0
 ```
 
 - **版本来源区别**：GitHub 来源以具体提交写进 Profile 的 lockfile（因此必须显式带 `#<标签或提交>` 才会升级）；npm 来源以**版本号**固定，`add` 不带版本号时取该源上的最新版。
+- **`minimumReleaseAge` 可能压住刚发布的版本**：部分 Profile（本机的 `core-020` 在桌面安装路径上就出现过）执行 24 小时的供应链策略，比 `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` 更隐蔽的情况是 pnpm 直接装回旧版并 exit 0。这是 Profile 的策略而不是包的问题：一次性绕过用 `dsh plugin --profile <profile> add dsh-gac-runtime --config.minimum-release-age=0`（pnpm 10/11/12 通用，pnpm 12.3 原生 CLI 用 `--config.minimumReleaseAge=0`），长期放行则把 `dsh-gac-runtime@<版本>` 写进该 Profile 的 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude`。
 - **镜像同步**：npmmirror 是只读镜像，不接收发布；发布上游只有 npm 官方源。若镜像上还没有新版本，可用 `curl -X PUT https://registry.npmmirror.com/-/package/dsh-gac-runtime/sync` 手动触发同步，或等待自动同步。
 - 装完之后的行为（自动写入 `dsh.profile.bundles`、Desktop 界面、升级、卸载、每个工程仍需复制 `examples/gac-project.json` 选择加入、版本要求与排障）与下节完全相同，见下节。
 
@@ -128,6 +129,21 @@ npm run deploy:status
 **本机检查曾发现三处不一致：** Profile `package.json` 指向 DSH 安装目录、`pnpm-lock.yaml` 指向旧的 `.tgz`、实际 `node_modules/dsh-gac-runtime` 却指向本工作区。此类状态不得视为已隔离生产环境；修复必须在宿主退出且源码验收完成后按上述受控流程进行。普通 `plugin:on/off` 只控制启停，不能代替版本切换。
 
 详见 [AGENTS.md](AGENTS.md) 的开发和 Git 纪律。
+
+### 发布到 npm 与镜像
+
+npm 官方源是唯一发布上游；npmmirror 是只读镜像，只由它自动同步，不能作为发布目标。发布前必须：工作区干净、`npm test` 通过、`package.json` 的版本号在 Git 上有对应 tag（tag 一旦公开就不再移动，内容有变就换版本号）。
+
+```powershell
+npm login                                   # 首次需要；账号启用 2FA 时发布用 --otp
+npm publish                                 # 按 publishConfig 发到 https://registry.npmjs.org/
+# 触发镜像同步（不触发也会自动同步，通常数分钟内可见）
+curl.exe -X PUT https://registry.npmmirror.com/-/package/dsh-gac-runtime/sync
+```
+
+- 发布物就是 `npm pack` 的产物（当前 52 个文件）。`test/install-surface.test.js` 会在上传前拦下四类错误：包名与 bundle 不同名、`private` 为真、`publishConfig` 指向镜像源、`files` 混入 `test/scripts/.dsh`。
+- 发布后核对两个源：`npm view dsh-gac-runtime version` 与 `npm view dsh-gac-runtime version --registry=https://registry.npmmirror.com` 都应给出刚发布的版本；随后在一个隔离 `DSH_HOME` 的沙箱 Profile 里真装一次（`dsh plugin --profile <p> add dsh-gac-runtime`）。
+- 同一版本号不能覆盖发布，只能发新版本号；**刚发布的版本在 24 小时内可能被 Profile 的 `minimumReleaseAge` 压住**，见上文。
 
 ## 当前限制与验收边界
 
