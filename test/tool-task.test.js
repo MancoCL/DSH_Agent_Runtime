@@ -2767,6 +2767,124 @@ describe('同一批真的并行 —— 不是「协调器算了两个、执行�
   })
 })
 
+describe('受控自动推进 —— max_waves 声明一次调用最多连走几波', () => {
+  /**
+   * 建一条两段的链：T1 实现完成后 T2 才就绪。
+   *
+   * 只有 T1 一个写者，所以不会撞上接口契约门禁——这个 describe 要验的是推进节奏，
+   * 不是门禁。
+   *
+   * @param {object} h
+   * @param {string} taskId
+   * @returns {Promise<object>}
+   */
+  function createChain(h, taskId) {
+    return h.tool.execute({
+      action: 'create',
+      task_id: taskId,
+      mode: 'standard_task',
+      plan: { nodes: [
+        { id: 'T1', objective: '实现功能', required_capabilities: ['implementation'], write_scope: ['src/'] },
+        { id: 'T2', objective: '独立验证', depends_on: ['T1'], required_capabilities: ['verification'], write_scope: [] },
+      ] },
+    }, h.exec)
+  }
+
+  it('缺省只走一波，与从前一字不差', async () => {
+    const h = dispatchHarness()
+    await createChain(h, 'REQ-W1')
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-W1' }, h.exec)
+
+    assert.equal(h.calls.length, 1, '缺省 max_waves 时不连走')
+    assert.deepEqual(value.classifications, ['accepted'])
+    assert.equal(value.action, 'dispatch', '还有活儿可以推，但这一波到此为止')
+    assert.ok(!value.message.includes('自动连走'), '没连走就不该说连走')
+  })
+
+  it('max_waves: 2 时连着走两波，一次调用把 T1 与 T2 都跑完', async () => {
+    const h = dispatchHarness()
+    await createChain(h, 'REQ-W2')
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-W2', max_waves: 2 }, h.exec)
+
+    assert.deepEqual(h.calls.map((call) => call.node.id), ['T1', 'T2'])
+    assert.deepEqual(value.classifications, ['accepted', 'accepted'])
+    assert.ok(
+      value.message.includes('自动连走了 2 波'),
+      `连走了几波必须说出来，否则调用方读不出这一份记录覆盖了几波；实际：${value.message}`,
+    )
+    assert.notEqual(value.action, 'dispatch', '两波之后 T2 也跑完了，不该还说「还有活儿」')
+  })
+
+  it('这一波里有节点失败时立刻停，哪怕波数还没走满', async () => {
+    // 三节点：T1 失败、T2 完成、T3 依赖 T2。这样第一波之后**仍然**有就绪节点（T3），
+    // `nextAction` 说的是 `dispatch`——只有「有坏消息就停」这一条能拦住第二波。
+    // 换句话说，这条用例是专门为那条判据写的：没有它，循环会照常推下去。
+    //
+    // 自己记一遍调用：`dispatchHarness` 的 `calls` 是它自带执行者记的，这里换了执行者。
+    const seen = []
+    const h = dispatchHarness({
+      runtimeExecutors: [{
+        name: 'builder',
+        supports: () => true,
+        run: async ({ node }) => {
+          seen.push(node.id)
+          return node.id === 'T1'
+            ? { status: 'failed', summary: '没做成' }
+            : { status: 'completed', summary: `${node.id} 完成` }
+        },
+      }],
+    })
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-W3',
+      mode: 'standard_task',
+      plan: { nodes: [
+        { id: 'T1', objective: '实现功能', required_capabilities: ['implementation'], write_scope: ['src/'] },
+        { id: 'T2', objective: '先看一遍', required_capabilities: ['verification'], write_scope: [] },
+        { id: 'T3', objective: '再看一遍', depends_on: ['T2'], required_capabilities: ['verification'], write_scope: [] },
+      ] },
+    }, h.exec)
+
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-W3', max_waves: 5 }, h.exec)
+
+    assert.deepEqual(seen, ['T1', 'T2'], '失败之后不能再推第二波')
+    assert.deepEqual(value.classifications, ['accepted', 'accepted'])
+    assert.ok(!value.message.includes('自动连走'), '只走了一波，不说连走')
+  })
+
+  it('门禁拦下整批时立刻停 —— 需要裁决的事不能替调用者决定', async () => {
+    const h = dispatchHarness()
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-W4',
+      mode: 'high_risk_task',
+      plan: { nodes: [
+        { id: 'T1', objective: '实现功能', required_capabilities: ['implementation'], write_scope: ['src/'] },
+      ] },
+    }, h.exec)
+
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-W4', max_waves: 5 }, h.exec)
+
+    assert.equal(value.action, 'design_required')
+    assert.equal(h.calls.length, 0)
+    assert.ok(!value.message.includes('自动连走'))
+  })
+
+  it('非法 max_waves 被响亮拒绝，而不是静默截断', async () => {
+    const h = dispatchHarness()
+    await createChain(h, 'REQ-W5')
+
+    for (const bad of [0, -1, 1.5, '2', true, 21]) {
+      await assert.rejects(
+        () => h.tool.execute({ action: 'advance', task_id: 'REQ-W5', max_waves: bad }, h.exec),
+        /max_waves/u,
+        `${JSON.stringify(bad)} 应当被拒绝`,
+      )
+    }
+    assert.equal(h.calls.length, 0, '被拒绝的调用不该已经派遣过任何东西')
+  })
+})
+
 describe('只读角色收权 —— 派遣时收、回报时放', () => {
   /** 一个「派给会话、停在 in_progress」的执行者：只读节点的常态。 */
   const STAYS_IN_PROGRESS = {
