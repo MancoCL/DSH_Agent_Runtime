@@ -45,7 +45,9 @@
   },
   "authority": {
     "enforcement_mode": "tool_guard",
-    "test_paths": ["test/"]
+    "test_paths": ["test/"],
+    "coordinator_write": "protected",
+    "protected_paths": ["lib/", "test/"]
   },
   "checkpoint": {
     "provider": "git",

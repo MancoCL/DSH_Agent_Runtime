@@ -74,7 +74,7 @@ describe('gac_scope 工具形状', () => {
     const { tool } = harness()
     assert.deepEqual(
       Object.keys(tool.parameters).sort(),
-      ['clear', 'node_id', 'scope', 'task_id'],
+      ['clear', 'node_id', 'override', 'reason', 'scope', 'task_id'],
     )
   })
 })
@@ -286,5 +286,98 @@ describe('声明会取得一份写占用声明', () => {
     )
     assert.equal(value.claim, undefined)
     assert.match(value.summary, /不会\*\*被阻止/u)
+  })
+})
+
+describe('协调者写保护的一次性豁免', () => {
+  /**
+   * 一个带豁免通道与审计回调的作用域工具。
+   *
+   * @returns {{core: object, tool: object, events: object[], exec: object}}
+   */
+  function overrideHarness() {
+    const core = createGacCore({
+      resolveRoot: () => 'D:/work/proj',
+      coordinatorWriteFor: () => ({ protected_paths: ['lib/'] }),
+    })
+    const events = []
+    const tool = createScopeTool({
+      core,
+      defineTool: identityDefineTool,
+      sessionRootFor: () => 'D:/work/proj',
+      onEvent: (record) => events.push(record),
+    })
+    const sessionId = 'session-42'
+    return {
+      core,
+      tool,
+      events,
+      exec: { agent: { id: sessionId, session: { id: sessionId } }, signal: new AbortController().signal },
+    }
+  }
+
+  it('签发之后，那一次写入真的被放行了', async () => {
+    const h = overrideHarness()
+    assert.equal(
+      h.core.preExecute({ name: 'write', arguments: { file_path: 'lib/a.js' }, ...h.exec }).kind,
+      'deny',
+    )
+    const value = await h.tool.execute({ override: true, reason: '紧急修复线上问题' }, h.exec)
+    assert.equal(value.override, true)
+    assert.equal(value.override_reason, '紧急修复线上问题')
+    assert.equal(
+      h.core.preExecute({ name: 'write', arguments: { file_path: 'lib/a.js' }, ...h.exec }).kind,
+      'allow',
+    )
+  })
+
+  it('签发会进审计 —— 唯一能绕过这道门禁的路径必须留下痕迹', async () => {
+    const h = overrideHarness()
+    await h.tool.execute({ override: true, reason: '紧急修复线上问题' }, h.exec)
+    assert.equal(h.events.length, 1)
+    assert.equal(h.events[0].event, 'coordinator-override')
+    assert.equal(h.events[0].granted, true)
+    assert.equal(h.events[0].reason, '紧急修复线上问题')
+    assert.equal(h.events[0].session_id, 'session-42')
+    assert.equal(h.events[0].root, 'D:/work/proj')
+  })
+
+  it('没写理由时拒绝签发，也不会留下半份豁免', async () => {
+    const h = overrideHarness()
+    await assert.rejects(() => h.tool.execute({ override: true }, h.exec), /理由/u)
+    await assert.rejects(() => h.tool.execute({ override: true, reason: '  ' }, h.exec), /理由/u)
+    assert.equal(h.core.overrideFor('session-42'), undefined)
+    assert.equal(h.events.length, 0)
+  })
+
+  it('状态视图能看到尚未使用的豁免', async () => {
+    const h = overrideHarness()
+    await h.tool.execute({ override: true, reason: '本地调试' }, h.exec)
+    const value = await h.tool.execute({}, h.exec)
+    assert.equal(value.override, true)
+    assert.equal(value.override_reason, '本地调试')
+  })
+
+  it('状态视图里没有豁免时，这个字段明确是 false', async () => {
+    const h = overrideHarness()
+    const value = await h.tool.execute({}, h.exec)
+    assert.equal(value.override, false)
+    assert.equal(value.override_reason, undefined)
+  })
+
+  it('没有作用域时也把豁免说出来 —— 协调者通常根本没有作用域', async () => {
+    const h = overrideHarness()
+    await h.tool.execute({ override: true, reason: '本地调试' }, h.exec)
+    const value = await h.tool.execute({}, h.exec)
+    assert.match(value.summary, /尚未使用的协调者写保护豁免/u)
+    assert.match(value.summary, /本地调试/u)
+  })
+
+  it('clear 连同豁免一起收回', async () => {
+    const h = overrideHarness()
+    await h.tool.execute({ override: true, reason: '本地调试' }, h.exec)
+    const value = await h.tool.execute({ clear: true }, h.exec)
+    assert.equal(value.override, false)
+    assert.equal(h.core.overrideFor('session-42'), undefined)
   })
 })

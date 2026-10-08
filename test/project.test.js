@@ -98,6 +98,68 @@ describe('validateProjectAdapter —— 接受形式正确的适配器', () => {
     const parsed = adapter({ authority: { enforcement_mode: 'tool_guard', test_paths: ['test/'] } })
     assert.equal(parsed.authority.enforcement_mode, 'tool_guard')
   })
+
+  it('authority.coordinator_write 默认 allow —— 没声明的工程行为一字不变', () => {
+    // 这条默认值是刻意的：这道门禁会改变「谁在写文件」，而它默认打开会让每一个既有工程的主会话
+    // 突然写不了自己的源码。要开就得明说。
+    assert.equal(adapter().authority.coordinator_write, 'allow')
+    assert.equal(
+      adapter({ authority: { coordinator_write: 'protected', protected_paths: ['lib/'] } })
+        .authority.coordinator_write,
+      'protected',
+    )
+  })
+
+  it('authority.coordinator_write 只认 allow 与 protected', () => {
+    for (const value of ['deny', 'block', true, 1, ['protected'], {}]) {
+      assert.throws(
+        () => adapter({ authority: { coordinator_write: value } }),
+        (error) => error instanceof ProjectAdapterError && /authority\.coordinator_write/u.test(error.message),
+        `应当拒绝 ${JSON.stringify(value)}`,
+      )
+    }
+  })
+
+  it('authority.protected_paths 默认为空数组，声明后归一成冻结的数组', () => {
+    assert.deepEqual([...adapter().authority.protected_paths], [])
+    const parsed = adapter({
+      authority: { coordinator_write: 'protected', protected_paths: ['lib/', 'test/'] },
+    })
+    assert.deepEqual([...parsed.authority.protected_paths], ['lib/', 'test/'])
+    assert.equal(Object.isFrozen(parsed.authority.protected_paths), true)
+  })
+
+  it('authority.protected_paths 必须是字符串数组，且每条非空', () => {
+    for (const value of ['lib/', 1, {}, [''], [null], [1], ['lib/', '']]) {
+      assert.throws(
+        () => adapter({ authority: { protected_paths: value } }),
+        (error) => error instanceof ProjectAdapterError && /authority\.protected_paths/u.test(error.message),
+        `应当拒绝 ${JSON.stringify(value)}`,
+      )
+    }
+  })
+
+  it('声明了 protected 却一条路径都没给，比「没声明」更糟，因此判非法', () => {
+    // 这种情况最可能的成因是漏写。静默接受它，表现就是「声明了保护、主会话照样写」——而工程作者
+    // 以为自己已经设防了。
+    for (const authority of [
+      { coordinator_write: 'protected' },
+      { coordinator_write: 'protected', protected_paths: [] },
+    ]) {
+      assert.throws(
+        () => adapter({ authority }),
+        (error) => error instanceof ProjectAdapterError && /protected_paths/u.test(error.message),
+      )
+    }
+  })
+
+  it('给了受保护路径但没声明 protected 时，路径只是白存着，不算错', () => {
+    // 与上一条的区别：这里没有声明保护，所以没有任何东西声称「已经设防了」。留一份路径清单
+    // 供将来打开，是合法的过渡状态。
+    const parsed = adapter({ authority: { protected_paths: ['lib/'] } })
+    assert.equal(parsed.authority.coordinator_write, 'allow')
+    assert.deepEqual([...parsed.authority.protected_paths], ['lib/'])
+  })
 })
 
 describe('execution 一节 —— 运行时真正读取的字段必须能通过校验', () => {
