@@ -7,7 +7,7 @@
 import { createHash } from 'node:crypto'
 import { execSync } from 'node:child_process'
 import {
-  existsSync, mkdirSync, readFileSync, realpathSync, renameSync,
+  existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync,
   rmSync, writeFileSync,
 } from 'node:fs'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
@@ -50,6 +50,14 @@ export function replaceDependency(profile, dependency) {
   writeJson(file, pkg)
 }
 
+/** 只读取本插件在 pnpm lock 的 specifier，不解析或改写其他依赖。 */
+export function lockSpecifier(profile) {
+  const lock = join(profile, 'pnpm-lock.yaml')
+  if (!existsSync(lock)) return undefined
+  const match = /^ {6}dsh-gac-runtime:\r?\n {8}specifier: ([^\r\n]+)/mu.exec(readFileSync(lock, 'utf8'))
+  return match?.[1]?.trim()
+}
+
 function actualPath(profile) {
   try {
     return realpathSync(join(profile, 'node_modules', PACKAGE_NAME))
@@ -60,10 +68,11 @@ function actualPath(profile) {
 
 export function inspectDeployment({ profile, root, stateFile }) {
   const spec = dependencyOf(profile)
+  const lockSpec = lockSpecifier(profile)
   const actual = actualPath(profile)
   const state = existsSync(stateFile) ? readJson(stateFile) : undefined
   const isSource = actual !== undefined && samePath(actual, root)
-  return { spec, actual, isSource, state }
+  return { spec, lockSpec, actual, isSource, state }
 }
 
 function runningPids(dshHome) {
@@ -110,6 +119,10 @@ function switchTo(profile, spec, expectedPath, exec, root, expectedFiles = []) {
   replaceDependency(profile, spec)
   try {
     reify(profile, exec)
+    const locked = lockSpecifier(profile)
+    if (locked !== undefined && locked !== spec) {
+      fail('GAC_DEPLOY_LOCK_MISMATCH', 'pnpm 安装后锁文件仍未与 Profile 依赖对齐：' + String(locked))
+    }
     const actual = actualPath(profile)
     if (!actual || (expectedPath && !samePath(actual, expectedPath))
       || (!expectedPath && samePath(actual, root))) {
@@ -137,7 +150,7 @@ function switchTo(profile, spec, expectedPath, exec, root, expectedFiles = []) {
     replaceDependency(profile, before)
     try {
       reify(profile, exec)
-      if (!expectedPath && samePath(actualPath(profile) ?? root, root)) {
+      if (before !== linkSpec(root) && samePath(actualPath(profile) ?? root, root)) {
         fail('GAC_DEPLOY_ROLLBACK_SOURCE', '恢复安装后仍指向工作树')
       }
     } catch (rollbackError) {
@@ -194,10 +207,19 @@ export function runDeployment(argv, opts = {}) {
     const state = inspectDeployment({ profile, root, stateFile })
     log('Profile: ' + profile)
     log('package.json: ' + state.spec)
+    log('pnpm-lock.yaml: ' + (state.lockSpec ?? '(not found)'))
     log('node_modules actual: ' + (state.actual ?? '(missing)'))
+    if (state.lockSpec && state.lockSpec !== state.spec) log('WARNING: 依赖声明与 pnpm 锁文件不一致')
     log('mode: ' + (state.state ? 'VALIDATION' : 'NORMAL'))
     log('DSH running PIDs: ' + processChecker(dshHome).join(','))
     if (state.isSource) log('WARNING: 日常实际加载路径仍指向开发工作树；必须在退出宿主后完成隔离修复')
+    if (state.actual && state.spec.startsWith('file:')) {
+      const modules = resolve(profile, 'node_modules').toLowerCase()
+      const actual = resolve(state.actual).toLowerCase()
+      if (!actual.startsWith(modules + '\\') && !actual.startsWith(modules + '/')) {
+        log('WARNING: 虽声明 file tarball，但实际加载目录不在 Profile node_modules 内')
+      }
+    }
     if (!state.state && !state.spec.startsWith('file:')) {
       log('WARNING: 日常配置不是不可变的本地安装包')
     }
@@ -260,18 +282,21 @@ export function runDeployment(argv, opts = {}) {
 
   const packages = join(dshHome, 'packages')
   mkdirSync(packages, { recursive: true })
-  const meta = JSON.parse(exec('npm pack --ignore-scripts --json --pack-destination "' + packages + '"', root))[0]
+  // 固定 npm pack 默认文件名仅落在隔离临时目录，绝不覆盖旧的已验收安装包。
+  const staging = mkdtempSync(join(packages, 'gac-pack-'))
+  const meta = JSON.parse(exec('npm pack --ignore-scripts --json --pack-destination "' + staging + '"', root))[0]
   const required = ['lib/index.js', 'cordis.patch.yml', 'assets/ENGINEERING_POLICY.md']
   const included = new Set(meta.files.map((file) => file.path))
   if (required.some((f) => !included.has(f))) {
     fail('GAC_DEPLOY_PACKAGE_INCOMPLETE', '打包结果缺少 Runtime 入口、配置或工程质量资源')
   }
-  const packed = join(packages, meta.filename)
+  const packed = join(staging, meta.filename)
   const target = join(packages, PACKAGE_NAME + '-' + meta.version + '-' + commit.slice(0, 12) + '.tgz')
   if (existsSync(target)) {
     fail('GAC_DEPLOY_RELEASE_EXISTS', '目标不可变本地包已存在，拒绝覆盖：' + target)
   }
   renameSync(packed, target)
+  rmSync(staging, { recursive: true, force: true })
   const checksum = createHash('sha256').update(readFileSync(target)).digest('hex')
   const manifest = { package: PACKAGE_NAME, version: meta.version, gitCommit: commit,
     sha256: checksum, evidence: flags.evidence, file: target, createdAt: new Date().toISOString() }

@@ -4,6 +4,23 @@ DeepSeek Harness（DSH）中的通用 GAC（Governed Agent Collaboration）插�
 
 > **阅读顺序**：本文件用于当前使用；[AGENTS.md](AGENTS.md) 是本仓库开发纪律；[docs/CUTOVER.md](docs/CUTOVER.md) 是真实验收与剩余缺口；[ADR-0001](docs/ADR-0001-子会话执行载体.md) 保留历史决策与事故细节。以代码、当前 Profile 和真实测试结果为最终依据，不以历史计划作为现状。
 
+## 从 GitHub 安装
+
+本包是纯 ESM JavaScript，没有构建步骤、也没有 npm 运行时依赖，装上即可用。DSH 的 `plugin` 命令就是 Profile 目录里的 pnpm：`add` 在安装完成后还会自动把本包写进该 Profile 的 `dsh.profile.bundles`，所以不需要再手工编辑启用配置。
+
+```powershell
+# 装进指定 Profile（web / headless / acp / sdk / desktop，或你自己的 Profile 名）
+dsh plugin --profile web add github:MancoCL/DSH_Agent_Runtime
+# 需要固定版本时在地址后加 #<标签或提交>
+dsh plugin --profile web add github:MancoCL/DSH_Agent_Runtime#<标签或提交>
+```
+
+- Desktop 应用的插件管理界面填同一个地址 `github:MancoCL/DSH_Agent_Runtime`，走的是同一套 pnpm 安装路径。`--profile desktop` 要求先完整启动过一次 Desktop 再完全退出：宿主不会在自己运行时改动 desktop Profile。
+- **升级**：重新执行一次 `add`，并显式带上新的 `#<标签或提交>`——GitHub 来源会以具体提交记进 Profile 的 lockfile，只更新远端分支不会自动生效。**卸载**：`dsh plugin --profile <profile> remove dsh-gac-runtime`，同时会把它移出 `dsh.profile.bundles`。
+- **装完不等于被治理**：每个工程要显式选择加入——把 [examples/gac-project.json](examples/gac-project.json) 复制成该工程的 `.dsh/gac/project.json`，再把其中的路径、能力与执行者改成真实情况。没有适配器的工程照常运行，只是不受 GAC 治理（见 `lib/project-state.js`）。
+- 版本要求写在 `engines.dsh` 与 `peerDependencies`：只有 `@deepseek-ai/dsh-llm`、`@deepseek-ai/dsh-tools` 两个宿主自带的包，且声明为 optional，不会去公网安装它们。宿主版本过旧时 DSH 会拒绝安装并回滚，按它打印的 `dsh plugin --profile <profile> allow-version …` 执行即可。
+- **排障**：`dsh plugin --profile <profile> ls` 确认是否装进当前 Profile；插件命令的完整日志在 `<profile>/.plugin-manager/logs/operation-*/pnpm.log`。
+
 ## 架构与职责
 
 ```text
@@ -68,19 +85,32 @@ write_claims, evidence_log, semantic_artifacts
 
 PTC、任意子 Agent 委派、Memory Provider 不属于默认必需能力。缺少必需能力不能静默降级成“照常完成”。
 
-## 安装与本仓库开发
+## 开发、验收与本地发布隔离
 
-插件是 DSH Bundle（`package.json` 的 `dsh.bundle.patch` 指向 `cordis.patch.yml`），通过 DSH 插件管理器安装到目标 Profile；**不要手动改桌面内核代码或其拥有的 Session 数据格式**。
+**日常 DSH 必须使用从本地 `.tgz` 安装的插件；工作区不是生产插件目录。** 只有源码完成、测试通过且明确开始真实 E2E 时，才允许临时把目标 Profile 指向当前 Git 工作树。发布需要真实验收结论，发布后由 `pnpm` 同时更新 Profile 依赖、锁文件与实际 `node_modules`，而不只是替换一段配置字符串。
 
 ```powershell
-npm test
-$env:DSH_PROFILE_DIR = "$env:USERPROFILE\.dsh\profiles\core-020"
-npm run plugin:status
-npm run plugin:on
-npm run plugin:off
+$env:DSH_PROFILE_DIR = "$env:USERPROFILE\.dsh\profiles\core-020" # 仅本机示例，须核实
+npm run deploy:status         # 检查 package.json 与 node_modules 真实落点
+npm test                      # 日常在独立工作区开发
+
+# 代码完成、Git 工作区干净、决定启动真实验收之后：
+# 先完全退出 DSH，以下命令会复核 Git HEAD 和单元测试
+npm run deploy:validate -- --apply --confirm-verify
+# 启动 DSH，运行真实 E2E；期间不修改工作区
+# 再完全退出 DSH：
+npm run deploy:publish -- --apply --confirmed-pass --evidence ev-真实编号
+
+# 若验收未通过：退出 DSH 后恢复验收前依赖，而不是发布：
+npm run deploy:restore -- --apply
+npm run deploy:status
 ```
 
-Profile 路径只作本机示例，应实际核对；启停是否热应用以 `plugin-loaded/plugin-unloaded` 报告为准，必要时重启 DSH。在开发本插件自身时，应关闭其自管实例后再修改 `lib/*.js`，避免 HMR 将半成品代码热加载进活宿主。日常稳定副本和 Git 源码可能不同，验收需记录真实加载版本。详见 [AGENTS.md](AGENTS.md)。
+`deploy:validate` 保存恢复锚点并要求宿主退出。`deploy:publish` 打包成带 Git SHA 的**不可变本地 tarball**，同时记录 SHA-256、验收号、真实已安装内容；发布成功后解除工作树链接。`deploy:restore` 使用包管理器恢复原依赖而不是手工重建 Junction。所有变更命令缺少 `--apply` 时仅输出预检信息，检测到运行中的 DSH 会拒绝切换。
+
+**本机检查曾发现三处不一致：** Profile `package.json` 指向 DSH 安装目录、`pnpm-lock.yaml` 指向旧的 `.tgz`、实际 `node_modules/dsh-gac-runtime` 却指向本工作区。此类状态不得视为已隔离生产环境；修复必须在宿主退出且源码验收完成后按上述受控流程进行。普通 `plugin:on/off` 只控制启停，不能代替版本切换。
+
+详见 [AGENTS.md](AGENTS.md) 的开发和 Git 纪律。
 
 ## 当前限制与验收边界
 
