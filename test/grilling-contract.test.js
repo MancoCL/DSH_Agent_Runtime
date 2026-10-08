@@ -45,18 +45,34 @@ function round(overrides = {}) {
 }
 
 /**
+ * 造一段把每条验收标准都逐条写出来的需求正文。
+ *
+ * `freezeRequirement` 要求正文里逐条写出每条标准——编号本身不表达意思，而读不到实现的设计与验证
+ * 角色只能照正文推导。测试夹具也得守这条规矩，否则冻不出来。按**排序后**的编号拼，是为了让
+ * 「验收标准的顺序不影响身份」那条断言仍然成立（正文现在是身份的一部分）。
+ *
+ * @param {readonly string[]} criteria
+ * @returns {string}
+ */
+function requirementTextFor(criteria) {
+  const sorted = [...criteria].map(String).sort()
+  return ['改一个字段。', ...sorted.map((id) => `${id}：这条标准说的是 ${id} 对应的事。`)].join('')
+}
+
+/**
  * 问完并请用户确认的访谈。
  *
  * @param {object} [overrides]
  * @returns {object}
  */
 function confirmedGrilling(overrides = {}) {
-  let state = startGrilling({ task_id: 'REQ-1', requirement: '改一个字段' })
+  const criteria = overrides.acceptance_criteria ?? ['AC1', 'AC2']
+  let state = startGrilling({ task_id: 'REQ-1', requirement: requirementTextFor(criteria) })
   state = recordRound(state, round())
   state = proposeConvergence(state)
   return freezeRequirement(state, {
     confirmation: '可以，就按这个做',
-    acceptance_criteria: ['AC1', 'AC2'],
+    acceptance_criteria: criteria,
     ...overrides,
   })
 }
@@ -82,6 +98,16 @@ describe('需求身份：改写即换身份，设计才有「推导自哪一版�
       requirementId(confirmedGrilling({ acceptance_criteria: ['AC1', 'AC2'] })),
       requirementId(confirmedGrilling({ acceptance_criteria: ['AC2', 'AC1'] })),
     )
+  })
+
+  it('正文改了就换身份（正文是需求侧的实质依据）', () => {
+    // 只把编号与确认原话算进身份的话，把正文整段换掉都不换身份——「设计推导自哪一版需求」
+    // 这半条门禁就是空的，而正文正是读不到实现的设计与验证角色唯一的依据。
+    const before = requirementId(confirmedGrilling())
+    const after = requirementId(
+      confirmedGrilling({ requirement: `${requirementTextFor(['AC1', 'AC2'])}再多一句。` }),
+    )
+    assert.notEqual(before, after)
   })
 })
 
@@ -180,6 +206,40 @@ describe('访谈循环', () => {
     assert.equal(isRequirementFrozen(state), true)
     assert.equal(state.confirmation, '可以，就按这个做')
     assert.deepEqual([...state.acceptance_criteria], ['AC1', 'AC2'])
+  })
+
+  it('正文里没有逐条写出验收标准就不给冻结 —— 编号不表达意思', () => {
+    // 只给一段整体描述、再单列几个编号，读不到实现的设计与验证角色仍然拿不到「AC3 是哪一条」，
+    // 它只能自己编一套对应，而编错是静默的：方案照样产出、计划照样冻结、覆盖检查照样按编号全绿。
+    // 2026-10-08 活体 REQ-DD-2 正是这样：正文 772 字符齐全，验收标准仍只有编号，冻出来的 12 条
+    // 用例里 AC2/AC3/AC6 整体移位，真实的 AC6（npm test 全绿）一条用例都没有。
+    let state = startGrilling({ task_id: 'REQ-1', requirement: '把两个审计缺口都补上。' })
+    state = recordRound(state, round())
+    state = proposeConvergence(state)
+    assert.throws(
+      () => freezeRequirement(state, {
+        confirmation: '就按这个做',
+        acceptance_criteria: ['AC1', 'AC2'],
+      }),
+      (error) => {
+        assert.equal(error.code, GRILLING_CODES.MALFORMED)
+        assert.match(error.message, /AC1、AC2/u)
+        return true
+      },
+    )
+  })
+
+  it('正文里逐条写出来就能冻结，且 `AC1` 不会误命中 `AC10`', () => {
+    // 判据是「编号后面不是字母或数字」：只要出现就算写了，但 `AC1` 不能靠 `AC10` 里的前缀蒙混过去。
+    let state = startGrilling({ task_id: 'REQ-1', requirement: '把两个缺口都补上。AC10：第十条标准。' })
+    state = recordRound(state, round())
+    state = proposeConvergence(state)
+    assert.throws(
+      () => freezeRequirement(state, { confirmation: '就按这个做', acceptance_criteria: ['AC1'] }),
+      (error) => error.code === GRILLING_CODES.MALFORMED,
+    )
+    const frozen = freezeRequirement(state, { confirmation: '就按这个做', acceptance_criteria: ['AC10'] })
+    assert.deepEqual([...frozen.acceptance_criteria], ['AC10'])
   })
 
   it('冻结之后不能再追加轮次', () => {

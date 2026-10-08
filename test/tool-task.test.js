@@ -1548,7 +1548,7 @@ describe('访谈循环门禁 —— 需求必须以用户确认结束', () => {
       grill_action: 'confirm',
       confirmation: '可以，就按这个做',
       acceptance_criteria: ['AC1'],
-      requirement: '把配置字段删掉，删干净。',
+      requirement: '把配置字段删掉，删干净。AC1：删掉之后配置解析不再接受这个字段。',
     }, h.exec)
     assert.equal(value.action, 'requirement_frozen')
     assert.match(value.message, /AC1|1 条/u)
@@ -2639,7 +2639,7 @@ describe('时间戳不能是 0（活体验收的复核报告如实记过这条�
       grill_action: 'confirm',
       confirmation: '就按这个做',
       acceptance_criteria: ['AC1'],
-      requirement: '把配置字段删掉。',
+      requirement: '把配置字段删掉。AC1：删掉之后配置解析不再接受这个字段。',
     }, h.exec)
     await h.tool.execute({
       action: 'contract',
