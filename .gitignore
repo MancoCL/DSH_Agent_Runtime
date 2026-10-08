@@ -35,6 +35,10 @@ node_modules/
 # 验证报告（逐条用例的执行结论与证据引用）同样是运行时状态
 .dsh/gac/verifications/
 
+# 设计草稿、冻结的设计包与主会话对它的裁决都是运行时状态：设计是下游开工的输入，
+# 它按任务存在，不是这个插件的源码
+.dsh/gac/designs/
+
 # 操作系统噪音文件
 Thumbs.db
 .DS_Store

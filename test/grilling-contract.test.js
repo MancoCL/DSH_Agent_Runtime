@@ -27,6 +27,7 @@ import {
   isRequirementFrozen,
   proposeConvergence,
   recordRound,
+  requirementId,
   startGrilling,
   summarize,
 } from '../lib/grilling.js'
@@ -59,6 +60,30 @@ function confirmedGrilling(overrides = {}) {
     ...overrides,
   })
 }
+
+describe('需求身份：改写即换身份，设计才有「推导自哪一版」可言', () => {
+  it('冻结的需求有内容寻址的 id，未冻结的没有', () => {
+    assert.equal(requirementId(startGrilling({ task_id: 'REQ-1' })), undefined)
+    assert.match(requirementId(confirmedGrilling()), /^requirement-[0-9a-f]{8}$/u)
+  })
+
+  it('多一条验收标准，需求身份就变', () => {
+    const before = requirementId(confirmedGrilling())
+    const after = requirementId(confirmedGrilling({ acceptance_criteria: ['AC1', 'AC2', 'AC3'] }))
+    assert.notEqual(before, after)
+  })
+
+  it('确认原话变了，需求身份也变（用户改了口径就是改了口径）', () => {
+    assert.notEqual(requirementId(confirmedGrilling()), requirementId(confirmedGrilling({ confirmation: '再想想' })))
+  })
+
+  it('验收标准的顺序不影响身份', () => {
+    assert.equal(
+      requirementId(confirmedGrilling({ acceptance_criteria: ['AC1', 'AC2'] })),
+      requirementId(confirmedGrilling({ acceptance_criteria: ['AC2', 'AC1'] })),
+    )
+  })
+})
 
 describe('访谈循环', () => {
   it('新建时什么都没问过', () => {

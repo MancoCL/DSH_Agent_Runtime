@@ -138,6 +138,20 @@ describe('compileReviewReport —— 答完才允许成为产物', () => {
     )
   })
 
+  it('复核对象缺省是这次实现，也可以显式记成设计复核', () => {
+    // 缺省不是「无害的省略」：设计复核与实现复核问同一套六问，但被复核的东西不同；如果两者在记录
+    // 上长得一样，「这份复核针对的是哪一版设计」就只剩一句自述。
+    assert.equal(compileReviewReport(draft()).subject, 'implementation')
+    assert.equal(compileReviewReport(draft({ subject: 'design' })).subject, 'design')
+  })
+
+  it('复核对象不在闭集内被拒', () => {
+    assert.throws(
+      () => compileReviewReport(draft({ subject: 'implementation_and_design' })),
+      (error) => error.code === REVIEW_CODES.MALFORMED,
+    )
+  })
+
   it('六问缺一条就不许登记，并指名缺的是哪一条', () => {
     const partial = draft()
     delete partial.verification_independence.falsification_present
@@ -318,6 +332,13 @@ describe('reviewId —— 报告的身份', () => {
     assert.notEqual(
       reviewId({ ...draft(), reviewed_plan_id: 'plan-1' }),
       reviewId({ ...draft(), reviewed_plan_id: 'plan-2' }),
+    )
+  })
+
+  it('复核对象（设计还是实现）也进身份', () => {
+    assert.notEqual(
+      reviewId({ ...draft(), subject: 'implementation' }),
+      reviewId({ ...draft(), subject: 'design' }),
     )
   })
 })

@@ -77,6 +77,47 @@ describe('语义角色：判据是角色，不是写范围', () => {
   })
 })
 
+describe('两个设计专家：软件设计读得到仓库，测试设计读不到', () => {
+  it('软件设计要读现有代码才谈得上设计，但不许改文件', () => {
+    // 「设计」在这里是**产物**，不是对代码的修改：它读仓库、跑诊断，产出的是文档。
+    assert.equal(deny({ role: 'software_design', name: 'read' }), undefined)
+    assert.equal(deny({ role: 'software_design', name: 'grep' }), undefined)
+    assert.equal(deny({ role: 'software_design', name: 'pwsh' }), undefined)
+    assert.equal(deny({ role: 'software_design', name: 'write' })?.category, 'write_scope_empty')
+    assert.equal(deny({ role: 'software_design', name: 'edit' })?.category, 'write_scope_empty')
+    assert.equal(deny({ role: 'software_design', name: 'run_code' })?.category, 'ptc')
+  })
+
+  it('测试设计与验证设计同档：只推理', () => {
+    // 测试设计的预期必须从需求与契约推导；读本次实现会让预期照着实现写，那样证明的是「实现自洽」。
+    for (const name of ['read', 'grep', 'glob', 'read_image', 'search', 'pwsh', 'write', 'edit', 'run_code', '神秘工具']) {
+      assert.notEqual(deny({ role: 'test_design', name }), undefined, `${name} 不该对测试设计开放`)
+    }
+    assert.deepEqual(rolePolicyFor('test_design').deny_kinds, rolePolicyFor('verification_design').deny_kinds)
+    assert.equal(deny({ role: 'test_design', name: 'structured_output' }), undefined)
+    assert.equal(deny({ role: 'test_design', name: 'todo_write' }), undefined)
+  })
+
+  it('两个角色都进不了委派，也碰不到派遣方的协调状态', () => {
+    for (const role of ['software_design', 'test_design']) {
+      for (const name of DELEGATION_TOOLS) {
+        assert.equal(deny({ role, name })?.code, ROLE_CODES.CHILD_DELEGATION_DENIED)
+      }
+      for (const name of PARENT_COORDINATION_TOOLS) {
+        assert.equal(deny({ role, name })?.code, ROLE_CODES.ROLE_TOOL_DENIED)
+      }
+    }
+  })
+
+  it('六个语义角色都有自己的一档策略', () => {
+    // 漏加不会静默给出写入面（认不出的角色退到只推理那一档），但会让新角色连 read 都没有。
+    for (const role of ['implementation', 'software_design', 'test_design', 'verification_design', 'verification_execution', 'review']) {
+      assert.notEqual(ROLE_TOOL_POLICY[role], undefined, `${role} 没有工具策略`)
+      assert.ok(Array.isArray(ROLE_TOOL_POLICY[role].deny_kinds))
+    }
+  })
+})
+
 describe('设计节点：只推理', () => {
   const design = (name) => deny({ role: 'verification_design', name })
 
