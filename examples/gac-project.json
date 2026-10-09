@@ -10,12 +10,20 @@
     "review"
   ],
   "executors": {
-    "implementation": ["builder"],
-    "verification": ["verifier"],
-    "review": ["reviewer"]
+    "implementation": [
+      "builder"
+    ],
+    "verification": [
+      "verifier"
+    ],
+    "review": [
+      "reviewer"
+    ]
   },
   "execution": {
-    "require_contract": ["high_risk_task"],
+    "require_contract": [
+      "high_risk_task"
+    ],
     "provider_routes": {},
     "native_child_dispatch": true
   },
@@ -24,16 +32,48 @@
       "src/core/",
       "src/auth/"
     ],
-    "default_level": "low"
+    "default_level": "low",
+    "core_invariants": [
+      {
+        "id": "project-core-contract",
+        "description": "填写本项目不能破坏的核心行为不变量"
+      }
+    ]
   },
   "memory": {
-    "allow": ["current_project", "global_reusable"],
-    "deny_as_project_fact": ["foreign_project", "unknown"]
+    "allow": [
+      "current_project",
+      "global_reusable"
+    ],
+    "deny_as_project_fact": [
+      "foreign_project",
+      "unknown"
+    ]
   },
   "authority": {
     "enforcement_mode": "tool_guard",
-    "test_paths": ["test/"],
+    "test_paths": [
+      "test/"
+    ],
     "coordinator_write": "protected",
-    "protected_paths": ["src/"]
+    "protected_paths": [
+      "src/"
+    ]
+  },
+  "verification_context": {
+    "test_entry": "npm test",
+    "build_entry": "无独立构建步骤",
+    "commands": [
+      "npm test"
+    ],
+    "cwd": ".",
+    "capabilities": [
+      "shell",
+      "node:test"
+    ],
+    "limitations": [
+      "仅本地测试；真实硬件与外部服务另行验收"
+    ],
+    "environment_id": "填写项目实际工具链与依赖锁文件版本身份"
   }
 }
