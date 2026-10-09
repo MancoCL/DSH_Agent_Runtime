@@ -83,14 +83,14 @@ describe('工具形状', () => {
 
   it('告诉模型不要去抢先规避升级门禁', () => {
     const { tool } = harness(scratch(), VALID_ADAPTER)
-    assert.match(tool.description, /不要试图抢先规避/u)
+    assert.match(tool.description, /取得用户同意/u)
   })
 
   it('声明了它读取的每一个参数，且没有一个是必填的', () => {
     const options = projectToolOptions({ state: new ProjectState() })
     assert.deepEqual(
       Object.keys(options.parameters).sort(),
-      ['ambiguous', 'irreversible', 'mode', 'reason', 'target_paths'],
+      ['action', 'ambiguous', 'assessment', 'irreversible', 'mode', 'operation_id', 'reason', 'target_paths'],
     )
     for (const [name, spec] of Object.entries(options.parameters)) {
       assert.equal(Object.hasOwn(spec, 'required'), false, `${name} 必须省略 required 键`)
@@ -129,8 +129,8 @@ describe('检视', () => {
     const { tool, exec } = harness(root, VALID_ADAPTER)
     await tool.execute({ mode: 'standard_task', reason: '普通缺陷修复' }, exec)
     const value = await tool.execute({}, exec)
-    assert.equal(value.mode, 'standard_task')
-    assert.match(value.summary, /当前模式：standard_task/u)
+    assert.equal(value.mode, 'direct_edit')
+    assert.match(value.summary, /当前模式：direct_edit/u)
   })
 })
 
@@ -142,7 +142,7 @@ describe('声明模式', () => {
       reason: '普通缺陷修复',
       target_paths: ['src/feature.c'],
     }, exec)
-    assert.equal(value.mode, 'standard_task')
+    assert.equal(value.mode, 'direct_edit')
     assert.equal(value.escalated, false)
     assert.match(value.summary, /独立验证者/u)
   })
@@ -154,11 +154,11 @@ describe('声明模式', () => {
       reason: '调整一处比较',
       target_paths: ['src/auth/token.c'],
     }, exec)
-    assert.equal(value.mode, 'high_risk_task')
-    assert.equal(value.escalated, true)
-    assert.equal(value.escalated_from, 'direct_edit')
-    assert.match(value.summary, /已从 direct_edit 升级为 high_risk_task/u)
-    assert.match(value.summary, /验证计划/u)
+    assert.equal(value.mode, 'direct_edit')
+    assert.equal(value.escalated, false)
+    assert.equal(value.escalated_from, undefined)
+    assert.match(value.summary, /模式 direct_edit/u)
+    assert.match(value.summary, /不创建任务记录/u)
   })
 
   it('说明 direct_edit 不创建任务记录', async () => {
@@ -245,7 +245,7 @@ describe('升级会被记录下来以备审计', () => {
     const recorded = state.modeFor('session-1')
     // 两个事实都保留下来：当初声称的是什么，以及它变成了什么。
     assert.equal(recorded.declared_mode, 'direct_edit')
-    assert.equal(recorded.mode, 'high_risk_task')
-    assert.equal(recorded.escalated, true)
+    assert.equal(recorded.mode, 'direct_edit')
+    assert.equal(recorded.escalated, false)
   })
 })

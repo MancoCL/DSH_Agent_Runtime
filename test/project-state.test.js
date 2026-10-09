@@ -162,7 +162,7 @@ describe('模式解析', () => {
     assert.equal(decision.project_id, 'proj')
   })
 
-  it('目标落在已声明的高风险路径里时升级', () => {
+  it('目标落在高风险路径里时要求评估', () => {
     const root = scratchProject(VALID)
     const decision = stateAt(root).declareMode({
       session_id: 's1',
@@ -171,9 +171,9 @@ describe('模式解析', () => {
       reason: '调整一处比较',
       target_paths: ['src/auth/token.c'],
     })
-    assert.equal(decision.mode, 'high_risk_task')
-    assert.equal(decision.escalated, true)
-    assert.equal(decision.escalated_from, 'direct_edit')
+    assert.equal(decision.mode, 'direct_edit')
+    assert.equal(decision.escalated, false)
+    assert.equal(decision.assessment_required, true)
     assert.match(decision.reason, /src\/auth\/token\.c/u)
   })
 
@@ -205,7 +205,7 @@ describe('模式解析', () => {
     state.declareMode({ session_id: 'a', root, declared_mode: 'direct_edit' })
     state.declareMode({ session_id: 'b', root, declared_mode: 'high_risk_task' })
     assert.equal(state.modeFor('a').mode, 'direct_edit')
-    assert.equal(state.modeFor('b').mode, 'high_risk_task')
+    assert.equal(state.modeFor('b').mode, 'direct_edit')
   })
 
   it('替换会话的模式，而不是累加', () => {
@@ -247,6 +247,6 @@ describe('检视', () => {
     const root = scratchProject(VALID)
     const state = stateAt(root)
     state.declareMode({ session_id: 's1', root, declared_mode: 'standard_task' })
-    assert.equal(state.inspect('s1', root).mode.mode, 'standard_task')
+    assert.equal(state.inspect('s1', root).mode.mode, 'direct_edit')
   })
 })
