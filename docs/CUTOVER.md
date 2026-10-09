@@ -5,7 +5,7 @@
 ## 1. 当前边界
 
 - 新系统是 DSH 插件；旧系统在 `~/.claude/workflow`，属于另一宿主。**本仓库未迁移、删除或修改旧 Runtime**，也不能因为 DSH 一侧通过测试就宣称旧系统已经退役。
-- 日常使用的 Profile 因机器而异，应通过真实加载报告核实插件来源与版本；稳定副本不应直接指向源码工作树。
+- 日常使用的 Profile 因机器而异，应通过真实加载报告核实插件来源与版本；可以安装固定 npm 版本、GitHub 标签/提交或验收过的本地包，**但不能长期链接源码工作树**。本机 `core-020` 当前为 `github:MancoCL/DSH_Agent_Runtime#v0.1.1`，这是已发布旧快照，不等于当前 Git HEAD；部署状态取当前检查结果为准。
 - 自开发时，改 `lib/*.js` 前应关闭加载工作树的插件实例；生产稳定副本是否开启以实际 Profile 和加载报告为准，不照搬“本仓库开发默认关闭”的语句。
 - GAC 的 TaskStore 是任务现态，GAC Event Log 是追加审计；**Host Session Log 属于 DSH，禁止写插件自定义事件**。
 - `execution.required_capabilities` 是可执行门禁，不只是声明。高风险完成时发现必需能力缺失，按 `GAC_COMPLETION_CAPABILITY_MISSING` 拒绝；PTC 不属于必需项。
@@ -17,10 +17,12 @@
 | 写作用域 | 根文件 `mod.c` 不等于 `sub/mod.c`；结构化越界写在执行前 `GAC_WRITE_SCOPE_DENIED`；Child Binding 也已实测。 |
 | 原生子会话 | Child Session 独立身份、工具面、结果回传和批次并发已实测；高风险演示 `REQ-HR-5` 四节点（Design、Implementation、Verification、Review）最终 `completed`。**这不是新四类专家设计链的 E2E**。 |
 | 角色隔离 | `verification_design` 的仓库检视/写入/执行被角色策略拒绝；委派类在执行期 `GAC_CHILD_DELEGATION_DENIED`。模型呈现面仍可能出现宿主 own-layer 工具，见 ADR §23。 |
-| 语义产物 | VerificationPlan、VerificationReport、ReviewReport 已能由 Child 结果自动登记；需冻结、AC 追溯、有效 Evidence 与 Review 结果才能收口。 |
+| 语义产物 | VerificationPlan、VerificationReport、ReviewReport 已能由 Child 结果自动登记；需冻结、AC 追溯、有效 Evidence 与 Review 结果才能收口。2026-10-09 新增 `verification_context`/测试详设注入与逐用例证据校验，**已有单测，不等于新场景活体已通过**。 |
 | Witness | 日常 Profile 实测 `ev-1820`：`listed=2, total=2, coverage=complete, out_of_scope=1`。另一次 `505` 变更受 `maxFiles=500` 截断，按 `coverage=partial` 记录。被 Git 忽略的路径不被生产者观测。 |
 | PTC | 实测外层 `run_code` 通过、内层越界 `write` 和 `pwsh` 各被正常门禁拒绝；PTC 在场可用，缺席不阻断 GAC。 |
 | 审计安全 | 插件自定义审计写 `.dsh/gac/events/events.jsonl`；历史 Host Session 自定义事件兼容事故已修复，回归见 `test/session-log-integrity.test.js`。 |
+| 默认处理与升级 | 普通修改默认 `direct_edit`；升至 `standard_task` / `high_risk_task` 必须绑定用户同意与相应评估，见 `test/mode-upgrade.test.js`、`test/operation-task.test.js`；不宣称所有宿主问答路径已活体验收。 |
+| 后台派遣 | 新增 `DispatchTracker`：节点异步运行，按任务串行结算，持久化 outbox 并通过宿主消息通知；异常派遣可被标记中断。单元测试见 `test/dispatch-tracker.test.js`；跨宿主重启与真实业务最终闭环仍需现场验证。 |
 
 需重新验证或升级 DSH 时，使用 [Witness 实测配方](WITNESS-LIVE-PROBE.md) 与 [PTC 实测配方](PTC-LIVE-PROBE.md)。不要把历史成功记录自动当成**新 DSH 内核、新 Profile 或新模型**下的成功记录。
 
@@ -45,7 +47,7 @@
 
 - DSH own-layer 委派工具呈现污染属于**宿主层已知限制**；执行期按工具族拒绝已实测。详细根因见 ADR §23，不再在 GAC 内部添加执行器或无穷的过滤补丁。
 - Design 与 Verification 已具备不同 Session/Context/工具面，但**不同模型/作者**不是默认保证；需独立查验子会话实际 Provider/Model。
-- VerificationPlan 若要求 Verifier 在当前工具面无法做的攻击或写操作，可能导致真实 case 无法产生通过证据。应为设计专家提供**静态验证能力清单**，而不是让验证者虚报 PASS。
+- VerificationPlan 若要求 Verifier 在当前工具面无法执行的攻击或写操作，仍可能缺少合规证据。目前已有可选的项目 `verification_context`（包含测试入口、能力与环境身份）及测试详设、冻结用例输入；**尚需真实任务证明这些输入足以防止用例不可执行**，不能虚报 PASS。
 - 资源独占冲突当前在**调度期将节点放入不同批次串行执行**；不采用先派遣再拒绝的旧定义。Write Claims 仍负责跨会话写冲突。
 - Memory、自动 Git Checkpoint、完整 Event Sourcing 当前均不是切换阻塞项；没有真实消费需求时不为其增加新子系统。
 
@@ -53,12 +55,13 @@
 
 ### 6.1 尚未关闭
 
-1. **真实用户需求的最终交付**：已有大量自建负例和 E2E，但缺一个真实外部工程任务的完整需求→设计→实现→独立验证→最终验收记录。
-2. **作者独立性的证明**：分离 Session、Prompt、Context、Tools 已有机制，但尚未在目标生产场景中凭真实 Provider/Model 或独立作者证据充分证明。六问 Review 不能代替作者事实。
-3. **平台 own-layer 委派呈现**：执行调用已经 fail-closed，呈现面仍无法由 GAC 全收；这是**已归因平台限制，不是继续开发的 GAC 阻塞**。
-4. **验证方案的可执行性**：曾有部分 case 缺实际执行能力而如实失败；建议把 Verifier 的静态可用能力注入设计上下文，保持设计节点对实现盲化。
-5. **资源冲突的旧规格差异**：正式以调度期分批串行为准，后续规格/用例用同一表述，不引入 Resource Lease Manager。
-6. **新设计驱动全链路 E2E**：四类设计产物、批准和设计换版已有代码与单测，但尚未完整实测到最终 `completed`。不得以旧 `REQ-HR-5` 代替。
+1. **真实用户需求的最终交付**：缺少一份非框架自编需求从确认、设计、批准、实施、独立验证到最终收口的完整现场证据。
+2. **作者独立性**：已有角色级 Provider/Model 路由和独立 Session，但还应在目标生产 Profile 采集真实子会话身份、路由、执行和审查证据，不能仅靠角色名证明异作者独立。
+3. **验证用例的实际可执行性**：最新代码已能注入适配器的测试能力/环境、测试详设和冻结用例，并要求逐 case 的证据；仍需真实 E2E 确认测试执行器能完成计划中的每一类测试。
+4. **新设计驱动 HIGH_RISK 全链路**：四类设计产物、批准与设计换版已有代码及单测，但尚未证明全链从设计到 Builder、Test Builder、Verifier、Reviewer 自动达到 `completed`。旧 `REQ-HR-5` 不覆盖这一点。
+5. **后台派遣与消息结算的宿主现场**：新 `DispatchTracker` 已有单元测试；实际 DSH 中断恢复、持续派遣、异步通知与无人工补登记收口仍需独立验收。
+
+Own-layer 委派工具可见性属于 §5 已归因的平台限制；资源冲突按调度期分批串行执行属于已决定的规格，**两者不再当作待开发功能**。
 
 ### 6.2 已关闭（证据索引）
 
