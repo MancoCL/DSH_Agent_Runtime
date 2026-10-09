@@ -3487,3 +3487,207 @@ describe('设计换版 —— 照旧版做完的活儿不能算进新版名下',
     assert.deepEqual(value.blockers, ['GAC_VERIFICATION_PLAN_MISSING'])
   })
 })
+
+describe('create 的拆分判据 —— 提示与拒绝是两种东西，不能互相冒充', () => {
+  /**
+   * 一个声明了测试路径的 harness。
+   *
+   * 拆分判据本身不读适配器（它读的是任务的形状：节点数、写范围、登记的验收标准），
+   * 但**跨类拒绝**那一条读，而两组行为在同一个 `create` 路径上，所以这里统一接一个
+   * 声明了测试路径的适配器：跨类那条用例靠着它生效，其余用例不受影响。
+   *
+   * @returns {object}
+   */
+  function splitHarness() {
+    return dispatchHarness({ adapterExtras: { authority: { test_paths: ['test/'] } } })
+  }
+
+  /**
+   * 一个实现节点的计划条目。
+   *
+   * @param {string} id
+   * @param {string} path
+   * @returns {object}
+   */
+  function writer(id, path) {
+    return {
+      id,
+      objective: `写 ${path}`,
+      required_capabilities: ['implementation'],
+      write_scope: [path],
+    }
+  }
+
+  /**
+   * 从返回里读出全部文本，供「说了什么 / 没说什么」这类断言使用。
+   *
+   * 断言写在文本而不是字段名上是有意的：提示字段的确切名字属于实现细节，而 `create`
+   * 的返回已经被 schema 钉住（`additionalProperties: false`）。字段名那一侧的保证由
+   * `test/worker-split.test.js` 里「返回的每个字段都在 schema 里声明过」那条用例单独守着。
+   *
+   * @param {object} value
+   * @returns {string}
+   */
+  function text(value) {
+    const parts = []
+    const visit = (node) => {
+      if (typeof node === 'string') parts.push(node)
+      else if (Array.isArray(node)) for (const entry of node) visit(entry)
+      else if (node !== null && typeof node === 'object') for (const entry of Object.values(node)) visit(entry)
+    }
+    visit(value)
+    return parts.join('\n')
+  }
+
+  it('过拆提示不改判：命中时任务照样建立、节点一个不少', async () => {
+    // 提示与拒绝的分界是本轮改动的关键：既有那些门禁都是拒绝，而这两条判据是提示。
+    // 一个「提示」若顺手把任务拒了，它就是一个伪装成建议的门禁。
+    const h = splitHarness()
+    const nodes = Array.from({ length: 11 }, (_, index) => writer(`T${index + 1}`, `lib/mod-${index + 1}.js`))
+    const value = await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-OVER',
+      mode: 'standard_task',
+      plan: { nodes },
+    }, h.exec)
+
+    assert.equal(value.action, 'created')
+    assert.equal(h.store.load('REQ-OVER').nodes.size, 11)
+  })
+
+  it('**已经足够小的任务不被提示过拆** —— 单节点任务无话说', async () => {
+    // 反例方向：能拆的最小形态。任何在这里冒出来的劝合并都是噪声，
+    // 而噪声会让真正需要被看见的那一条被跳过。
+    const h = splitHarness()
+    const value = await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-SMALL',
+      mode: 'standard_task',
+      plan: { nodes: [writer('T1', 'lib/small.js')] },
+    }, h.exec)
+
+    assert.equal(value.action, 'created')
+    assert.doesNotMatch(
+      text(value),
+      /过拆|拆得过细|节点过多|拆成更少|合并节点|归口|集成节点|共享文件/u,
+      `足够小的任务不该收到任何拆分提示；实际返回：${text(value)}`,
+    )
+  })
+
+  it('共享文件归口是提示，不是拒绝：任务建立后仍可推进', async () => {
+    // 契约要求「两级判据都不得拒绝任务创建」。这条用例把「不拒绝」与「还能继续走」
+    // 一起钉住——一个不拒绝但让任务卡死的实现同样是坏的。
+    const h = splitHarness()
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-SHARED',
+      mode: 'standard_task',
+      plan: { nodes: [writer('T1', 'lib/entry.js'), writer('T2', 'lib/entry.js')] },
+    }, h.exec)
+    await h.tool.execute({
+      action: 'contract',
+      contract_action: 'freeze',
+      task_id: 'REQ-SHARED',
+      interface_contract: {
+        name: 'a',
+        operations: [{ name: 'a', signature: 'a(): void', behavior: '无副作用。' }],
+      },
+    }, h.exec)
+
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-SHARED' }, h.exec)
+    assert.deepEqual(value.classifications, ['accepted'], '任务必须能继续推进')
+  })
+
+  it('归口提示指向的是集成节点，而不是「串行跑两遍」', async () => {
+    // 串行与归口解决的是两个不同的问题：串行保证两者不同时写，归口保证两边写的东西
+    // 被合在一起看过。只说「冲突了」会把调用方引向前者，而它的真实毛病是后者。
+    const h = splitHarness()
+    const value = await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-ENTRY',
+      mode: 'standard_task',
+      plan: { nodes: [writer('T1', 'lib/entry.js'), writer('T2', 'lib/entry.js')] },
+    }, h.exec)
+
+    assert.equal(value.action, 'created')
+    assert.match(
+      text(value),
+      /归口|集成节点/u,
+      `共享文件命中的是归口要求，不是一句「冲突了」；实际返回：${text(value)}`,
+    )
+  })
+
+  it('跨产品与测试路径仍被拒 —— 新增判据不得把这条拒绝变成提示', async () => {
+    // 本轮最要紧的「不得回退」：新增的两条都是提示，而这一条是**拒绝**。
+    // 把新增的提示逻辑写宽一点、顺手把这条也降级成提示，正是最可能发生的回退方式。
+    const h = splitHarness()
+    await assert.rejects(
+      () => h.tool.execute({
+        action: 'create',
+        task_id: 'REQ-MIXED',
+        mode: 'standard_task',
+        plan: {
+          nodes: [{
+            id: 'T1',
+            objective: '把实现和它的测试一起写掉',
+            required_capabilities: ['implementation'],
+            write_scope: ['src/', 'test/'],
+          }],
+        },
+      }, h.exec),
+      (error) => {
+        assert.equal(error.code, BUILDER_CODES.SCOPE_CLASS_MIXED)
+        assert.match(error.message, /任务未建立/u)
+        return true
+      },
+    )
+    assert.equal(h.store.load('REQ-MIXED'), undefined, '拒绝必须发生在落盘之前')
+  })
+
+  it('写路径冲突的节点不会被同批派遣 —— 提示不替代既有的互斥保证', async () => {
+    // 归口是建议，写范围互斥是保证。判据加上之后，后者一个字节都不能变。
+    const h = splitHarness()
+    await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-SERIAL',
+      mode: 'standard_task',
+      plan: { nodes: [writer('T1', 'lib/same.js'), writer('T2', 'lib/same.js')] },
+    }, h.exec)
+    await h.tool.execute({
+      action: 'contract',
+      contract_action: 'freeze',
+      task_id: 'REQ-SERIAL',
+      interface_contract: {
+        name: 'a',
+        operations: [{ name: 'a', signature: 'a(): void', behavior: '无副作用。' }],
+      },
+    }, h.exec)
+
+    const value = await h.tool.execute({ action: 'advance', task_id: 'REQ-SERIAL' }, h.exec)
+    assert.equal(
+      h.calls.length,
+      1,
+      `同一份写路径上只能有一个节点在飞；实际：${h.calls.map((call) => call.node.id).join('、')}`,
+    )
+    assert.deepEqual(value.classifications, ['accepted'])
+  })
+
+  it('返回里出现的每个字段都在 output.schema 里声明过', async () => {
+    // 这个坑在活体上翻版过三次（`plan_id`、`design_id`、审计视图）：输出的
+    // `additionalProperties` 是 `false`，一个没声明的字段会让**整条返回**被拒掉，
+    // 而单测因为 `defineTool` 是透传的照样全绿。提示型判据天生就是「多返回一个字段」，
+    // 所以这条守在这里。
+    const h = splitHarness()
+    const value = await h.tool.execute({
+      action: 'create',
+      task_id: 'REQ-SCHEMA',
+      mode: 'standard_task',
+      plan: { nodes: [writer('T1', 'lib/entry.js'), writer('T2', 'lib/entry.js')] },
+    }, h.exec)
+
+    const declared = Object.keys(h.tool.output.schema.properties)
+    for (const key of Object.keys(value)) {
+      assert.ok(declared.includes(key), `字段 ${key} 没有在 output.schema 里声明`)
+    }
+  })
+})

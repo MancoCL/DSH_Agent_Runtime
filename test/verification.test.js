@@ -11,6 +11,7 @@ import { describe, it } from 'node:test'
 
 import {
   CASE_TYPES,
+  FAILURE_CLASSIFICATIONS,
   VERIFICATION_CODES,
   VerificationError,
   checkPlanIdentity,
@@ -20,6 +21,7 @@ import {
   findCoverageGaps,
   freezePlan,
   planId,
+  validateFailureClassification,
 } from '../lib/verification.js'
 
 /** 两条验收标准，后续用例围绕它们构造。 */
@@ -437,5 +439,873 @@ describe('VerificationError', () => {
       assert.equal(error instanceof VerificationError, true)
       assert.equal(error.code, VERIFICATION_CODES.PLAN_MISSING)
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 失败归因（契约 FAILURE_CLASSIFICATIONS / validateFailureClassification /
+// evaluateVerification 对非通过用例的归因检查）。
+//
+// 本节覆盖 AC-CLASS-SET、AC-CLASS-REJECT、AC-CLASS-SUPPORT 与 AC-LEGACY-CODES。
+// 与前面几节不同，这里**正例与反例同等重要**：门禁既能抓住「没归因」，也不能把「归因
+// 齐全」误判成违规。只测前一半，一条把合法归因一并拒掉的门禁会全绿通过。
+// ---------------------------------------------------------------------------
+
+describe('FAILURE_CLASSIFICATIONS —— 失败归因的六类闭集', () => {
+  it('恰好六类，顺序与含义固定', () => {
+    // 六类互斥且穷尽：改产品、改测试实现、改期望、修环境、等外部资源、承认证据不足。
+    // 顺序即展示顺序，所以按契约钉死，而不是只比集合。
+    assert.deepEqual([...FAILURE_CLASSIFICATIONS], [
+      'product_implementation',
+      'test_implementation',
+      'test_expectation',
+      'build_environment',
+      'external_resource',
+      'evidence_insufficient',
+    ])
+  })
+
+  it('是冻结的，不能被就地改写', () => {
+    // 闭集一旦可被就地扩张，「不在闭集内」这条判定就失去意义。
+    assert.equal(Object.isFrozen(FAILURE_CLASSIFICATIONS), true)
+    assert.throws(() => { FAILURE_CLASSIFICATIONS.push('whatever') }, TypeError)
+  })
+
+  it('没有重复项', () => {
+    assert.equal(new Set(FAILURE_CLASSIFICATIONS).size, FAILURE_CLASSIFICATIONS.length)
+  })
+})
+
+describe('validateFailureClassification —— 单条归因的三种拒绝方向', () => {
+  it('缺分类被拒，并指名到用例、给出可分支的码', () => {
+    const verdict = validateFailureClassification({ case_id: 'V1', outcome: 'failed' })
+    assert.equal(verdict.ok, false)
+    assert.equal(verdict.code, VERIFICATION_CODES.FAILURE_CLASSIFICATION_MISSING)
+    assert.equal(verdict.detail.case_id, 'V1')
+  })
+
+  it('分类为空字符串等同于没给分类', () => {
+    // `''` 是「填了但没填」，与 undefined 一样无法据以行动，不能放行。
+    const verdict = validateFailureClassification({
+      case_id: 'V1',
+      outcome: 'failed',
+      failure_classification: '',
+      note: '写了依据也不行，分类本身是空的',
+    })
+    assert.equal(verdict.ok, false)
+    assert.equal(verdict.code, VERIFICATION_CODES.FAILURE_CLASSIFICATION_MISSING)
+  })
+
+  it('分类为 null 等同于没给分类', () => {
+    const verdict = validateFailureClassification({
+      case_id: 'V1',
+      outcome: 'failed',
+      failure_classification: null,
+    })
+    assert.equal(verdict.ok, false)
+    assert.equal(verdict.code, VERIFICATION_CODES.FAILURE_CLASSIFICATION_MISSING)
+  })
+
+  it('分类不在闭集被拒，并回报收到的值', () => {
+    // 自由文本式归因（「环境问题」「不清楚」）看起来说清了，实际落不到任何一类上，
+    // 也就无法据以决定下一步改哪里。
+    const verdict = validateFailureClassification({
+      case_id: 'V2',
+      outcome: 'failed',
+      failure_classification: 'environment',
+      note: '顺手写了个自然语言分类',
+    })
+    assert.equal(verdict.ok, false)
+    assert.equal(verdict.code, VERIFICATION_CODES.FAILURE_CLASSIFICATION_UNKNOWN)
+    assert.equal(verdict.detail.case_id, 'V2')
+    assert.equal(verdict.detail.classification, 'environment')
+  })
+
+  it('大小写不同也算不在闭集，不做静默归一', () => {
+    const verdict = validateFailureClassification({
+      case_id: 'V2',
+      outcome: 'failed',
+      failure_classification: 'Product_Implementation',
+      note: '大小写写错了',
+    })
+    assert.equal(verdict.ok, false)
+    assert.equal(verdict.code, VERIFICATION_CODES.FAILURE_CLASSIFICATION_UNKNOWN)
+  })
+
+  it('分类合法但既无依据也无 note 时被拒', () => {
+    // 分类是判断，不是证据。给了一个合法判断却拿不出任何依据，这次归因只是一句
+    // 无从复核的断言。
+    const verdict = validateFailureClassification({
+      case_id: 'V3',
+      outcome: 'failed',
+      failure_classification: 'product_implementation',
+    })
+    assert.equal(verdict.ok, false)
+    assert.equal(verdict.code, VERIFICATION_CODES.FAILURE_BASIS_MISSING)
+    assert.equal(verdict.detail.case_id, 'V3')
+  })
+
+  it('空白 note 不算依据，引用为空字符串也不算依据', () => {
+    // 「填了」与「填了有用」不是一回事：空白字符串与空引用在数据上等于没写。
+    const blankNote = validateFailureClassification({
+      case_id: 'V3',
+      outcome: 'failed',
+      failure_classification: 'product_implementation',
+      note: '   ',
+      evidence_ref: '',
+    })
+    assert.equal(blankNote.ok, false)
+    assert.equal(blankNote.code, VERIFICATION_CODES.FAILURE_BASIS_MISSING)
+  })
+
+  it('三种拒绝原因各自成码，不共用一条', () => {
+    // 三条的修复动作完全不同（补分类 / 改分类 / 补依据）。合成一条码就只能靠人读文本分辨，
+    // 于是「按码分支」这件事失效。
+    const codes = [
+      validateFailureClassification({ case_id: 'V1', outcome: 'failed' }).code,
+      validateFailureClassification({
+        case_id: 'V2', outcome: 'failed', failure_classification: 'nope', note: 'x',
+      }).code,
+      validateFailureClassification({
+        case_id: 'V3', outcome: 'failed', failure_classification: 'build_environment',
+      }).code,
+    ]
+    assert.equal(new Set(codes).size, 3)
+    assert.equal(codes.includes(null), false)
+  })
+})
+
+describe('validateFailureClassification —— 反例方向：合法归因不得被误伤', () => {
+  it('六类闭集里的每一类，只要给出依据就全部放行', () => {
+    // 这是本节最要紧的一条。逐类遍历而不是抽查一两个：闭集里的某一类被实现漏掉时，
+    // 抽查很容易正好没抽到，逐类遍历不会。
+    for (const classification of FAILURE_CLASSIFICATIONS) {
+      const verdict = validateFailureClassification({
+        case_id: `V-${classification}`,
+        outcome: 'failed',
+        failure_classification: classification,
+        note: `这一条的依据：${classification}`,
+      })
+      assert.equal(verdict.ok, true, `${classification} 是闭集内的合法分类，不该被拒`)
+      assert.equal(verdict.code, null)
+    }
+  })
+
+  it('只有 evidence_ref、没有 note 也是合法归因', () => {
+    // 能取证的场景本就该首选证据引用，此时没有 note 完全正常。
+    const verdict = validateFailureClassification({
+      case_id: 'V1',
+      outcome: 'failed',
+      failure_classification: 'test_expectation',
+      evidence_ref: 'ev-42',
+    })
+    assert.equal(verdict.ok, true)
+    assert.equal(verdict.code, null)
+  })
+
+  it('只有 note、没有 evidence_ref 也是合法归因', () => {
+    // 环境类问题常常取不到运行时证据，此时 note 是契约给的正当依据。
+    const verdict = validateFailureClassification({
+      case_id: 'V1',
+      outcome: 'failed',
+      failure_classification: 'external_resource',
+      note: '上游服务返回 503，重试三次均失败',
+    })
+    assert.equal(verdict.ok, true)
+    assert.equal(verdict.code, null)
+  })
+
+  it('两类依据都给出时同样放行', () => {
+    const verdict = validateFailureClassification({
+      case_id: 'V1',
+      outcome: 'failed',
+      failure_classification: 'build_environment',
+      evidence_ref: 'ev-7',
+      note: '工具链路径未配置',
+    })
+    assert.equal(verdict.ok, true)
+  })
+
+  it('合法的证据不完整归类一路放行：它是诚实的一类，不是兜底垃圾桶', () => {
+    // `evidence_insufficient` 让「查不清楚」也能被结构化记录，而不是被硬塞进某一类冒充结论。
+    // 它若被实现当成「非法」拒掉，就等于逼人编一个具体原因。
+    const verdict = validateFailureClassification({
+      case_id: 'V1',
+      outcome: 'failed',
+      failure_classification: 'evidence_insufficient',
+      note: '日志被轮转覆盖，无法判定是谁的问题',
+    })
+    assert.equal(verdict.ok, true)
+  })
+
+  it('判定函数不抛错：非法输入返回结论而不是异常', () => {
+    // 契约要求它「只判定，不抛错」。抛错会让调用方无法把它用在遍历里逐条收集违规。
+    assert.doesNotThrow(() => validateFailureClassification(undefined))
+    assert.doesNotThrow(() => validateFailureClassification(null))
+    assert.doesNotThrow(() => validateFailureClassification('不是对象'))
+    assert.equal(validateFailureClassification(undefined).ok, false)
+  })
+})
+
+describe('evaluateVerification —— 非通过用例的归因检查', () => {
+  /**
+   * 一份「用例全通过」的报告，把其中一条改成指定形态。
+   *
+   * @param {object} replacement - 替换 V1 的记录。
+   * @returns {object}
+   */
+  function reportWithV1(replacement) {
+    return passingReport({
+      executions: [
+        replacement,
+        { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-2' },
+        { case_id: 'V3', outcome: 'passed', evidence_ref: 'ev-3' },
+        { case_id: 'V4', outcome: 'passed', evidence_ref: 'ev-4' },
+      ],
+    })
+  }
+
+  it('非通过用例缺分类时被拒，且指名到该用例', () => {
+    const result = evaluateVerification(
+      reportWithV1({ case_id: 'V1', outcome: 'failed', evidence_ref: 'ev-1' }),
+      completePlan(),
+      CRITERIA,
+    )
+    assert.equal(result.ok, false)
+    const violation = result.violations.find(
+      (v) => v.code === VERIFICATION_CODES.FAILURE_CLASSIFICATION_MISSING,
+    )
+    assert.ok(violation, `没抓到缺分类：${JSON.stringify(result.violations)}`)
+    assert.equal(violation.detail.case_id, 'V1')
+  })
+
+  it('分类不在闭集时被拒，且把收到的值放进 detail', () => {
+    const result = evaluateVerification(
+      reportWithV1({
+        case_id: 'V1',
+        outcome: 'failed',
+        failure_classification: 'flaky',
+        note: '顺手写的分类',
+      }),
+      completePlan(),
+      CRITERIA,
+    )
+    assert.equal(result.ok, false)
+    const violation = result.violations.find(
+      (v) => v.code === VERIFICATION_CODES.FAILURE_CLASSIFICATION_UNKNOWN,
+    )
+    assert.ok(violation, `没抓到越界分类：${JSON.stringify(result.violations)}`)
+    assert.equal(violation.detail.case_id, 'V1')
+    assert.equal(violation.detail.classification, 'flaky')
+  })
+
+  it('分类合法却给不出依据时被拒，且指名到该用例', () => {
+    const result = evaluateVerification(
+      reportWithV1({
+        case_id: 'V1',
+        outcome: 'failed',
+        failure_classification: 'product_implementation',
+      }),
+      completePlan(),
+      CRITERIA,
+    )
+    assert.equal(result.ok, false)
+    const violation = result.violations.find(
+      (v) => v.code === VERIFICATION_CODES.FAILURE_BASIS_MISSING,
+    )
+    assert.ok(violation, `没抓到缺依据：${JSON.stringify(result.violations)}`)
+    assert.equal(violation.detail.case_id, 'V1')
+  })
+
+  it('没写 outcome 的用例按非通过处理', () => {
+    // 「跑没跑过」都说不清的用例不能算通过，于是也不能免于归因。
+    const result = evaluateVerification(
+      reportWithV1({ case_id: 'V1', evidence_ref: 'ev-1' }),
+      completePlan(),
+      CRITERIA,
+    )
+    assert.equal(result.ok, false)
+    assert.equal(
+      result.violations.some((v) => v.code === VERIFICATION_CODES.FAILURE_CLASSIFICATION_MISSING),
+      true,
+    )
+  })
+
+  it('多条非通过用例时逐条指名，而不是合成一条计数', () => {
+    const result = evaluateVerification(
+      passingReport({
+        executions: [
+          { case_id: 'V1', outcome: 'failed', evidence_ref: 'ev-1' },
+          { case_id: 'V2', outcome: 'error', evidence_ref: 'ev-2' },
+          { case_id: 'V3', outcome: 'passed', evidence_ref: 'ev-3' },
+          { case_id: 'V4', outcome: 'passed', evidence_ref: 'ev-4' },
+        ],
+      }),
+      completePlan(),
+      CRITERIA,
+    )
+    const named = result.violations
+      .filter((v) => v.code === VERIFICATION_CODES.FAILURE_CLASSIFICATION_MISSING)
+      .map((v) => v.detail.case_id)
+      .sort()
+    assert.deepEqual(named, ['V1', 'V2'])
+  })
+})
+
+describe('evaluateVerification —— 反例方向：归因齐全的合法非通过用例不得被误伤', () => {
+  it('用例失败但归因齐全时，不产生任何归因类违规', () => {
+    // 门禁的职责是逼出归因，不是禁止失败。一条失败的用例只要说清了「谁的问题、凭什么」，
+    // 就不再是归因问题——它是否阻塞收口由别的判据管，不在这里。
+    const plan = completePlan()
+    const result = evaluateVerification(
+      passingReport({
+        executions: [
+          {
+            case_id: 'V1',
+            outcome: 'failed',
+            failure_classification: 'product_implementation',
+            evidence_ref: 'ev-1',
+            note: '断言显示返回值少了必填字段',
+            // 用一份独立证据，避免触发取证摊薄——本条只测归因方向。
+          },
+          { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-2' },
+          { case_id: 'V3', outcome: 'passed', evidence_ref: 'ev-3' },
+          { case_id: 'V4', outcome: 'passed', evidence_ref: 'ev-4' },
+        ],
+      }),
+      plan,
+      CRITERIA,
+    )
+    const classificationViolations = result.violations.filter((v) => [
+      VERIFICATION_CODES.FAILURE_CLASSIFICATION_MISSING,
+      VERIFICATION_CODES.FAILURE_CLASSIFICATION_UNKNOWN,
+      VERIFICATION_CODES.FAILURE_BASIS_MISSING,
+    ].includes(v.code))
+    assert.deepEqual(
+      classificationViolations,
+      [],
+      `合法归因被误伤：${JSON.stringify(classificationViolations)}`,
+    )
+  })
+
+  it('六类闭集逐类走一遍完整判定，没有一类被误判', () => {
+    // 逐类遍历是这条反例的关键：实现若把某一类写错（例如比较时大小写敏感、或漏掉
+    // 某一项），抽查很容易漏网。
+    for (const [index, classification] of FAILURE_CLASSIFICATIONS.entries()) {
+      const plan = completePlan()
+      const result = evaluateVerification(
+        passingReport({
+          executions: [
+            {
+              case_id: 'V1',
+              outcome: 'failed',
+              failure_classification: classification,
+              evidence_ref: `ev-fail-${index}`,
+              note: `依据 ${index}`,
+            },
+            { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-2' },
+            { case_id: 'V3', outcome: 'passed', evidence_ref: 'ev-3' },
+            { case_id: 'V4', outcome: 'passed', evidence_ref: 'ev-4' },
+          ],
+        }),
+        plan,
+        CRITERIA,
+      )
+      const hit = result.violations.filter((v) => [
+        VERIFICATION_CODES.FAILURE_CLASSIFICATION_MISSING,
+        VERIFICATION_CODES.FAILURE_CLASSIFICATION_UNKNOWN,
+        VERIFICATION_CODES.FAILURE_BASIS_MISSING,
+      ].includes(v.code))
+      assert.deepEqual(hit, [], `${classification} 被误判为归因违规`)
+    }
+  })
+
+  it('全部用例通过时完全不要求归因', () => {
+    // 通过的报告里没有 failure_classification 是正常的。若归因检查不看 outcome 就一律要求，
+    // 存量报告会集体变红——那是典型的误伤。
+    const result = evaluateVerification(passingReport(), completePlan(), CRITERIA)
+    assert.equal(result.ok, true, JSON.stringify(result.violations))
+  })
+})
+
+describe('归因检查不影响既有门禁语义（AC-LEGACY-CODES）', () => {
+  it('既有违规码一个不少、语义未变', () => {
+    // 新增归因码是**增量**。既有的六个码仍然是原来的字符串，否则按码分支的调用方会静默失配。
+    assert.equal(VERIFICATION_CODES.EVIDENCE_MISSING, 'GAC_INDEPENDENT_EVIDENCE_MISSING')
+    assert.equal(VERIFICATION_CODES.EVIDENCE_UNVERIFIED, 'GAC_EVIDENCE_NOT_FROM_RUNTIME')
+    assert.equal(VERIFICATION_CODES.EVIDENCE_POOLED, 'GAC_EVIDENCE_POOLED_ACROSS_CASES')
+    assert.equal(VERIFICATION_CODES.AC_UNCOVERED, 'GAC_VERIFICATION_COVERAGE_GAP')
+    assert.equal(VERIFICATION_CODES.FALSIFICATION_MISSING, 'GAC_FALSIFICATION_EVIDENCE_MISSING')
+    assert.equal(VERIFICATION_CODES.CASE_UNKNOWN, 'GAC_VERIFICATION_CASE_UNKNOWN')
+  })
+
+  it('取证摊薄在归因齐全的报告里照样被单独抓出', () => {
+    // 摊薄与归因是两件事：归因说清「谁的错」，摊薄说的是「这些证据其实是同一个观测」。
+    // 前者齐备不能抵消后者——否则一条带归因的共用证据可以一路放行。
+    const plan = completePlan()
+    const result = evaluateVerification(
+      passingReport({
+        executions: [
+          { case_id: 'V1', outcome: 'passed', evidence_ref: 'ev-shared' },
+          { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-shared' },
+          { case_id: 'V3', outcome: 'passed', evidence_ref: 'ev-3' },
+          { case_id: 'V4', outcome: 'passed', evidence_ref: 'ev-4' },
+        ],
+      }),
+      plan,
+      CRITERIA,
+    )
+    const violation = result.violations.find((v) => v.code === VERIFICATION_CODES.EVIDENCE_POOLED)
+    assert.equal(violation.detail.pooled[0].evidence_ref, 'ev-shared')
+    assert.deepEqual(violation.detail.pooled[0].cases.sort(), ['V1', 'V2'])
+  })
+
+  it('缺证据仍按 EVIDENCE_MISSING 报，不被归因码取代', () => {
+    const plan = completePlan()
+    const result = evaluateVerification(
+      passingReport({
+        executions: [
+          { case_id: 'V1', outcome: 'passed' },
+          { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-2' },
+          { case_id: 'V3', outcome: 'passed', evidence_ref: 'ev-3' },
+          { case_id: 'V4', outcome: 'passed', evidence_ref: 'ev-4' },
+        ],
+      }),
+      plan,
+      CRITERIA,
+    )
+    const violation = result.violations.find((v) => v.code === VERIFICATION_CODES.EVIDENCE_MISSING)
+    assert.deepEqual(violation.detail.cases, ['V1'])
+  })
+
+  it('计划外用例仍按 CASE_UNKNOWN 报', () => {
+    const plan = completePlan()
+    const result = evaluateVerification(
+      passingReport({
+        executions: [
+          ...passingReport().executions,
+          { case_id: 'V99', outcome: 'passed', evidence_ref: 'ev-99' },
+        ],
+      }),
+      plan,
+      CRITERIA,
+    )
+    const violation = result.violations.find((v) => v.code === VERIFICATION_CODES.CASE_UNKNOWN)
+    assert.equal(violation.detail.case_id, 'V99')
+  })
+
+  it('返回值形状仍是 {ok, violations, traceability}，violations 元素仍是 {code, detail}', () => {
+    // 契约要求「在既有返回值形状上只做增量」。新增一条带额外键的违规元素会让下游渲染失配。
+    // 这里刻意用一份**确实产生违规**的报告：全通过的报告 violations 为空，下面的循环一次
+    // 都不执行，等于什么都没断言。
+    const result = evaluateVerification(
+      passingReport({
+        executions: [
+          { case_id: 'V1', outcome: 'failed', evidence_ref: 'ev-1' },
+          { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-2' },
+          { case_id: 'V3', outcome: 'passed', evidence_ref: 'ev-shared' },
+          { case_id: 'V4', outcome: 'passed', evidence_ref: 'ev-shared' },
+        ],
+      }),
+      completePlan(),
+      CRITERIA,
+    )
+    assert.equal(result.ok, false)
+    assert.deepEqual(Object.keys(result).sort(), ['ok', 'traceability', 'violations'])
+    assert.ok(result.violations.length > 0, '本条必须落在真有违规的报告上，否则断言是空的')
+    for (const violation of result.violations) {
+      assert.deepEqual(Object.keys(violation).sort(), ['code', 'detail'])
+      assert.equal(typeof violation.code, 'string')
+      assert.equal(typeof violation.detail, 'object')
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 归因口径：**只作用于「该用例最终没有通过」的记录**。
+//
+// 一份报告记的是执行历史，不是一次快照。同一条用例先失败、修好之后再跑通过是常态，于是
+// 历史里同时躺着 `failed` 与 `passed`。那条历史失败已经被同一用例的后续通过取代，它不再
+// 是一个结论——要求它归因，等于逼人给一个**已经不存在的问题**补一份「谁的问题、凭什么」，
+// 而唯一能写出来的东西只能是编造。
+//
+// 所以判定按 `case_id` 聚合：任何一条 `passed` 记录都让该用例当前处于通过状态，其名下全部
+// 历史非通过记录免于归因；一条 `passed` 都没有的 case_id 仍然是「最终没有通过」，照旧逐条
+// 要求归因。
+//
+// 本节的正例（①）与反例（②③④）**必须成对存在**，因为它们各自钉住一个方向，而两个方向都
+// 有各自的退化解：
+//
+//   - 只有反例：把归因检查整个删掉能全绿——「最终没通过也不要求归因」正是删掉检查的表现。
+//   - 只有正例：把归因检查改成「整个 case_id 一条不落地全部豁免」也能全绿——只要报告里出现
+//     过一次 `passed` 就放行一切，包括那些压根没通过过的用例。
+//
+// 三个反例各自钉住实现退化的一个方向，写在每条用例的注释里。
+// ---------------------------------------------------------------------------
+
+describe('evaluateVerification —— 归因口径按 case_id 聚合到「最终是否通过」', () => {
+  /**
+   * 一条「用例最终通过」的报告：V1 先失败（**刻意不给任何归因**）、修好后重跑通过。
+   *
+   * 剥离归因字段是刻意的：只要 V1 的失败记录还带着 `failure_classification`，这条测试就
+   * 分不清「实现豁免了历史失败」与「实现要求归因、而报告恰好给了」——两者都会 ok。
+   * 只有把归因拿掉，ok=true 才唯一地证明豁免成立。
+   *
+   * @returns {object}
+   */
+  function rerunThenPassedReport() {
+    return passingReport({
+      executions: [
+        // 历史失败：无 outcome 之外的任何归因字段。
+        { case_id: 'V1', outcome: 'failed' },
+        // 同一用例的后续通过：带了证据，因此「通过」这一侧是齐备的。
+        { case_id: 'V1', outcome: 'passed', evidence_ref: 'ev-1' },
+        { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-2' },
+        { case_id: 'V3', outcome: 'passed', evidence_ref: 'ev-3' },
+        { case_id: 'V4', outcome: 'passed', evidence_ref: 'ev-4' },
+      ],
+    })
+  }
+
+  /**
+   * 从判定结果里挑出三类归因违规，用于断言「一条都没有」。
+   *
+   * @param {{violations: {code: string}[]}} result
+   * @returns {{code: string}[]}
+   */
+  function classificationViolationsOf(result) {
+    return result.violations.filter((v) => [
+      VERIFICATION_CODES.FAILURE_CLASSIFICATION_MISSING,
+      VERIFICATION_CODES.FAILURE_CLASSIFICATION_UNKNOWN,
+      VERIFICATION_CODES.FAILURE_BASIS_MISSING,
+    ].includes(v.code))
+  }
+
+  // ---- ① 正例：重跑并最终通过 ⇒ 历史失败免于归因 ----
+
+  it('用例被重跑并最终通过时，其历史失败记录不要求归因', () => {
+    // 被抓住的错误实现：把归因检查写成「逐条看 outcome，凡不是 passed 就要求归因」。
+    // 那种实现看不见同一 case_id 的后续通过，于是任何一份「先失败后修好」的真实报告都会
+    // 被判缺归因——而它报的是一条已经被推翻的中间状态，要求归因只能编造。
+    const result = evaluateVerification(rerunThenPassedReport(), completePlan(), CRITERIA)
+    assert.deepEqual(
+      classificationViolationsOf(result),
+      [],
+      `历史失败被要求归因：${JSON.stringify(result.violations)}`,
+    )
+    // ok 一并钉死：只要还留着别的违规，`violations` 为空就必须另找理由，本条不放松。
+    assert.equal(result.ok, true, JSON.stringify(result.violations))
+  })
+
+  it('多条用例各自重跑通过时，全部历史失败都免于归因', () => {
+    // 只豁免第一条会漏掉「豁免只在某一条用例上恰好生效」——例如实现误用了某个只记一个
+    // case_id 的变量，或把 `finallyPassed` 写成了单个字符串而非集合。
+    const result = evaluateVerification(
+      passingReport({
+        executions: [
+          { case_id: 'V1', outcome: 'failed' },
+          { case_id: 'V1', outcome: 'passed', evidence_ref: 'ev-1' },
+          { case_id: 'V2', outcome: 'failed' },
+          { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-2' },
+          { case_id: 'V3', outcome: 'error' },
+          { case_id: 'V3', outcome: 'passed', evidence_ref: 'ev-3' },
+          { case_id: 'V4', outcome: 'passed', evidence_ref: 'ev-4' },
+        ],
+      }),
+      completePlan(),
+      CRITERIA,
+    )
+    assert.deepEqual(
+      classificationViolationsOf(result),
+      [],
+      `历史失败被要求归因：${JSON.stringify(result.violations)}`,
+    )
+    assert.equal(result.ok, true, JSON.stringify(result.violations))
+  })
+
+  it('归因聚合按 case_id 判定，与记录先后顺序无关', () => {
+    // 被抓住的错误实现：拿「最后一条记录是否 passed」当最终状态。那种实现会在通过记录
+    // 排在前面时（重跑的顺序并不保证通过一定排在最后）错误地要求历史失败归因。
+    const result = evaluateVerification(
+      passingReport({
+        executions: [
+          { case_id: 'V1', outcome: 'passed', evidence_ref: 'ev-1' },
+          { case_id: 'V1', outcome: 'failed' },
+          { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-2' },
+          { case_id: 'V3', outcome: 'passed', evidence_ref: 'ev-3' },
+          { case_id: 'V4', outcome: 'passed', evidence_ref: 'ev-4' },
+        ],
+      }),
+      completePlan(),
+      CRITERIA,
+    )
+    assert.deepEqual(
+      classificationViolationsOf(result),
+      [],
+      `通过记录排在历史失败之后时被误伤：${JSON.stringify(result.violations)}`,
+    )
+    assert.equal(result.ok, true, JSON.stringify(result.violations))
+  })
+
+  // ---- ② 反例：最终没有通过 ⇒ 缺归因仍被拒 ----
+
+  it('用例最终没有通过时，缺 failure_classification 仍被拒并指名到该用例', () => {
+    // 被抓住的错误实现：把「出现过一次非通过」与「最终没有通过」混为一谈之后**过度豁免**
+    //    ——例如一见某 case_id 有 N 条记录就直接跳过，或者把豁免键取成报告里出现过的任意
+    //    case_id 而非「有 passed 记录的 case_id」。那样的实现会让**根本没通过过**的用例
+    //    一路放行，归因门禁就名存实亡了。
+    const result = evaluateVerification(
+      passingReport({
+        executions: [
+          // V1 只有失败记录：没有任何 passed。它最终没有通过。
+          { case_id: 'V1', outcome: 'failed', evidence_ref: 'ev-1' },
+          { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-2' },
+          { case_id: 'V3', outcome: 'passed', evidence_ref: 'ev-3' },
+          { case_id: 'V4', outcome: 'passed', evidence_ref: 'ev-4' },
+        ],
+      }),
+      completePlan(),
+      CRITERIA,
+    )
+    assert.equal(result.ok, false)
+    const violation = result.violations.find(
+      (v) => v.code === VERIFICATION_CODES.FAILURE_CLASSIFICATION_MISSING,
+    )
+    assert.ok(violation, `没抓到缺分类：${JSON.stringify(result.violations)}`)
+    assert.equal(violation.code, 'GAC_FAILURE_CLASSIFICATION_MISSING')
+    assert.equal(violation.detail.case_id, 'V1')
+  })
+
+  it('缺 outcome 的记录同样算「最终没有通过」，照旧被拒', () => {
+    // 「跑没跑过」都说不清的用例不能算通过，因此它不构成任何一条 passed 记录，也就不能
+    // 借豁免溜走。被抓住的错误实现：把「有 passed 记录」放宽成「记录里没有 failed」。
+    const result = evaluateVerification(
+      passingReport({
+        executions: [
+          { case_id: 'V1', evidence_ref: 'ev-1' },
+          { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-2' },
+          { case_id: 'V3', outcome: 'passed', evidence_ref: 'ev-3' },
+          { case_id: 'V4', outcome: 'passed', evidence_ref: 'ev-4' },
+        ],
+      }),
+      completePlan(),
+      CRITERIA,
+    )
+    const violation = result.violations.find(
+      (v) => v.code === VERIFICATION_CODES.FAILURE_CLASSIFICATION_MISSING,
+    )
+    assert.ok(violation, `没抓到缺分类：${JSON.stringify(result.violations)}`)
+    assert.equal(violation.detail.case_id, 'V1')
+  })
+
+  it('豁免只覆盖本 case_id：别人的通过不能替它免掉归因', () => {
+    // 被抓住的错误实现：豁免判定写成「这份报告里有没有 passed」而不是「**这个** case_id
+    // 有没有 passed」。一份只要有一条用例通过就整体豁免的报告，等于没有归因门禁。
+    const result = evaluateVerification(
+      passingReport({
+        executions: [
+          { case_id: 'V1', outcome: 'failed', evidence_ref: 'ev-1' },
+          { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-2' },
+          { case_id: 'V3', outcome: 'passed', evidence_ref: 'ev-3' },
+          { case_id: 'V4', outcome: 'passed', evidence_ref: 'ev-4' },
+        ],
+      }),
+      completePlan(),
+      CRITERIA,
+    )
+    const named = result.violations
+      .filter((v) => v.code === VERIFICATION_CODES.FAILURE_CLASSIFICATION_MISSING)
+      .map((v) => v.detail.case_id)
+    assert.deepEqual(named, ['V1'])
+  })
+
+  it('同一用例先通过、后又失败：口径是「有过 passed 就豁免」，而非「最后一条是 passed」', () => {
+    // 聚合的是「该 case_id 名下**有没有** passed 记录」，不是「最后一条是不是 passed」。
+    // 修复后回归（修好了又坏掉）是真实形态，而按契约口径它仍然被豁免——这条测试把这个**方向**
+    // 钉住，免得实现某天悄悄改成「看最后一条」，测试却沉默地把两种口径都放过去。
+    const result = evaluateVerification(
+      passingReport({
+        executions: [
+          { case_id: 'V1', outcome: 'passed', evidence_ref: 'ev-1' },
+          { case_id: 'V1', outcome: 'failed', evidence_ref: 'ev-1-later' },
+          { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-2' },
+          { case_id: 'V3', outcome: 'passed', evidence_ref: 'ev-3' },
+          { case_id: 'V4', outcome: 'passed', evidence_ref: 'ev-4' },
+        ],
+      }),
+      completePlan(),
+      CRITERIA,
+    )
+    // 契约口径是「只要该 case_id 名下存在任何 passed 记录就豁免」，所以这条**不产生**
+    // 归因违规。断言写出方向，免得实现改了口径而测试沉默。
+    assert.deepEqual(
+      classificationViolationsOf(result),
+      [],
+      `口径变化未被察觉：${JSON.stringify(result.violations)}`,
+    )
+    assert.equal(result.ok, true, JSON.stringify(result.violations))
+  })
+
+  // ---- ③ 反例：最终没有通过 + 分类越界 ⇒ UNKNOWN ----
+
+  it('用例最终没有通过且分类越界时报 GAC_FAILURE_CLASSIFICATION_UNKNOWN', () => {
+    // 被抓住的错误实现：豁免实现写成了「一刀切跳过」——例如用 `finallyPassed` 判断时把
+    // 条件写反（`!finallyPassed.has(...)`），或者干脆 `continue` 掉了所有非通过记录。
+    // 那种实现下这条用例不再产生任何违规，吞掉的正是「分类有没有落进闭集」这条判定。
+    const result = evaluateVerification(
+      passingReport({
+        executions: [
+          {
+            case_id: 'V1',
+            outcome: 'failed',
+            failure_classification: 'flaky',
+            note: '顺手写的分类，不在闭集里',
+          },
+          { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-2' },
+          { case_id: 'V3', outcome: 'passed', evidence_ref: 'ev-3' },
+          { case_id: 'V4', outcome: 'passed', evidence_ref: 'ev-4' },
+        ],
+      }),
+      completePlan(),
+      CRITERIA,
+    )
+    assert.equal(result.ok, false)
+    const violation = result.violations.find(
+      (v) => v.code === VERIFICATION_CODES.FAILURE_CLASSIFICATION_UNKNOWN,
+    )
+    assert.ok(violation, `没抓到越界分类：${JSON.stringify(result.violations)}`)
+    assert.equal(violation.code, 'GAC_FAILURE_CLASSIFICATION_UNKNOWN')
+    assert.equal(violation.detail.case_id, 'V1')
+    assert.equal(violation.detail.classification, 'flaky')
+    // 与「缺分类」分开：分类越界时**不得**同时报缺分类——那是两个不同的修复动作。
+    assert.equal(
+      result.violations.some(
+        (v) => v.code === VERIFICATION_CODES.FAILURE_CLASSIFICATION_MISSING,
+      ),
+      false,
+    )
+  })
+
+  it('分类越界与缺分类在最终没有通过时各自成码，不被合成一条', () => {
+    const result = evaluateVerification(
+      passingReport({
+        executions: [
+          { case_id: 'V1', outcome: 'failed' },
+          { case_id: 'V2', outcome: 'failed', failure_classification: 'environment', note: 'x' },
+          { case_id: 'V3', outcome: 'passed', evidence_ref: 'ev-3' },
+          { case_id: 'V4', outcome: 'passed', evidence_ref: 'ev-4' },
+        ],
+      }),
+      completePlan(),
+      CRITERIA,
+    )
+    const codes = result.violations
+      .filter((v) => [
+        VERIFICATION_CODES.FAILURE_CLASSIFICATION_MISSING,
+        VERIFICATION_CODES.FAILURE_CLASSIFICATION_UNKNOWN,
+      ].includes(v.code))
+      .map((v) => `${v.code}:${v.detail.case_id}`)
+      .sort()
+    assert.deepEqual(codes, [
+      'GAC_FAILURE_CLASSIFICATION_MISSING:V1',
+      'GAC_FAILURE_CLASSIFICATION_UNKNOWN:V2',
+    ])
+  })
+
+  // ---- ④ 反例：分类合法但无依据 ⇒ BASIS_MISSING ----
+
+  it('分类合法但既无 evidence_ref 也无 note 时报 GAC_FAILURE_BASIS_MISSING', () => {
+    // 被抓住的错误实现：只校验了「分类在不在闭集里」就返回 ok，漏掉依据校验。
+    // 分类是判断，不是证据——一个合法分类配上一句无据可查的断言，与没归因一样不可复核。
+    const result = evaluateVerification(
+      passingReport({
+        executions: [
+          {
+            case_id: 'V1',
+            outcome: 'failed',
+            failure_classification: 'product_implementation',
+          },
+          { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-2' },
+          { case_id: 'V3', outcome: 'passed', evidence_ref: 'ev-3' },
+          { case_id: 'V4', outcome: 'passed', evidence_ref: 'ev-4' },
+        ],
+      }),
+      completePlan(),
+      CRITERIA,
+    )
+    assert.equal(result.ok, false)
+    const violation = result.violations.find(
+      (v) => v.code === VERIFICATION_CODES.FAILURE_BASIS_MISSING,
+    )
+    assert.ok(violation, `没抓到缺依据：${JSON.stringify(result.violations)}`)
+    assert.equal(violation.code, 'GAC_FAILURE_BASIS_MISSING')
+    assert.equal(violation.detail.case_id, 'V1')
+    assert.equal(violation.detail.classification, 'product_implementation')
+    // 有分类就不该再报「缺分类」：那是另一条码、另一个修复动作。
+    assert.equal(
+      result.violations.some(
+        (v) => v.code === VERIFICATION_CODES.FAILURE_CLASSIFICATION_MISSING,
+      ),
+      false,
+    )
+  })
+
+  it('空白 note 与空引用在最终没有通过时同样算「拿不出依据」', () => {
+    // 「填了」与「填了有用」不是一回事：空白字符串、空引用在数据上等于没写。
+    // 被抓住的错误实现：依据判定写成 `'note' in entry` 或 `entry.note !== undefined`。
+    const result = evaluateVerification(
+      passingReport({
+        executions: [
+          {
+            case_id: 'V1',
+            outcome: 'failed',
+            failure_classification: 'build_environment',
+            note: '   ',
+            evidence_ref: '',
+          },
+          { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-2' },
+          { case_id: 'V3', outcome: 'passed', evidence_ref: 'ev-3' },
+          { case_id: 'V4', outcome: 'passed', evidence_ref: 'ev-4' },
+        ],
+      }),
+      completePlan(),
+      CRITERIA,
+    )
+    const violation = result.violations.find(
+      (v) => v.code === VERIFICATION_CODES.FAILURE_BASIS_MISSING,
+    )
+    assert.ok(violation, `空白依据被当成依据：${JSON.stringify(result.violations)}`)
+    assert.equal(violation.detail.case_id, 'V1')
+  })
+
+  // ---- 反例方向：豁免不得把「已给出合法归因」当成违规 ----
+
+  it('最终没有通过但归因齐备时，豁免逻辑不额外制造违规', () => {
+    // 与前面几条互补：豁免应当**只减少**要求，不能反过来把一条本来合法的归因改判成违规。
+    // 被抓住的错误实现：先按 case_id 过滤、再对过滤后的集合重排索引，导致 detail 里的
+    // case_id 被替换成别的用例（归因违规仍出现，但指错了人）。
+    const result = evaluateVerification(
+      passingReport({
+        executions: [
+          {
+            case_id: 'V1',
+            outcome: 'failed',
+            failure_classification: 'test_expectation',
+            evidence_ref: 'ev-fail-1',
+            note: '期望值与验收标准不一致',
+          },
+          { case_id: 'V2', outcome: 'passed', evidence_ref: 'ev-2' },
+          { case_id: 'V3', outcome: 'passed', evidence_ref: 'ev-3' },
+          { case_id: 'V4', outcome: 'passed', evidence_ref: 'ev-4' },
+        ],
+      }),
+      completePlan(),
+      CRITERIA,
+    )
+    assert.deepEqual(
+      classificationViolationsOf(result),
+      [],
+      `合法归因被误伤：${JSON.stringify(result.violations)}`,
+    )
   })
 })
