@@ -5,15 +5,15 @@
 ```text
 Requirement / Goal
         ↓
-Execution Policy        PROTOCOL.md          工作流、Task DAG、Agent 调度、执行闭环
+Execution Policy        GAC Runtime（lib/coordinator.js、lib/tool-task.js）    模式、DAG、派遣与收口
         ↓
-Authority Policy        Requirement / Invocation / Approval   读什么、写什么、能否部署、是否需审批
+Authority Policy        Project Adapter / Node Scope / Approval    写入范围、工具权限与升级授权
         ↓
 Engineering Quality Policy（本文件）        如何写代码、如何控制复杂度、如何避免重复、是否该新增抽象
         ↓
-Project Policy          .claude/project/     语言与领域规范、既有架构约束、接口契约、项目既有 pattern
+Project Policy          <project>/.dsh/gac/project.json   工程身份、领域规范与已有架构约束
         ↓
-Task Constraints        tasks.json 节点 / Invocation.constraints
+Task Constraints        GAC Task / Node / DesignPackage        验收条件、设计基线与节点权限
         ↓
 Effective Policy
 ```
@@ -26,9 +26,7 @@ Effective Policy
 
 任务与项目策略都**不得降低平台安全要求**。有效策略 = 通用工程质量策略 + 项目工程策略 + 任务约束。
 
-**单一来源**：`PROTOCOL.md`、`ROLES.md`、Builder / Verifier / Reviewer 与 `README.md` 只**引用**本文件，
-不复制这套规则。工程特有规则（语言规范、芯片事实、接口契约、既有 pattern、既有静态门禁）留在
-Project Policy，见 `.claude/project/policy.json` 的 `engineering` 与 `.claude/project/PROJECT.md`。
+**单一来源**：本文件是通用工程质量策略，供 Runtime 注入 Reviewer 以及相关专家/执行者参考；权限与派遣的权威实现仍在 GAC 代码和工程适配器中。工程特有规则（语言规范、芯片事实、接口契约、既有模式、静态门禁）来自该工程自己的 `.dsh/gac/project.json` 及明确授权的工程资料，不能把历史 Claude 工作流的 `PROTOCOL.md`、`ROLES.md`、`.claude/project/` 当作当前必备文件。
 
 ## 0. 最高原则
 
@@ -142,23 +140,20 @@ Factory / Registry / Plugin system / Generic framework / 新的架构层
 
 1. 判断是否仍处于 Requirement 授权范围内；
 2. 记录扩张原因；
-3. 更新 Task 节点的 `files` 与 Invocation 的 `authority.write`；
-4. 在 `result.decisions` 留下说明；
-5. 由 Reviewer 检查范围扩张是否合理。
+3. 先复核 GAC 节点的 `write_scope`、现存 Write Claims 和设计基线；超出已批准边界的改动不得自行扩大写权限；
+4. 在当前 GAC 任务、设计变更或审批记录中说明原因并保留可追溯证据；
+5. 在需要独立审查的任务中，由 Reviewer 复核变更范围与需求、已批准设计的一致性。
 
-结构化承接：节点收口时 `quality.scope_expansion` 为真则必须给出 `scope_expansion_reason`，
-`check` 会核对；写入范围越出节点 `files` 时 `invocation --file` 会直接拒绝。
+当前 Runtime 的结构化写入按节点 `write_scope` 和作用域绑定在执行前检查；一旦扩张越过原批准的模式、范围或关键设计，应停止并走需求评估/用户授权与设计换版流程。不要声称旧版 `invocation --file` 或 `quality.scope_expansion` 门禁在本插件内自动生效。
 
-只有扩张意味着**改变业务目标、改变安全边界、超出 Authority**，或落入 `PROTOCOL.md` §6 的未授权行为闭集
-（生产部署/危险迁移、破坏性数据操作、新付费服务、安全边界变化、无法从事实解决的业务冲突）时，
-才进入 §4 的需求期集中确认或 §6 的 ApprovalRequest。
+当扩张涉及**业务目标、关键安全行为、已批准设计、生产部署、破坏性操作或新的外部成本**时，应先经主 Agent 评估并按 GAC 升级/审批流程取得必要的用户授权；不能用“只是技术细节”绕过风险分级。
 
 ## 8. 保持既有行为
 
 > Preserve existing behavior unless the requirement requires changing it.
 
 修复任务只修目标行为，不顺带改变其他已有行为。兼容性变化若不是 Requirement 明确要求，需要充分理由；
-有理由时写进 `result.decisions`。
+有理由时写进当前可追溯的设计变更或任务结果说明，而不是依赖旧工作流字段。
 
 ## 9. 整合优于并行实现
 
@@ -247,7 +242,7 @@ Agent 为指标而拆分，反而增加复杂度。
 复用已有实现还是新写 / 是否创建 helper / 是否为了消除语义重复做局部重构
 ```
 
-需要用户的仍然只有 `PROTOCOL.md` §3 的保留类别与 §6 的授权边界。
+需要用户同意的仍包括 GAC 从 `direct_edit` 升级为 `standard_task` / `high_risk_task` 的明确授权，以及超出原需求或存在外部不可逆影响的决定。不要把普通复用选择变成额外确认。
 "你希望我复用还是新写？"这类问题不属于本框架的询问理由。
 
 ## 17. 流程复杂度同样适用
@@ -260,9 +255,8 @@ A modification is not automatically a workflow.
 Process ceremony is complexity and must be justified by risk.
 ```
 
-只读问题直接处理；明确、局部、低风险、可逆、可立即验证的改动由当前会话直接做完，不建正式任务记录；
-普通 bugfix 走标准任务；安全、ABI、持久化状态、公共契约这类工作才升级到带独立验证的高风险流程。
-准确的分层见 `PROTOCOL.md` §2，这里只给原则。
+只读问题直接处理；一般需求与多数局部 bugfix 默认 `direct_edit`，由主会话评估范围后直接修改，不建正式 DAG。
+仅当单 Agent 难以可靠完成的复杂非核心任务出现时，才**申请** `standard_task`；影响项目级安全、ABI、持久化状态、启动或关键契约的行为变更才**申请** `high_risk_task`。两种升级都须说明理由并取得用户明确同意，不能仅凭命中高风险目录自动升级。权威规则见 `lib/project.js` 与 `lib/operation-store.js`。
 
 判断依据是风险而不是规模：**文件数与代码行数不是判据**——单文件的认证策略可能是高风险，两个相关配置文件
 可能只是 Direct。反向也成立：不得为了「流程完整」给一件小事套上 Requirement、多条 AC、Verification、
@@ -281,4 +275,4 @@ Builder 写测试是**开发证据**：开发反馈、局部防回归、复现�
 因此高风险工作把「应当为真」与「实际怎么做」分开：验证计划在读取实现之前从 Requirement 独立推导，
 每条验收标准同时要有正例和一个 falsification 用例（写明什么样的错误实现必须被抓住）；计划冻结后由实现侧
 之外的角色执行，执行阶段才读实现并补对抗性探针。**不同执行容器不等于独立性**——独立来自不同的信息来源与
-不同的推导路径。判据与门禁见 `PROTOCOL.md` §5。
+不同的推导路径。判据与门禁见 `lib/verification.js`、`lib/tool-task.js`、`lib/role-tools.js`；验证者要用已冻结计划、逐项证据与独立复核，而不是只引用执行者自述。

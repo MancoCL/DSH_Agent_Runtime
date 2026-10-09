@@ -63,11 +63,11 @@ Builder / Test Builder（分别实施产品代码与测试代码）
 | 模式 | 适用情况 | 执行方式 |
 | --- | --- | --- |
 | `read_only` | 调查、分析、说明 | 不产生产品修改 |
-| `direct_edit` | 明确、低风险、局部、可立即验证 | 不建正式任务 DAG；当前实现由主会话完成 |
-| `standard_task` | 普通功能、缺陷修复或局部重构 | Builder 与独立验证，按需进行设计 |
-| `high_risk_task` | 安全、持久状态、公共契约、关键状态机等 | 冻结需求与接口、设计批准后实施，独立验证与复核 |
+| `direct_edit` | 默认模式：非代码、注释、普通功能与局部缺陷修复 | 主会话直接完成；0 Task、0 child；先登记影响和目标范围 |
+| `standard_task` | 单 Agent 难以可靠完成的复杂非核心工作 | 说明复杂度依据并经用户同意后，独立 Builder → Verifier；涉及测试写入时另设 Test Builder |
+| `high_risk_task` | 影响整个项目核心功能的行为变更：Boot Swap、Flash 边界、安全访问、持久化格式、公共 ABI 等 | 说明核心影响并经用户同意后，完整设计、批准、实施、验证与复核 |
 
-工程风险规则和实际执行约束在 `lib/project.js`、`lib/coordinator.js`、`lib/tool-task.js`；模型自报的低风险不覆盖项目适配器的高风险路径策略。
+工程风险规则和实际执行约束在 `lib/project.js`、`lib/operation-store.js`、`lib/coordinator.js`、`lib/tool-task.js`。目前普通工作**默认 `direct_edit`**：`gac_project begin` 开始目标、`assess` 提交行为影响及路径，只有复杂的非核心工作或项目级核心行为变更才提出升级；升至 `standard_task` / `high_risk_task` 必须由宿主问答取得用户同意并把授权绑定到该次评估。命中高风险路径本身不自动升级，但必须进行风险评估；升级待确认时不得借 `direct_edit` 继续写入。
 
 ### 设计驱动的任务
 
@@ -87,10 +87,14 @@ Builder / Test Builder（分别实施产品代码与测试代码）
 - **Strict Scope**：`["mod.c"]` 只覆盖根目录 `mod.c`，不覆盖 `sub/mod.c`；`["src/"]` 覆盖 `src/` 子树。路径由 `lib/write-scope.js` 统一判断。部分 glob 使用现行跨目录的 `fnmatch` 语义；不要擅自改成另一套。
 - **派遣前阻止越界**：`tools/pre-execute` 按会话和节点绑定的作用域拒绝越界结构化写入；写占用声明阻止跨会话冲突。Shell 在活动写作用域下按策略拒绝，不把 Shell 字符串当可靠路径声明。
 - **调度**：DAG 依赖、写范围与独占资源决定当前安全批次；冲突节点串行，不是先派遣再争锁。每次派遣有 `attempt/dispatch_id`，过时结果不得覆盖新尝试。
-- **主会话最小化**：`gac_task advance` 默认一波，可用 `max_waves` 受限连续推进；失败、阻塞或需要批准时停下。
-- **验证**：冻结 VerificationPlan（含 positive/falsification）→ Runtime 签发 Evidence → VerificationReport → ReviewReport → 证据与 AC 覆盖门禁。角色结构化结果由 Runtime 自动登记，不能只信 Agent 的 “PASS”。
+- **主会话最小化**：`gac_task advance` 默认最多派遣一波，可用 `max_waves` 设置受限推进上界。新派遣跟踪器可先返回 `awaiting_results`：子节点在后台执行，Runtime 按任务串行结算、持久化通知待发送记录，并通过宿主消息接缝提醒主 Agent 继续推进。**这不等于整条 DAG 自动完成**；宿主通知失败或进程中断时仍需检查任务状态与阻塞原因，不能按通知发出就判定验收通过。
+- **验证**：冻结 VerificationPlan（高风险要求 positive/falsification）→ Runtime 签发 Evidence → VerificationReport → ReviewReport → 逐项 AC 与证据门禁。`verification_execution` 可接收项目适配器中已声明的 `verification_context`（测试入口、可用能力与环境身份）、设计里的测试详设及冻结用例；验证证据按 case 关联，不能用一个笼统 PASS 或共用证据代替。可选的内容指纹复用有覆盖范围和环境身份条件，不应声称所有任务都能跳过重测。
 - **Workspace Witness**：订阅 `workspace/changes` 做事后变化分类，不能代替前置 Guard；对 Git 忽略路径不可见，截断时 `coverage=partial`。生产日常 Profile 已活体验证，复验配方见 [Witness 探针](https://github.com/MancoCL/DSH_Agent_Runtime/blob/main/docs/WITNESS-LIVE-PROBE.md)。
 - **PTC**：存在时允许外层 `run_code` 传输；内层工具仍接受权限审查。它是可选执行能力，不是 GAC 必需能力。复验配方见 [PTC 探针](https://github.com/MancoCL/DSH_Agent_Runtime/blob/main/docs/PTC-LIVE-PROBE.md)。
+
+设计专家可用 `gac_expert start/status` 启动一层只读助手（root=0、专家=1、助手=2）。每次父派遣最多同时 2 个、累计 4 个；测试设计助手继承盲化，助手不得再委派。助手结果只通知父专家，父专家综合后交付最终产物。
+
+工程必须通过 `verification_context` 声明测试入口、能力、限制和环境身份。未知事实按缺失阻塞设计，不从本次实现反推预期。示例见 `examples/gac-project.json`。本轮状态和固定宿主验收步骤见 [实施记录](docs/IMPLEMENTATION-20261009.md)。
 
 ### 生产能力契约
 
@@ -107,7 +111,7 @@ PTC、任意子 Agent 委派、Memory Provider 不属于默认必需能力。缺
 
 **公开与本地边界**：GitHub 只跟踪插件源码、测试、示例和维护文档；每台机器的 `.dsh/` 适配器、任务、设计、证据、审计与验收状态均只保留本地，不进入 Git 或 npm 包。新工程应复制 `examples/gac-project.json` 生成本地 `.dsh/gac/project.json`，不应把真实项目配置提交到插件仓库。推送与 PR 会触发 GitHub Gitleaks 凭据扫描；发布前仍应人工检查暂存差异与 `npm pack --dry-run --json` 清单。
 
-**日常 DSH 必须使用从本地 `.tgz` 安装的插件；工作区不是生产插件目录。** 只有源码完成、测试通过且明确开始真实 E2E 时，才允许临时把目标 Profile 指向当前 Git 工作树。发布需要真实验收结论，发布后由 `pnpm` 同时更新 Profile 依赖、锁文件与实际 `node_modules`，而不只是替换一段配置字符串。
+**日常 DSH 必须使用与开发工作区隔离的已安装插件**，可以来自 npm 官方包、固定 GitHub 标签/提交，或者经本机验收的不可变 `.tgz`。只有代码完成、测试通过且明确安排真实 E2E 时，才临时把目标 Profile 指向 Git 工作树。下面的 `deploy:*` 是**本机源码验收→本地包安装**流程，不能代替 npm/GitHub 的正式发布流程；它通过 `pnpm` 同时更新依赖、锁文件和实际 `node_modules`，而不是只改配置字符串。
 
 ```powershell
 $env:DSH_PROFILE_DIR = "$env:USERPROFILE\.dsh\profiles\<实际Profile名>" # 请按真实环境设置
@@ -126,9 +130,9 @@ npm run deploy:restore -- --apply
 npm run deploy:status
 ```
 
-`deploy:validate` 保存恢复锚点并要求宿主退出。`deploy:publish` 打包成带 Git SHA 的**不可变本地 tarball**，同时记录 SHA-256、验收号、真实已安装内容；发布成功后解除工作树链接。`deploy:restore` 使用包管理器恢复原依赖而不是手工重建 Junction。所有变更命令缺少 `--apply` 时仅输出预检信息，检测到运行中的 DSH 会拒绝切换。
+`deploy:validate` 保存恢复锚点并要求宿主退出。`deploy:publish` 打包成带 Git SHA 的**不可变本地 tarball**，同时记录 SHA-256、验收号、真实已安装内容；发布成功后解除工作树链接。`deploy:restore` 使用包管理器恢复原依赖而不是手工重建 Junction。所有变更命令缺少 `--apply` 时只做预检，检测到运行中的 DSH 会拒绝切换。**已安装的固定 npm/GitHub 快照也满足日常隔离要求**；旧 `deploy:status` 对非 `file:` 来源可能仍提示“不是本地包”，应结合实际 `node_modules`、Profile 依赖和锁文件判断，不应据此认为必须改用 `.tgz`。
 
-**本机检查曾发现三处不一致：** Profile `package.json` 指向 DSH 安装目录、`pnpm-lock.yaml` 指向旧的 `.tgz`、实际 `node_modules/dsh-gac-runtime` 却指向本工作区。此类状态不得视为已隔离生产环境；修复必须在宿主退出且源码验收完成后按上述受控流程进行。普通 `plugin:on/off` 只控制启停，不能代替版本切换。
+**历史故障记录（已非当前状态）：** 以前出现过 Profile 依赖、锁文件和实际 Junction 分别指向不同来源的情况；当时真实模块指向工作区，未实现隔离。现在本机日常 `core-020` 的依赖及锁文件均指向 `github:MancoCL/DSH_Agent_Runtime#v0.1.1`，实际安装目录也不在此 Git 工作树；**这是已安装的旧发布快照，不代表当前 HEAD 已在日常环境实测**。若今后再次发生三处漂移，必须在宿主退出后按受控流程修复。`plugin:on/off` 只控制启停，不代替版本切换。
 
 详见 [AGENTS.md](https://github.com/MancoCL/DSH_Agent_Runtime/blob/main/AGENTS.md) 的开发和 Git 纪律。
 
