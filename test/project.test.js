@@ -356,16 +356,16 @@ describe('resolveExecutionMode —— 升级闸门', () => {
     assert.equal(verdict.risk, 'low')
   })
 
-  it('目标落在高风险路径时，把 direct_edit 升级为 high_risk_task', () => {
+  it('目标落在高风险路径时要求评估且不自动升级', () => {
     const verdict = resolveExecutionMode({
       declared_mode: 'direct_edit',
       reason: '调整一个常量',
       target_paths: ['src/auth/token.c'],
       adapter: adapter(),
     })
-    assert.equal(verdict.mode, 'high_risk_task')
-    assert.equal(verdict.escalated, true)
-    assert.equal(verdict.escalated_from, 'direct_edit')
+    assert.equal(verdict.mode, 'direct_edit')
+    assert.equal(verdict.escalated, false)
+    assert.equal(verdict.assessment_required, true)
     assert.equal(verdict.code, 'GAC_PROCESS_ESCALATION_REQUIRED')
     assert.match(verdict.reason, /src\/auth\/token\.c/u)
   })
@@ -379,7 +379,7 @@ describe('resolveExecutionMode —— 升级闸门', () => {
       target_paths: ['src/boot/main.c'],
       adapter: adapter(),
     })
-    assert.equal(verdict.mode, 'high_risk_task')
+    assert.equal(verdict.mode, 'direct_edit')
   })
 
   it('记下不可逆性，但不凭空造出一次升级', () => {
@@ -390,7 +390,7 @@ describe('resolveExecutionMode —— 升级闸门', () => {
       irreversible: true,
       adapter: adapter(),
     })
-    assert.equal(verdict.mode, 'standard_task')
+    assert.equal(verdict.mode, 'direct_edit')
     assert.match(verdict.reason, /IRREVERSIBLE/u)
   })
 
@@ -486,7 +486,7 @@ describe('每一个对外宣告的模式都必须真的能声明', () => {
         reason: '测试',
         adapter: governed(),
       })
-      assert.equal(resolved.mode, mode, `${mode} 应当可用`)
+      assert.equal(resolved.mode, mode === 'read_only' ? mode : 'direct_edit', `${mode} 声明不得自我批准`)
       assert.ok(RISK_LEVELS.includes(resolved.risk), `${mode} 的风险必须是已知档位`)
     }
   })
@@ -509,7 +509,7 @@ describe('每一个对外宣告的模式都必须真的能声明', () => {
     assert.equal(resolved.escalated, false)
   })
 
-  it('read_only 命中高风险路径时同样升级', () => {
+  it('read_only 命中高风险路径仍保持只读', () => {
     // 只看不改也可能踩到高风险面；升级规则不因模式便宜而放宽。
     const resolved = resolveExecutionMode({
       declared_mode: 'read_only',
@@ -517,8 +517,8 @@ describe('每一个对外宣告的模式都必须真的能声明', () => {
       target_paths: ['src/auth/session.c'],
       adapter: governed(),
     })
-    assert.equal(resolved.mode, 'high_risk_task')
-    assert.equal(resolved.escalated, true)
+    assert.equal(resolved.mode, 'read_only')
+    assert.equal(resolved.escalated, false)
   })
 })
 

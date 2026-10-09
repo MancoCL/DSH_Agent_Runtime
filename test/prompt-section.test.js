@@ -71,7 +71,7 @@ describe('段落什么时候出现、什么时候整段消失', () => {
     assert.notEqual(text, '')
     // 这就是本段落存在的全部理由：在模型撞上第一道拒绝之前，先让它知道门禁在。
     assert.match(text, /gac_project/u)
-    assert.match(text, /gac_scope/u)
+    assert.match(text, /action=assess/u)
     assert.ok(text.includes(ADAPTER_RELATIVE_PATH), '应当指出纳管凭据在哪个文件里')
     assert.match(text, /还没有声明执行模式/u)
   })
@@ -124,7 +124,7 @@ describe('子会话读到的是另一套话（活体验收抓到的误导）', (
 
   it('非子会话的行为一个字都没变', () => {
     const text = gacPromptText({ adapter })
-    assert.match(text, /先用 gac_project 声明最低的充分模式/u)
+    assert.match(text, /gac_project action=begin/u)
     assert.match(text, /gac_evidence/u)
   })
 })
@@ -190,7 +190,7 @@ describe('段落说出的当前写作用域', () => {
 
   it('声明了任务级模式却没有作用域时，说明还没有任何写入在被检查', () => {
     const text = gacPromptText({ adapter, mode: mode() })
-    assert.match(text, /没有写作用域生效/u)
+    assert.match(text, /没有节点写作用域生效/u)
   })
 
   it('作用域里的路径只取字符串，别的类型被忽略而不是渲染成 [object Object]', () => {
