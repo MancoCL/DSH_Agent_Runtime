@@ -94,7 +94,7 @@ Builder / Test Builder（分别实施产品代码与测试代码）
 
 设计专家可用 `gac_expert start/status` 启动一层只读助手（root=0、专家=1、助手=2）。每次父派遣最多同时 2 个、累计 4 个；测试设计助手继承盲化，助手不得再委派。助手结果只通知父专家，父专家综合后交付最终产物。
 
-工程必须通过 `verification_context` 声明测试入口、能力、限制和环境身份。未知事实按缺失阻塞设计，不从本次实现反推预期。示例见 `examples/gac-project.json`。本轮状态和固定宿主验收步骤见 [实施记录](docs/IMPLEMENTATION-20261009.md)。
+需要独立验证的工程应通过 `verification_context` 声明真实测试入口、可用能力、限制及环境身份；未声明的测试事实不能凭实现反推。示例见 `examples/gac-project.json`；未完成的宿主验收场景、切换条件与证据要求统一见 [CUTOVER](docs/CUTOVER.md)。
 
 ### 生产能力契约
 
