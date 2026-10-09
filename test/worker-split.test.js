@@ -382,7 +382,7 @@ async function createTaskWithCriteria(h, taskId, nodes, criteria) {
     + `create 那一步会读它来算 split_signals`,
   )
 
-  const value = await createTask(h, taskId, nodes)
+  const value = await createTask(h, taskId, nodes.map((node, index) => ({ ...node, covers: criteria.length ? [criteria[index % criteria.length]] : [] })))
   assert.equal(value.action, 'created', `任务 ${taskId} 应当建得起来`)
   // 这一句是本助手的理由，也是它的防退化装置：标准必须真的落在**被测任务自己**名下，
   // 而且必须在 `create` **之前**就落好——否则下面的判据读到的是空数组，用例会以一种

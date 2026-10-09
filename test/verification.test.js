@@ -1023,9 +1023,7 @@ describe('evaluateVerification —— 归因口径按 case_id 聚合到「最终
     assert.equal(result.ok, true, JSON.stringify(result.violations))
   })
 
-  it('归因聚合按 case_id 判定，与记录先后顺序无关', () => {
-    // 被抓住的错误实现：拿「最后一条记录是否 passed」当最终状态。那种实现会在通过记录
-    // 排在前面时（重跑的顺序并不保证通过一定排在最后）错误地要求历史失败归因。
+  it('最新失败不能被历史通过覆盖', () => {
     const result = evaluateVerification(
       passingReport({
         executions: [
@@ -1039,12 +1037,8 @@ describe('evaluateVerification —— 归因口径按 case_id 聚合到「最终
       completePlan(),
       CRITERIA,
     )
-    assert.deepEqual(
-      classificationViolationsOf(result),
-      [],
-      `通过记录排在历史失败之后时被误伤：${JSON.stringify(result.violations)}`,
-    )
-    assert.equal(result.ok, true, JSON.stringify(result.violations))
+    assert.equal(classificationViolationsOf(result)[0]?.detail.case_id, 'V1')
+    assert.equal(result.ok, false, JSON.stringify(result.violations))
   })
 
   // ---- ② 反例：最终没有通过 ⇒ 缺归因仍被拒 ----
@@ -1119,10 +1113,7 @@ describe('evaluateVerification —— 归因口径按 case_id 聚合到「最终
     assert.deepEqual(named, ['V1'])
   })
 
-  it('同一用例先通过、后又失败：口径是「有过 passed 就豁免」，而非「最后一条是 passed」', () => {
-    // 聚合的是「该 case_id 名下**有没有** passed 记录」，不是「最后一条是不是 passed」。
-    // 修复后回归（修好了又坏掉）是真实形态，而按契约口径它仍然被豁免——这条测试把这个**方向**
-    // 钉住，免得实现某天悄悄改成「看最后一条」，测试却沉默地把两种口径都放过去。
+  it('最新失败不能被历史通过覆盖', () => {
     const result = evaluateVerification(
       passingReport({
         executions: [
@@ -1136,14 +1127,8 @@ describe('evaluateVerification —— 归因口径按 case_id 聚合到「最终
       completePlan(),
       CRITERIA,
     )
-    // 契约口径是「只要该 case_id 名下存在任何 passed 记录就豁免」，所以这条**不产生**
-    // 归因违规。断言写出方向，免得实现改了口径而测试沉默。
-    assert.deepEqual(
-      classificationViolationsOf(result),
-      [],
-      `口径变化未被察觉：${JSON.stringify(result.violations)}`,
-    )
-    assert.equal(result.ok, true, JSON.stringify(result.violations))
+    assert.equal(classificationViolationsOf(result)[0]?.detail.case_id, 'V1')
+    assert.equal(result.ok, false, JSON.stringify(result.violations))
   })
 
   // ---- ③ 反例：最终没有通过 + 分类越界 ⇒ UNKNOWN ----
