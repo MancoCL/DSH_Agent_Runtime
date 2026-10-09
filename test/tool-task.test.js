@@ -579,7 +579,7 @@ function dispatchHarness(options = {}) {
  * @returns {object}
  */
 function evidenceRecord(id, overrides = {}) {
-  return { schema_version: 1, id, tool: 'pwsh', is_error: false, exit_code: 0, ...overrides }
+  return { schema_version: 1, id, tool: 'pwsh', is_error: false, exit_code: 0, case_results: Object.fromEntries(['用例解析空配置', '用例拒绝越界', '正例', '反例'].map(name => [name, { name, outcome: 'passed' }])), ...overrides }
 }
 
 /**
