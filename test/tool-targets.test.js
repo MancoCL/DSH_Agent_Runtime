@@ -28,6 +28,8 @@ describe('分类表把每一类工具都摆在明处', () => {
     ['gac_task', CALL_KINDS.RUNTIME],
     ['gac_scope', CALL_KINDS.RUNTIME],
     ['gac_project', CALL_KINDS.RUNTIME],
+    ['compress', CALL_KINDS.RUNTIME],
+    ['decompress', CALL_KINDS.RUNTIME],
     ['mystery_tool', CALL_KINDS.UNKNOWN],
   ]
 

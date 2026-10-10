@@ -3006,6 +3006,16 @@ describe('只读角色收权 —— 派遣时收、回报时放', () => {
     assert.equal(last.includeShell, false, 'shell 默认不收：验证者要靠它跑用例')
   })
 
+  it('原生子会话执行只读节点时不收权主协调会话', async () => {
+    const { guard, syncs } = recordingGuard()
+    const h = dispatchHarness({ roleGuard: guard, runtimeExecutors: [COMPLETES, STAYS_IN_PROGRESS], adapterExtras: { execution: { native_child_dispatch: true } } })
+    await createStandard(h)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    await h.tool.execute({ action: 'advance', task_id: 'REQ-1' }, h.exec)
+    assert.deepEqual(syncs.at(-1).readOnlyNodes, [])
+    assert.equal(syncs.at(-1).sessionId, 'session-1')
+  })
+
   it('回报之后收权解除 —— 不能把会话永久关在写入之外', async () => {
     const { guard, syncs } = recordingGuard()
     const h = dispatchHarness({ roleGuard: guard, runtimeExecutors: [COMPLETES, STAYS_IN_PROGRESS] })
