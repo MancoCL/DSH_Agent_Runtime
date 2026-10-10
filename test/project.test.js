@@ -208,6 +208,37 @@ describe('execution 一节 —— 运行时真正读取的字段必须能通过�
     }
   })
 
+  it('子会话的四个截止时间：正整数或 null，非法值当场拒', () => {
+    // null 是「显式关掉这一项」，与「没写」不同，必须在归一化后仍然可区分。
+    const parsed = adapter({ execution: { timeouts: { progress_ms: null, cancel_ms: 5000 } } })
+    assert.deepEqual({ ...parsed.execution.timeouts }, { progress_ms: null, cancel_ms: 5000 })
+    assert.equal(Object.isFrozen(parsed.execution.timeouts), true, '这一节在归一化时被重建，必须逐项带出来')
+    assert.deepEqual({ ...adapter().execution.timeouts }, {})
+    for (const value of ['30m', 0, -1, 1.5]) {
+      assert.throws(
+        () => adapter({ execution: { timeouts: { start_ms: value } } }),
+        (error) => error instanceof ProjectAdapterError && /start_ms/u.test(error.message),
+        `应当拒绝 ${JSON.stringify(value)}`,
+      )
+    }
+    assert.throws(() => adapter({ execution: { timeouts: { nope: 1 } } }), /未知的 "execution.timeouts" 键/u)
+    assert.throws(() => adapter({ execution: { timeouts: [] } }), /必须是一个对象/u)
+  })
+
+  it('无进展阈值：正整数或 null，非法值当场拒', () => {
+    const parsed = adapter({ execution: { no_progress: { repeat_limit: 5, failure_limit: null } } })
+    assert.deepEqual({ ...parsed.execution.no_progress }, { repeat_limit: 5, failure_limit: null })
+    assert.deepEqual({ ...adapter().execution.no_progress }, {})
+    for (const value of ['3', 0, -2]) {
+      assert.throws(
+        () => adapter({ execution: { no_progress: { repeat_limit: value } } }),
+        (error) => error instanceof ProjectAdapterError && /repeat_limit/u.test(error.message),
+        `应当拒绝 ${JSON.stringify(value)}`,
+      )
+    }
+    assert.throws(() => adapter({ execution: { no_progress: { nope: 1 } } }), /未知的 "execution.no_progress" 键/u)
+  })
+
   it('未声明时给出去掉猜测的默认值', () => {
     // 校验器不认识的字段，运行时也不该去读。反过来同样成立：运行时读的字段，校验器必须
     // 放行——否则适配器里写了会被整体拒绝，不写则永远读到 undefined，而读到的空值看起来

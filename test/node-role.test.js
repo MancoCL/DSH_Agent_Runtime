@@ -17,7 +17,8 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { CHILD_OUTPUT_SCHEMAS, buildChildPrompt, childOutputSchemaFor } from '../lib/child-executor.js'
-import { CoordinatorError, NODE_ROLES, compileTask, nodeRoleOf } from '../lib/coordinator.js'
+import { CoordinatorError, NODE_ROLES, compileTask, deserializeTask, nodeRoleOf, serializeTask } from '../lib/coordinator.js'
+import { roleDenyFor } from '../lib/role-tools.js'
 import { planId } from '../lib/verification.js'
 
 /**
@@ -363,5 +364,88 @@ describe('设计节点的提示词只给需求侧事实', () => {
     })
     assert.doesNotMatch(prompt, /验收标准/u)
     assert.doesNotMatch(prompt, /expect_failure/u)
+  })
+})
+
+describe('创建阶段的角色歧义 —— 推断只能给出没有歧义的角色', () => {
+  /**
+   * 活体任务里真实失败过的节点形状：要写测试代码，却只声明了验证能力、没写 role。
+   *
+   * @param {object} [overrides]
+   * @returns {object}
+   */
+  function ambiguousNode(overrides = {}) {
+    return {
+      id: 'n4-tests',
+      objective: '按测试详设补测试',
+      required_capabilities: ['verification', 'c-safety'],
+      write_scope: ['boot/06_Test/'],
+      ...overrides,
+    }
+  }
+
+  it('声明验证能力又要写文件，却没说 role → 派遣之前就报 GAC_NODE_ROLE_AMBIGUOUS', () => {
+    assert.throws(
+      () => compileTask({ task_id: 'boot-highrisk-fixes-req-d', mode: 'high_risk_task', nodes: [ambiguousNode()] }),
+      (error) => {
+        assert.ok(error instanceof CoordinatorError)
+        assert.equal(error.code, 'GAC_NODE_ROLE_AMBIGUOUS')
+        assert.equal(error.detail.node, 'n4-tests')
+        assert.equal(error.detail.role, 'verification_execution')
+        assert.deepEqual(error.detail.write_scope, ['boot/06_Test/'])
+        assert.equal(error.detail.role_declared, false)
+        // 报错本身要把出路说清楚，而不是只说「不行」。
+        assert.match(error.message, /显式声明 role: "implementation"/u)
+        assert.match(error.message, /write_scope 改成 \[\]/u)
+        return true
+      },
+    )
+  })
+
+  it('显式声明 role: "implementation" 的同型计划照旧建立 —— 写测试代码属于实现工作', () => {
+    const task = compileTask({
+      task_id: 'boot-highrisk-fixes-req-d',
+      mode: 'high_risk_task',
+      nodes: [ambiguousNode({ role: 'implementation', required_capabilities: ['implementation', 'verification', 'c-safety'] })],
+    })
+    assert.equal(task.nodes.get('n4-tests').role, 'implementation')
+    assert.deepEqual([...task.nodes.get('n4-tests').write_scope], ['boot/06_Test/'])
+    // 角色这一层放行；越界与否由写范围（createWriteScope）继续判定。
+    assert.equal(roleDenyFor({ role: 'implementation', name: 'edit', write_scope: ['boot/06_Test/'] }), undefined)
+  })
+
+  it('独立的只读验证节点照旧推断成 verification_execution，且不因新校验被拒', () => {
+    const task = compileTask({
+      task_id: 'REQ-2',
+      mode: 'high_risk_task',
+      nodes: [ambiguousNode({ id: 'V1', required_capabilities: ['verification'], write_scope: [] })],
+    })
+    assert.equal(task.nodes.get('V1').role, 'verification_execution')
+  })
+
+  it('显式写下验证角色时不拦（工具面继续拒写，安全边界没变）', () => {
+    const task = compileTask({
+      task_id: 'REQ-3',
+      mode: 'high_risk_task',
+      nodes: [ambiguousNode({ role: 'verification_execution', required_capabilities: ['verification'] })],
+    })
+    assert.equal(task.nodes.get('n4-tests').role, 'verification_execution')
+    // 非空写范围**不放宽**验证角色的写权限：这仍然是一次会被拒的写入。
+    assert.deepEqual(
+      roleDenyFor({ role: 'verification_execution', name: 'edit', write_scope: ['boot/06_Test/'] }),
+      { code: 'GAC_ROLE_TOOL_DENIED', category: 'write' },
+    )
+  })
+
+  it('历史任务照旧读得进来 —— 反序列化不吃这条创建期校验', () => {
+    // `ota-upgrade-refactor.json` 里就有「验证角色 + 非空写范围」的完成态节点。历史记录只能读、
+    // 不能被新规则判成非法，否则升级之后整个任务目录都会变成不可读。
+    const legacy = compileTask(
+      { task_id: 'ota-upgrade-refactor', mode: 'high_risk_task', nodes: [ambiguousNode({ id: 'n5-host-tests' })] },
+      { legacy: true },
+    )
+    const restored = deserializeTask(JSON.parse(JSON.stringify(serializeTask(legacy))))
+    assert.equal(restored.nodes.get('n5-host-tests').role, 'verification_execution')
+    assert.deepEqual([...restored.nodes.get('n5-host-tests').write_scope], ['boot/06_Test/'])
   })
 })

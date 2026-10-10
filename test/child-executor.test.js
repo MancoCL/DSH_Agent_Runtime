@@ -1182,3 +1182,203 @@ describe('verification_execution 的产出契约：收合法载荷、拒缺字�
     assert.deepEqual(schema.properties.executions.items.properties.outcome.enum, ['passed', 'failed'])
   })
 })
+
+describe('子会话超时 —— 四个截止时间，一个都不许伪造成「取消成功」', () => {
+  const CHILD_CAPS = { agentOptions: true, outputSchema: true, depthLimit: true, toolFilter: true, persona: true }
+
+  /**
+   * 一个可以被外部决定何时给出结果、且记录中断请求的假子会话服务。
+   *
+   * @param {object} [options]
+   * @param {number} [options.resolveAfterMs] 到点后才交结果；不给就一直不交
+   * @param {() => Promise<void>} [options.dispose]
+   * @returns {{service: object, calls: object, disposeCalls: number[]}}
+   */
+  function controlledSubagents({ resolveAfterMs, dispose } = {}) {
+    const calls = { interrupts: [], interruptsByParent: [], disposed: 0 }
+    let resolveResult
+    const result = new Promise((resolve) => { resolveResult = resolve })
+    const service = {
+      list: () => ['spawn'],
+      getProvider: () => ({ name: 'spawn', capabilities: CHILD_CAPS }),
+      start: async () => ({
+        id: 'child-stall',
+        localAgent: undefined,
+        result,
+        dispose: async () => {
+          calls.disposed += 1
+          if (dispose !== undefined) return dispose()
+          return undefined
+        },
+      }),
+      interrupt: (id, authority) => calls.interrupts.push({ id, authority }),
+      interruptByParent: (id, parent, mode) => calls.interruptsByParent.push({ id, parent, mode }),
+    }
+    if (resolveAfterMs !== undefined) {
+      setTimeout(() => resolveResult({
+        structured: { status: 'completed', summary: '迟到的真结果' },
+        stopReason: 'completed',
+      }), resolveAfterMs)
+    }
+    return { service, calls }
+  }
+
+  /**
+   * 记录授权释放的绑定桩：`release` 是否被调用决定「写权限有没有被放掉」。
+   *
+   * @returns {{bindings: object, released: string[]}}
+   */
+  function claimBindings() {
+    const released = []
+    return {
+      released,
+      bindings: {
+        bind: () => ({ write_scope: ['src/'] }),
+        declareRole: () => {},
+        release: (dispatchId) => released.push(dispatchId),
+        releaseRole: (dispatchId) => released.push(`role:${dispatchId}`),
+      },
+    }
+  }
+
+  it('登记超时：按「启动状态无法确认」处理，不重试、不装作成功', async () => {
+    let starts = 0
+    const service = {
+      list: () => ['spawn'],
+      getProvider: () => ({ name: 'spawn', capabilities: CHILD_CAPS }),
+      start: () => { starts += 1; return new Promise(() => {}) },
+    }
+    const executor = createChildExecutor({ subagentsFor: () => service, timeouts: { start_ms: 20 } })
+    await assert.rejects(
+      () => executor.run(runInput()),
+      (error) => {
+        assert.equal(error.code, 'GAC_CHILD_START_FAILED')
+        assert.equal(error.retryable, false, '无法确认的启动绝不能自动重试')
+        assert.match(error.detail, /无法确认/u)
+        assert.match(error.detail, /不得自动重试/u)
+        return true
+      },
+    )
+    assert.equal(starts, 1, '不得因为超时再起一个可能重复写入的执行者')
+  })
+
+  it('无进展 → 请求中断 → 窗口内等不到结果：标未知、保留写权限、留下诊断', async () => {
+    const { service, calls } = controlledSubagents({ dispose: async () => { throw new Error('清理通道坏了') } })
+    const { bindings, released } = claimBindings()
+    const faults = []
+    const executor = createChildExecutor({
+      subagentsFor: () => service,
+      bindings,
+      timeouts: { start_ms: 50, progress_ms: 20, cancel_ms: 30, cleanup_ms: 30 },
+      onFault: (code, detail) => faults.push({ code, detail }),
+    })
+    const outcome = await executor.run(runInput())
+    assert.equal(outcome.status, 'blocked')
+    assert.equal(outcome.blocked_by.code, 'GAC_CHILD_STALLED')
+    assert.equal(outcome.retryable, false, '无法确认它已经停下 → 不得自动重做副作用')
+    assert.match(outcome.blocked_by.detail, /无法确认子会话已经停下/u)
+    // 中断是**请求**：宿主回执只说明信号被受理，因此这里只要求「发出过」，不要求「停下了」。
+    assert.equal(calls.interruptsByParent.length + calls.interrupts.length, 1, '必须真的向宿主请求过中断')
+    assert.equal(released.includes('REQ-1-T1-A1'), false, '可能还活着的执行者不能被放掉写权限')
+    const codes = faults.map((entry) => entry.code)
+    assert.ok(codes.includes('GAC_CHILD_STALLED'), '无进展要留痕')
+    assert.ok(codes.includes('GAC_CHILD_CLEANUP_FAILED'), '收尾失败必须留痕，不能静默吞掉')
+  })
+
+  it('取消确认窗口内结果到了：用的是子会话的真结果，而不是「取消成功」', async () => {
+    const { service, calls } = controlledSubagents({ resolveAfterMs: 45 })
+    const executor = createChildExecutor({
+      subagentsFor: () => service,
+      timeouts: { start_ms: 50, progress_ms: 15, cancel_ms: 300, cleanup_ms: 100 },
+    })
+    const outcome = await executor.run(runInput())
+    assert.equal(outcome.status, 'completed')
+    assert.match(outcome.summary, /迟到的真结果/u)
+    assert.equal(calls.interruptsByParent.length + calls.interrupts.length, 1)
+  })
+
+  it('正常执行不被无进展机制误伤 —— 阈值之内照常收结果', async () => {
+    const { service } = controlledSubagents({ resolveAfterMs: 20 })
+    const executor = createChildExecutor({
+      subagentsFor: () => service,
+      timeouts: { start_ms: 50, progress_ms: 200, cancel_ms: 100, cleanup_ms: 100 },
+    })
+    const outcome = await executor.run(runInput())
+    assert.equal(outcome.status, 'completed')
+  })
+
+  it('工程可以把无进展上限整项关掉（长编译 / 长测试 / 硬件验证）', async () => {
+    const { service, calls } = controlledSubagents({ resolveAfterMs: 60 })
+    const executor = createChildExecutor({
+      subagentsFor: () => service,
+      // `null` 是**显式的关闭**，不是「用默认值」：这类活儿没有可靠的进展信号。
+      timeouts: { start_ms: 50, progress_ms: null, cancel_ms: 20, cleanup_ms: 100 },
+    })
+    const outcome = await executor.run(runInput())
+    assert.equal(outcome.status, 'completed')
+    assert.equal(calls.interruptsByParent.length + calls.interrupts.length, 0, '关掉之后不该请求中断')
+  })
+
+  it('收尾超时：结论照旧，但收尾这件事必须被记下来', async () => {
+    const { service } = controlledSubagents({
+      resolveAfterMs: 5,
+      dispose: () => new Promise(() => {}),
+    })
+    const faults = []
+    const executor = createChildExecutor({
+      subagentsFor: () => service,
+      timeouts: { start_ms: 50, progress_ms: 200, cancel_ms: 50, cleanup_ms: 20 },
+      onFault: (code, detail) => faults.push({ code, detail }),
+    })
+    const outcome = await executor.run(runInput())
+    assert.equal(outcome.status, 'completed', '收尾失败不改变已经发生的结果')
+    assert.ok(faults.some((entry) => entry.code === 'GAC_CHILD_CLEANUP_FAILED' && /dispose/u.test(entry.detail)))
+  })
+
+  it('超时阈值可被工程逐项覆盖，非法值一律忽略（不能把超时静默改成永不触发）', async () => {
+    const { resolveChildTimeouts, CHILD_TIMEOUT_DEFAULTS } = await import('../lib/child-executor.js')
+    assert.deepEqual(resolveChildTimeouts(undefined), { ...CHILD_TIMEOUT_DEFAULTS })
+    assert.equal(resolveChildTimeouts({ progress_ms: 5000 }).progress_ms, 5000)
+    assert.equal(resolveChildTimeouts({ progress_ms: null }).progress_ms, null)
+    assert.equal(resolveChildTimeouts({ progress_ms: '30m' }).progress_ms, CHILD_TIMEOUT_DEFAULTS.progress_ms)
+    assert.equal(resolveChildTimeouts({ progress_ms: -1 }).progress_ms, CHILD_TIMEOUT_DEFAULTS.progress_ms)
+    assert.equal(resolveChildTimeouts({ progress_ms: 0 }).progress_ms, CHILD_TIMEOUT_DEFAULTS.progress_ms)
+  })
+})
+
+describe('长会话上下文保护 —— 长结论留在产物里，回给父会话的是摘要加引用', () => {
+  it('子会话的长结论只回一段有上限的摘要，并带上可追溯的引用', async () => {
+    // 子会话的汇报可以很长（一次重构的实现说明、一份逐条验证记录）。父会话的上下文是有限的公共
+    // 资源：全文塞回去，一次派遣就能把协调会话的上下文撑走一大截，而且它并不需要全文——它需要的是
+    // 「去哪取全文」。
+    const long = '这一条结论很长，因为它记录了逐个文件的改动理由。'.repeat(200)
+    const { service } = fakeSubagents({
+      result: {
+        structured: { status: 'completed', summary: long, artifacts: ['src/a.c'] },
+        stopReason: 'completed',
+      },
+    })
+    const executor = createChildExecutor({ subagentsFor: () => service, namesFor: () => INHERITABLE })
+    const outcome = await executor.run(runInput())
+
+    assert.equal(outcome.status, 'completed')
+    assert.equal(outcome.detail.includes(long), false, '全文不得回给父会话')
+    assert.ok(outcome.detail.length < 600, `回给父会话的 detail 必须有上限，实际 ${outcome.detail.length}`)
+    assert.match(outcome.detail, /（截断）/u)
+    // 截断必须与引用同时出现：只说「截断了」而不说去哪取，等于把结论丢掉了。
+    assert.match(outcome.detail, /child-session-1/u)
+    assert.match(outcome.detail, /src\/a\.c/u)
+    assert.equal(outcome.artifact, 'child-session:child-session-1')
+    assert.equal(outcome.semantic.child_session_id, 'child-session-1')
+  })
+
+  it('短结论原样回，不加多余标记 —— 截断是例外而不是默认行为', async () => {
+    const { service } = fakeSubagents({
+      result: { structured: { status: 'completed', summary: '改了 src/a.c' }, stopReason: 'completed' },
+    })
+    const executor = createChildExecutor({ subagentsFor: () => service, namesFor: () => INHERITABLE })
+    const outcome = await executor.run(runInput())
+    assert.match(outcome.detail, /结论：改了 src\/a\.c/u)
+    assert.doesNotMatch(outcome.detail, /截断/u)
+  })
+})
