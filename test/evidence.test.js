@@ -103,6 +103,13 @@ describe('compileEvidence', () => {
     assert.equal(Object.isFrozen(record), true)
   })
 
+  it('从真实 pwsh 的 stdout.text 解析 TAP 物理行号', () => {
+    const record = compileEvidence(toolResult({ value: { kind: 'foreground', exitCode: 0, stdout: { text: '标题\nok 4 - 正例\nok 7 - 反例\n' } } }), { id: 'ev-2' })
+    assert.equal(record.case_results['tap:2'].name, '正例')
+    assert.equal(record.case_results['tap:3'].name, '反例')
+    assert.equal(record.case_results['tap:4'], undefined)
+  })
+
   it('拒绝由调用方指定的空号', () => {
     // 号由运行时发放：能被指定的号就也能被编造。
     assert.throws(
