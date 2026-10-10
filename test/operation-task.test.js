@@ -12,7 +12,7 @@ test('任务入口拒绝 direct、自报模式及缺少独立验证；所有权�
   const root = mkdtempSync(join(tmpdir(), 'gac-op-task-'))
   try {
     const tasks = new TaskStore({ root })
-    const ops = new OperationStore({ root, activeTasks: () => tasks.list() })
+    const ops = new OperationStore({ root, activeTasks: () => tasks.list().map((id) => tasks.load(id)) })
     const op = ops.begin('root')
     const tool = createTaskTool({ defineTool: (value) => value, taskStoreFor: () => tasks, sessionRootFor: () => root, operationsFor: () => ops })
     const exec = { agent: { session: { id: 'root' } } }

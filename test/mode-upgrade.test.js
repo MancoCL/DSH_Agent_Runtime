@@ -56,6 +56,8 @@ test('等待期间改版、活动任务降级、非法核心类别和路径逃�
     }), /STALE/u)
     active = [{ owner_session_id: 'root', status: 'in_progress' }]
     assert.throws(() => store.begin('root'), /LOCKED/u)
+    active = [{ status: 'failed' }, { status: 'pending' }, { owner_session_id: 'other', status: 'in_progress' }]
+    assert.doesNotThrow(() => store.begin('root'))
     active = []
     assert.throws(() => store.assess(op.operation_id, 'root', assessment({ core_impacts: [{ kind: 'project_invariant', invariant_id: 'invented', basis: '猜测' }] })), /不变量/u)
     assert.throws(() => store.load('../escape'), /ID_INVALID/u)
