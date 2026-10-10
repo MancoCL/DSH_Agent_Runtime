@@ -23,6 +23,7 @@ test('advance 不等待子节点；乱序结果写入最新快照并逐个通知
     await tool.execute({ action: 'contract', contract_action: 'freeze', task_id: 'async', criteria: ['AC1'], interface_contract: { name: '双模块约定', covers: ['AC1'], operations: [{ name: 'run', signature: 'run(): void', behavior: '两个模块分别完成各自行为', covers: ['AC1'] }] } }, exec)
     const response = await tool.execute({ action: 'advance', task_id: 'async' }, exec)
     assert.equal(response.action, 'awaiting_results')
+    assert.match(response.message, /不要用 Start-Sleep 或循环查询/u)
     assert.equal(store.load('async').nodes.get('A').status, 'in_progress')
     const runs = [...tracker.runs.values()]
     completions.get('B')({ status: 'completed', summary: 'B 完成' })
